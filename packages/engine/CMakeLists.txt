@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.24)
+
+engine_add_package(engine
+    SOURCES src/engine.cpp
+    PUBLIC_DEPS
+        engine::core
+        engine::platform
+        engine::rhi
+        engine::renderer
+        engine::assets
+)

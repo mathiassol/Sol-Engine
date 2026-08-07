@@ -1,0 +1,32 @@
+{
+  "name": "engine",
+  "version": "0.1.0",
+  "description": "Modular game engine workspace",
+  "type": "workspace",
+  "cmake": true,
+  "scripts": {
+    "configure": "cmake -B build -G \"Visual Studio 17 2022\" -A x64",
+    "build": "cmake --build build --config Debug",
+    "release": "cmake --build build --config Release",
+    "run": "build\\bin\\Debug\\sandbox.exe",
+    "clean": "cmake --build build --target clean"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/math",
+    "packages/platform",
+    "packages/platform-win32",
+    "packages/rhi",
+    "packages/rhi-d3d12",
+    "packages/shaders",
+    "packages/shaders-dxc",
+    "packages/assets",
+    "packages/assets-filesystem",
+    "packages/assets-obj",
+    "packages/assets-gpu",
+    "packages/renderer",
+    "packages/debug-draw",
+    "packages/engine",
+    "packages/sandbox"
+  ]
+}

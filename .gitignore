@@ -1,0 +1,47 @@
+# Build
+build/
+out/
+cmake-build-*/
+.vs/
+x64/
+*.user
+*.suo
+*.sln.docstates
+
+# CPM
+cpm_modules/
+cpm-lock.json
+
+# vcpkg
+vcpkg_installed/
+
+# IDE / editor
+.idea/
+.vscode/
+.cursor-tmp/
+*.swp
+*.swo
+*~
+
+# Local / secrets — never commit
+.pp/
+*.keys
+.env
+.env.*
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Artifacts (build outputs live under build/)
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.so
+*.dylib
+
+# Keep *.lib out of repo root only; build/ is already ignored
