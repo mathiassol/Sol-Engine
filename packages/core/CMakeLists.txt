@@ -8,4 +8,5 @@ engine_add_package(core
         src/frame.cpp
         src/arena.cpp
         src/profile.cpp
+        src/cvar.cpp
 )

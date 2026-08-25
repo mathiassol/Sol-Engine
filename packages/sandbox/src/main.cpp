@@ -4,6 +4,7 @@
 #include <engine/core/arena.hpp>
 #include <engine/core/assert.hpp>
 #include <engine/core/clock.hpp>
+#include <engine/core/cvar.hpp>
 #include <engine/core/log.hpp>
 #include <engine/core/profile.hpp>
 #include <engine/renderer/render_graph.hpp>
@@ -116,6 +117,16 @@ constexpr const char* kGroundMesh = "/content/meshes/ground_quad";
 constexpr const char* kOverlayShader = "/debug/shaders/overlay.hlsl";
 constexpr const char* kDebugLinesShader = "/debug/shaders/debug_lines.hlsl";
 constexpr const char* kTestFile = "/content/test.txt";
+
+// Gate-only knobs. Nothing outside run_cvar_gate reads these, which is why the
+// gate is free to drive them to any value and leave them there.
+engine::Cvar cv_gate_bool{"gate.bool", false, "Cvar gate: bool knob"};
+engine::Cvar cv_gate_int{"gate.int", 0, "Cvar gate: int knob"};
+engine::Cvar cv_gate_float{"gate.float", 0.f, "Cvar gate: float knob"};
+engine::Cvar cv_gate_string{"gate.string", "default", "Cvar gate: string knob"};
+engine::Cvar cv_gate_prec{"gate.prec", 0, "Cvar gate: precedence knob"};
+engine::Cvar cv_gate_args{"gate.args", 0, "Cvar gate: command-line knob"};
+engine::Cvar cv_gate_file{"gate.file", 0, "Cvar gate: config-file knob"};
 
 struct FlyCamera {
     engine::math::Vec3 position{0.f, 0.35f, -2.2f};
@@ -548,6 +559,69 @@ bool compile_fullscreen_hlsl(engine::shaders::IShaderCompiler& compiler, const s
         return false;
     }
     return true;
+}
+
+bool run_cvar_gate() {
+    using engine::CvarSetResult;
+    using engine::CvarSource;
+
+    const engine::usize count = engine::cvar_count();
+    bool walked = false;
+    for (engine::usize i = 0; i < count; ++i) {
+        if (engine::cvar_at(i) == &cv_gate_prec) {
+            walked = true;
+        }
+    }
+    const bool registry_ok = count >= 7
+        && walked
+        && engine::find_cvar("gate.bool") == &cv_gate_bool
+        && engine::find_cvar("gate.string") == &cv_gate_string
+        && engine::find_cvar("gate.nope") == nullptr
+        && engine::cvar_at(count) == nullptr;
+
+    const bool types_ok =
+        cv_gate_bool.set("on", CvarSource::Code) == CvarSetResult::Applied
+        && cv_gate_bool.as_bool()
+        && cv_gate_bool.set("0", CvarSource::Code) == CvarSetResult::Applied
+        && !cv_gate_bool.as_bool()
+        && cv_gate_bool.set("maybe", CvarSource::Code) == CvarSetResult::Invalid
+        && !cv_gate_bool.as_bool()
+        && cv_gate_int.set("-42", CvarSource::Code) == CvarSetResult::Applied
+        && cv_gate_int.as_int() == -42
+        && cv_gate_int.set("4.5", CvarSource::Code) == CvarSetResult::Invalid
+        && cv_gate_int.set("", CvarSource::Code) == CvarSetResult::Invalid
+        && cv_gate_float.set("-0.25", CvarSource::Code) == CvarSetResult::Applied
+        && cv_gate_float.as_float() < -0.24f && cv_gate_float.as_float() > -0.26f
+        && cv_gate_string.set("two words", CvarSource::Code) == CvarSetResult::Applied
+        && cv_gate_string.as_string() == "two words"
+        && cv_gate_bool.type() == engine::CvarType::Bool
+        && cv_gate_int.type() == engine::CvarType::Int
+        && cv_gate_float.type() == engine::CvarType::Float
+        && cv_gate_string.type() == engine::CvarType::String;
+
+    // A lower source never overwrites a higher one. This is what lets the
+    // engine load config.cfg after the command line.
+    const bool precedence_ok =
+        cv_gate_prec.source() == CvarSource::Default
+        && cv_gate_prec.set("1", CvarSource::File) == CvarSetResult::Applied
+        && cv_gate_prec.set("2", CvarSource::CommandLine) == CvarSetResult::Applied
+        && cv_gate_prec.set("3", CvarSource::File) == CvarSetResult::Ignored
+        && cv_gate_prec.as_int() == 2
+        && cv_gate_prec.source() == CvarSource::CommandLine
+        && cv_gate_prec.set("4", CvarSource::Code) == CvarSetResult::Applied
+        && cv_gate_prec.as_int() == 4;
+
+    const bool passed = registry_ok && types_ok && precedence_ok;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Cvar gate: count=%llu types=%s precedence=%s (%s)",
+        static_cast<unsigned long long>(count),
+        types_ok ? "yes" : "no",
+        precedence_ok ? "yes" : "no",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
 }
 
 bool run_window_gate(engine::platform::IWindow* window, engine::rhi::IDevice* device) {
@@ -4303,6 +4377,9 @@ int main(int argc, char** argv) {
     }
 
     bool gates_ok = run_mount_gate(*loader) && run_build_gate(app.content_layout());
+    if (!run_cvar_gate()) {
+        gates_ok = false;
+    }
     if (!run_window_gate(app.window(), app.device())) {
         gates_ok = false;
     }
