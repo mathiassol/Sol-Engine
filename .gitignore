@@ -18,10 +18,15 @@ vcpkg_installed/
 # IDE / editor
 .idea/
 .vscode/
+.cursor/
 .cursor-tmp/
 *.swp
 *.swo
 *~
+
+# Claude Code — personal/local, never shared
+CLAUDE.local.md
+.claude/settings.local.json
 
 # Local / secrets — never commit
 .pp/
