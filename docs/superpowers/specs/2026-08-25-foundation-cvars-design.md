@@ -107,7 +107,29 @@ r.aa fxaa
 ```
 
 Blank lines and comments are skipped. `key value` and `key = value` both
-parse. Bool values are case-insensitive (`1/0`, `true/false`, `on/off`,
+parse.
+
+A **trailing** comment is introduced by whitespace followed by `#`, and is
+stripped from the value for every type — `r.vsync 0 # off while testing`
+applies `0`. A `#` not preceded by whitespace stays part of the value, so
+`window.title Room#3` keeps its `#`. `//` starts a **line** comment only,
+never a trailing one: a trailing `//` rule would corrupt legitimate string
+values containing `//`, such as `//server/share` or `http://host/x`. The
+asymmetry is deliberate.
+
+Without this rule, a trailing comment silently corrupts string-valued knobs
+while a numeric knob rejects it — a user who learns `# note` works on
+`r.vsync` would then quietly break every string knob.
+
+A leading UTF-8 BOM is skipped: Notepad and PowerShell 5.1 both write one, and
+left in place it glues itself to the first key and reports a knob that plainly
+exists as unknown. A UTF-16 BOM is reported as one clear "save as UTF-8"
+warning rather than one garbled unknown-key warning per line.
+
+Warnings name the 1-based line number, so a typo in a forty-line file points
+somewhere.
+
+Bool values are case-insensitive (`1/0`, `true/false`, `on/off`,
 `yes/no`), but enum-valued knobs (`window.mode`, `r.aa`) take lowercase tokens
 only — each documents its accepted values in its help string, and a wrong case
 is reported like any other bad value. An unknown key or an unparseable value is **warned and counted**, not
