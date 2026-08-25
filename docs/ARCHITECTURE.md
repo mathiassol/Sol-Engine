@@ -57,7 +57,6 @@ interfaces, and can be replaced independently. See [packageRules.md](packageRule
 | `audio` | 1 | interface | `IAudio`: create PCM sound, play 2D one-shot, tick |
 | `physics` | 1 | interface | `IPhysics`: overlap queries, translation-only rigid bodies, `step(dt)` |
 | `shaders` | 1 | interface | `IShaderCompiler`, hot-reload interface |
-| `shaders` | 1 | interface | `IShaderCompiler`, hot-reload interface |
 | `platform-win32` | 2 | lib | Win32 platform; XInput 1.4 gamepads (four slots, Xbox layout) |
 | `assets-filesystem` | 2 | lib | Filesystem `IAssetLoader` |
 | `assets-obj` | 2 | lib | Wavefront OBJ mesh loader |

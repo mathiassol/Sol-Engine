@@ -18,7 +18,9 @@ namespace engine {
 CvarApplyStats apply_cvar_file(platform::IFileSystem& fs, std::string_view path,
     bool* found = nullptr);
 
-// Looked for at <content_root>/config.cfg.
+// Searched for in two places, first existing file wins: a discoverable repo
+// root (so a dev's knobs survive a clean build), then the content root
+// (which is what ships next to game.exe). See Engine::init.
 inline constexpr const char* kCvarFileName = "config.cfg";
 
 } // namespace engine
