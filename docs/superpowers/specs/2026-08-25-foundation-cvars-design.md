@@ -36,7 +36,13 @@ public:
     f32              as_float() const;
     std::string_view as_string() const;
 
-    bool set(std::string_view text, CvarSource source);
+    CvarSetResult set(std::string_view text, CvarSource source);
+};
+
+enum class CvarSetResult : u8 {
+    Applied,  // parsed and stored
+    Invalid,  // the text does not parse as this cvar's type
+    Ignored,  // parsed, but a higher-precedence source already owns the value
 };
 ```
 
@@ -53,7 +59,12 @@ Cvar* find_cvar(std::string_view name);   // nullptr when unknown
 usize cvar_count();
 Cvar* cvar_at(usize index);               // listing, for Debug #7's console
 
-struct CvarApplyStats { usize applied = 0; usize unknown = 0; usize invalid = 0; };
+struct CvarApplyStats {
+    usize applied = 0;
+    usize unknown = 0;  // no cvar by that name
+    usize invalid = 0;  // bad value, or a malformed line
+    usize ignored = 0;  // a higher-precedence source already owns the value
+};
 
 CvarApplyStats apply_cvar_text(std::string_view text, CvarSource source);
 CvarApplyStats apply_cvar_args(int argc, const char* const* argv);
@@ -79,8 +90,10 @@ command line and `--set` still wins — no future reordering of startup can
 silently flip precedence. Runtime `Code` writes (Build #10's options menu,
 Debug #7's console) always win, including over a previous `Code` write.
 
-Reading a cvar as the wrong type is a programming error, not a config error:
-it asserts and returns a zero value.
+Reading a cvar as the wrong type is a programming error, not a config error.
+It asserts — and because `ENGINE_ASSERT` has no `NDEBUG` guard and
+`assert_fail` is `[[noreturn]]`, it aborts rather than returning a wrong
+value.
 
 ## File format
 
@@ -94,7 +107,10 @@ r.aa fxaa
 ```
 
 Blank lines and comments are skipped. `key value` and `key = value` both
-parse. An unknown key or an unparseable value is **warned and counted**, not
+parse. Bool values are case-insensitive (`1/0`, `true/false`, `on/off`,
+`yes/no`), but enum-valued knobs (`window.mode`, `r.aa`) take lowercase tokens
+only — each documents its accepted values in its help string, and a wrong case
+is reported like any other bad value. An unknown key or an unparseable value is **warned and counted**, not
 fatal — one typo must not stop the engine booting. A missing file is silence,
 not an error.
 
@@ -147,7 +163,7 @@ with them and adding no dependency:
 The gate asserts against dedicated `gate.bool` / `gate.int` / `gate.float` /
 `gate.string` cvars, so it never disturbs a knob the running app reads.
 
-`Cvar gate: count=N text=yes types=yes precedence=yes file=yes missing=yes (pass)`
+`Cvar gate: count=N text=yes types=yes precedence=yes args=yes file=yes missing=yes (pass)`
 
 1. **registry** — every declared knob is found by name; an unknown name
    returns `nullptr`; `cvar_count()` is non-zero and `cvar_at` walks them.
@@ -158,9 +174,24 @@ The gate asserts against dedicated `gate.bool` / `gate.int` / `gate.float` /
    typed accessors; `gate.bool = maybe` is rejected and counted `invalid`.
 4. **precedence** — a `CommandLine` write followed by a `File` write of the
    same key keeps the command-line value; a `Code` write after both wins.
-5. **file** — a temporary `.cfg` written through `IFileSystem` and loaded
+5. **args** — `--set k=v` and `--set k v` both apply; a trailing `--set` with
+   no value, and a `--set` whose value is the next `--set`, each count
+   `invalid` without consuming the following flag.
+6. **file** — a temporary `.cfg` written through `IFileSystem` and loaded
    through the engine's own loader lands its value.
-6. **missing** — loading an absent path reports no error.
+7. **missing** — loading an absent path reports no error.
+
+The gate drives `gate.*` knobs only. Because a `Code` write is the highest
+source and nothing ever lowers it, the text and precedence checks use knobs the
+type checks have not already driven to `Code`.
+
+## One existing gate changes
+
+`run_aa_gate` ends with `&& demo.aa_mode == kDefault`, which asserts live demo
+state that `r.aa` is now allowed to change — a working knob would read as a
+gate failure. The policy it protects (`kDefault == Mode::Off`) is already
+covered by the same gate's `policy_ok`, so that clause is replaced with a
+round-trip assertion on the new `aa::parse_mode`.
 
 ## Visible check
 
