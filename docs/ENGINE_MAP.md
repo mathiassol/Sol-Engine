@@ -38,8 +38,8 @@ When a Ready row becomes **Done**, every Later whose only remaining Finish
 first is that row becomes **Ready**. That is the path until Far.
 
 Phases 0–14 are **Done**. Next work is any **Ready** row you choose
-(logger, cvars, UI quads, actions, skins, additive worlds, alpha, CPU
-particles, 3D audio, navmesh, terrain, installer).
+(logger, UI quads, actions, skins, additive worlds, alpha, CPU particles,
+3D audio, navmesh, terrain, installer, fullscreen/quality options).
 
 ---
 
@@ -56,7 +56,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 | 5 | CPU profiler scopes + F3 overlay slots | **Done** | |
 | 6 | File logger (not only stderr) | **Ready** | |
 | 7 | Crash dump / minidump on unhandled exception | Later | Foundation #6 (somewhere to write the dump). App-data can be `%LOCALAPPDATA%/Sol` until Build #7. |
-| 8 | Config / cvars (named knobs without recompile) | **Ready** | |
+| 8 | Config / cvars (named knobs without recompile) | **Done** | |
 | 9 | Deterministic fixed-step gameplay clock (already sketched; prove it with a sim) | **Done** | |
 
 ---
@@ -366,7 +366,7 @@ The sandbox is not the product. A player should run a **game** binary with
 | 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | Later | Foundation #6 file logger and #7 minidump. |
 | 8 | Zip / installer (no Visual Studio on the player machine) | **Ready** | |
 | 9 | Ship dxcompiler/D3D12 Agility if required; document GPU baseline | **Done** | |
-| 10 | Fullscreen options, quality presets | Later | Foundation #8 cvars. Platform #6 is Done. |
+| 10 | Fullscreen options, quality presets | **Ready** | |
 | 11 | Code signing | Far | |
 | 12 | Store SDKs (Steam, etc.) | Far | |
 
@@ -393,7 +393,7 @@ The sandbox is not the product. A player should run a **game** binary with
 | 4 | Named GPU PIX-style markers on the RHI | **Done** | |
 | 5 | Dump render graph to text/dot | Later | Graph complexity `--gates` cannot explain (many passes). The 20-pass standard frame is readable in code. |
 | 6 | Memory watermarks (CPU + GPU) in overlay | Later | Allocators that can **report** (RHI resource tracking). F3 does not need bytes yet. |
-| 7 | In-engine console | Later | Foundation #8 cvars, Platform #4 text input, UI #2 fonts. |
+| 7 | In-engine console | Later | Platform #4 text input, UI #2 fonts. Foundation #8 cvars is Done — the registry it reads (`cvar_count`/`cvar_at`) already exists. |
 | 8 | Remote telemetry | Far | |
 
 ---

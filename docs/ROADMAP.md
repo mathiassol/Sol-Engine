@@ -44,15 +44,19 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 25 Aug 2026: **16,078 lines** of C++/HLSL in **124 files**, **25
-packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 15%
-of the engine (2,372 lines). `sandbox` is 4,358; `renderer` is 2,350.
-`physics-cpu` is 1,253 lines. `game.exe` reuses sandbox sources (install layout,
-no extra .cpp).
+Measured 25 Aug 2026: **20,850 lines** of C++/HLSL in **132 files**, **26
+packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
+of the engine (2,729 lines). `sandbox` is 5,763; `renderer` is 2,683.
+`physics-cpu` is 1,369; `core` is 1,106. `game.exe` reuses sandbox sources
+(install layout, no extra .cpp).
+
+The previous figure in this slot (16,078 / 124) had gone stale by more than one
+row — it predated several shipped features, not just cvars. Recount with the
+command in the `ship-feature` skill rather than adjusting it by hand.
 
 | Layer | What is real | What is missing for a general engine |
 |-------|----------------|--------------------------------------|
-| Loop | Phased `Engine::run`, frame arena, F3, `--gates`, async DXC worker | No gameplay beyond fly camera + Z/X |
+| Loop | Phased `Engine::run`, frame arena, F3, `--gates`, async DXC worker, **cvars** (`config.cfg` + `--set`) | No gameplay beyond fly camera + Z/X; no file logger |
 | GPU | D3D12 RHI, 3-frame flight, mips, **SamplerDesc**, **compute PSO + dispatch**, **cube / array textures**, **GGX PBR**, **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA** (optional F5, default Off, exclusive with SMAA 1x / FXAA), **motion vectors** (RGBA16 UV, object+camera), RGBA16 + ACES, SM 6.0 | UAV textures, BC7 |
 | Graph | Declared reads/writes, transients, **standard frame in renderer** | max 4 refs; no compute **passes** in the graph yet |
 | Scene | Names, hierarchy, `solscene` save/load, prefab extract/instantiate | Streaming, ECS |
@@ -604,6 +608,50 @@ Prior glTF / cook / PBR gates still pass.
 
 **Do not (still):** Skins, morphs, BC7, alpha, vertex tangents, per-primitive
 draws for the 63 huskies.
+
+---
+
+## Foundation #8 — config / cvars (done)
+
+**Why:** Every knob was a recompile. Build #10 (fullscreen options, quality
+presets) and Debug #7 (in-engine console) both named this row as the thing
+they were waiting for.
+
+**Choice:** The registry lives in `core`, layer 0, and parses config **text**
+only — it never opens a file. `engine` reads the bytes through
+`platform::IFileSystem` and hands the text down, so `core` keeps zero OS
+dependencies and the package graph gains no edge. A self-registering `Cvar`
+holds a tagged union of `bool`/`i32`/`f32`/`string`.
+
+Precedence is one comparison: a write is accepted only when its source is at
+least the current source (`Default < File < CommandLine < Code`). That is why
+`Engine::init` may load `config.cfg` **after** the command line and `--set`
+still wins — no future reordering of startup can silently flip precedence.
+
+`config.cfg` is searched in two places, first existing file wins: a
+discoverable repo root, then the content root. The second is what ships next
+to `game.exe`; the first exists because `sandbox.exe`'s content root resolves
+into `build/bin/Debug`, where a clean build would delete a developer's knobs.
+
+`EngineConfig` keeps every field as the code-level default; a cvar overrides
+one only when `source() != Default`.
+
+**Gate (met):** `--gates` logs
+`Cvar gate: count=18 registry=yes text=yes types=yes precedence=yes scope=yes args=yes file=yes missing=yes (pass)`.
+Silent under `ENGINE_GPU_DEBUG=1`; `game.exe --gates` passes.
+
+Two gates that asserted live startup state a knob may now change were made
+knob-aware rather than deleted: `run_window_gate` (`windowed=` → `startup=`)
+and `run_aa_gate`. Each now asserts the factory default while its knob is
+untouched, or what the knob asked for once it is set — otherwise any
+`config.cfg` setting `r.vsync 0` would have left `--gates` permanently red.
+
+**Do not (still):** In-engine console (Debug #7) and options menu / quality
+presets (Build #10) — this row is the registry they consume, nothing more. No
+change callbacks (consumers poll), no saving cvars back to disk, no env vars
+(`ENGINE_GPU_DEBUG` is read inside the D3D12 and DXC backends before any
+registry exists), no `Vec3` cvars (`math` sits above `core`), no
+cheat/readonly flags, and no general command-line parser.
 
 ---
 
