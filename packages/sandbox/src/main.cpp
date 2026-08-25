@@ -135,6 +135,10 @@ engine::Cvar cv_text_eq{"gate.text_eq", 0, "Cvar gate: text parser no-space '=' 
 engine::Cvar cv_text_prec{"gate.text_prec", 0, "Cvar gate: text parser precedence-through-text knob"};
 engine::Cvar cv_text_comment{"gate.text_comment", "unset", "Cvar gate: text parser trailing-comment knob"};
 
+// The AA default is demo state, not engine state, so the knob is read here
+// rather than in Engine::init.
+engine::Cvar cv_aa{"r.aa", "off", "Anti-aliasing: off | fxaa | smaa | taa"};
+
 struct FlyCamera {
     engine::math::Vec3 position{0.f, 0.35f, -2.2f};
     engine::f32 yaw   = 0.f;
@@ -579,7 +583,7 @@ bool run_cvar_gate(engine::platform::IFileSystem* fs, const std::string& scratch
             walked = true;
         }
     }
-    const bool registry_ok = count >= 17
+    const bool registry_ok = count >= 18
         && walked
         && engine::find_cvar("gate.bool") == &cv_gate_bool
         && engine::find_cvar("gate.string") == &cv_gate_string
@@ -2262,6 +2266,7 @@ bool run_aa_gate(const ForwardDemo& demo) {
     using engine::renderer::aa::luma;
     using engine::renderer::aa::Mode;
     using engine::renderer::aa::next_mode;
+    using engine::renderer::aa::parse_mode;
 
     const bool policy_ok = kDefault == Mode::Off && kAfterTonemap && kTaaBeforeTonemap
         && !kStackSpatial && kSmaaThreshold == 0.1f && kSmaaMaxSearch == 8
@@ -2282,8 +2287,31 @@ bool run_aa_gate(const ForwardDemo& demo) {
         && effective_mode(Mode::Off, fxaa_ok, smaa_ok, taa_ok) == Mode::Off
         && effective_mode(Mode::Smaa, fxaa_ok, false, false) == Mode::Off;
 
+    Mode parsed = Mode::Taa;
+    const bool parse_ok = parse_mode("off", parsed) && parsed == Mode::Off
+        && parse_mode("fxaa", parsed) && parsed == Mode::Fxaa
+        && parse_mode("smaa", parsed) && parsed == Mode::Smaa
+        && parse_mode("taa", parsed) && parsed == Mode::Taa
+        && !parse_mode("FXAA", parsed) && !parse_mode("nope", parsed);
+
+    // r.aa is now allowed to change demo.aa_mode before this gate runs, so
+    // asserting the factory default unconditionally would go red for anyone
+    // running with the knob set. Assert the default only while the knob is
+    // untouched; once touched, assert the demo matches what was asked for
+    // (falling back to the default on an unparsable value, same as the
+    // knob-application code does). Same shape as run_window_gate's
+    // startup/default_ok clause for window.mode and r.vsync.
+    bool startup_ok = demo.aa_mode == kDefault;
+    if (cv_aa.source() != engine::CvarSource::Default) {
+        Mode wanted = kDefault;
+        if (!parse_mode(cv_aa.as_string(), wanted)) {
+            wanted = kDefault;
+        }
+        startup_ok = demo.aa_mode == wanted;
+    }
+
     const bool passed = policy_ok && luma_ok && fxaa_ok && smaa_ok && exclusive_ok
-        && demo.aa_mode == kDefault;
+        && parse_ok && startup_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
         "AA gate: default=off exclusive=yes after_tonemap=yes fxaa=yes (%s)",
@@ -4294,6 +4322,17 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     }
     if (!run_bloom_gate(*demo) && fail_on_gate) {
         return false;
+    }
+    // Applied here, before run_aa_gate, so the gate can assert the knob-aware
+    // startup mode rather than only the factory default.
+    if (cv_aa.source() != engine::CvarSource::Default) {
+        engine::renderer::aa::Mode mode = demo->aa_mode;
+        if (engine::renderer::aa::parse_mode(cv_aa.as_string(), mode)) {
+            demo->aa_mode = mode;
+        } else {
+            engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+                std::string("Cvar 'r.aa' expects ") + cv_aa.help());
+        }
     }
     if (!run_aa_gate(*demo) && fail_on_gate) {
         return false;

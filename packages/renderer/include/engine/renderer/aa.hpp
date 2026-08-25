@@ -3,6 +3,7 @@
 #include <engine/core/types.hpp>
 #include <engine/math/vec3.hpp>
 #include <engine/math/vec4.hpp>
+#include <string_view>
 
 namespace engine::renderer::aa {
 
@@ -42,6 +43,16 @@ inline const char* mode_name(Mode mode) {
     case Mode::Taa:  return "TAA";
     }
     return "OFF";
+}
+
+// Lowercase tokens only. mode_name returns the display spelling, which is
+// uppercase, so this is deliberately not its inverse.
+inline bool parse_mode(std::string_view text, Mode& out) {
+    if (text == "off")  { out = Mode::Off;  return true; }
+    if (text == "fxaa") { out = Mode::Fxaa; return true; }
+    if (text == "smaa") { out = Mode::Smaa; return true; }
+    if (text == "taa")  { out = Mode::Taa;  return true; }
+    return false;
 }
 
 inline Mode next_mode(Mode mode) {
