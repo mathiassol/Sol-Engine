@@ -2,7 +2,9 @@
 
 #include <engine/assets/asset_loader.hpp>
 #include <engine/audio/audio.hpp>
+#include <engine/cvar_file.hpp>
 #include <engine/physics/physics.hpp>
+#include <engine/core/cvar.hpp>
 #include <engine/core/log.hpp>
 #include <engine/core/profile.hpp>
 #include <engine/platform/input.hpp>
@@ -11,6 +13,7 @@
 #include <engine/rhi/device.hpp>
 #include <engine/rhi/rhi.hpp>
 
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -18,6 +21,24 @@
 namespace engine {
 
 namespace {
+
+// EngineConfig still holds the code-level defaults. A cvar only overrides a
+// field when something actually set it, which is why every read below checks
+// source() != CvarSource::Default.
+Cvar cv_window_width{"window.width", 1280, "Window client width in pixels"};
+Cvar cv_window_height{"window.height", 720, "Window client height in pixels"};
+Cvar cv_window_mode{"window.mode", "windowed", "windowed | borderless | fullscreen"};
+Cvar cv_vsync{"r.vsync", true, "Present with vsync"};
+
+u32 positive_dimension_cvar(const Cvar& cvar, u32 fallback) {
+    const i32 value = cvar.as_int();
+    if (value <= 0) {
+        log(LogLevel::Warn, LogChannel::Platform,
+            std::string("Cvar '") + cvar.name() + "' must be positive; keeping the default");
+        return fallback;
+    }
+    return static_cast<u32>(value);
+}
 
 bool looks_like_repo_root(const std::filesystem::path& path) {
     return std::filesystem::exists(path / "CMakeLists.txt")
@@ -145,19 +166,66 @@ bool Engine::init(const EngineConfig& config) {
         return false;
     }
 
-    window_ = modules_.platform->create_window(config.window);
-    if (!window_) {
-        log(LogLevel::Error, LogChannel::Platform, "Engine: failed to create window");
-        return false;
-    }
-
-    input_ = modules_.platform->create_input(*window_);
+    // Filesystem and content root come first: neither needs a window, and
+    // config.cfg has to be read before the window is sized.
     filesystem_ = modules_.platform->create_filesystem();
     content_root_ = discover_content_root(*modules_.platform, config_.content_root);
     content_layout_ = resolve_content_mounts(content_root_).layout;
     log(LogLevel::Info, LogChannel::General,
         std::string("Content root: ") + content_root_ + " ("
             + content_layout_name(content_layout_) + ")");
+
+    CvarApplyStats file_stats{};
+    if (filesystem_) {
+        const std::string cvar_path =
+            (std::filesystem::path(content_root_) / kCvarFileName).string();
+        file_stats = apply_cvar_file(*filesystem_, cvar_path);
+    }
+
+    auto window_desc = config.window;
+    if (cv_window_width.source() != CvarSource::Default) {
+        window_desc.width = positive_dimension_cvar(cv_window_width, window_desc.width);
+    }
+    if (cv_window_height.source() != CvarSource::Default) {
+        window_desc.height = positive_dimension_cvar(cv_window_height, window_desc.height);
+    }
+    if (cv_window_mode.source() != CvarSource::Default) {
+        platform::WindowMode mode = window_desc.mode;
+        if (platform::parse_window_mode(cv_window_mode.as_string(), mode)) {
+            window_desc.mode = mode;
+        } else {
+            log(LogLevel::Warn, LogChannel::Platform,
+                std::string("Cvar 'window.mode' expects ") + cv_window_mode.help());
+        }
+    }
+    if (cv_vsync.source() != CvarSource::Default) {
+        window_desc.vsync = cv_vsync.as_bool();
+    }
+
+    usize cli_count = 0;
+    for (usize i = 0; i < cvar_count(); ++i) {
+        const Cvar* cvar = cvar_at(i);
+        if (cvar && cvar->source() == CvarSource::CommandLine) {
+            ++cli_count;
+        }
+    }
+    char cvar_message[192];
+    std::snprintf(cvar_message, sizeof(cvar_message),
+        "Cvars: file=%llu cli=%llu window=%ux%u %s vsync=%s",
+        static_cast<unsigned long long>(file_stats.applied),
+        static_cast<unsigned long long>(cli_count),
+        window_desc.width, window_desc.height,
+        platform::window_mode_name(window_desc.mode),
+        window_desc.vsync ? "on" : "off");
+    log(LogLevel::Info, LogChannel::General, cvar_message);
+
+    window_ = modules_.platform->create_window(window_desc);
+    if (!window_) {
+        log(LogLevel::Error, LogChannel::Platform, "Engine: failed to create window");
+        return false;
+    }
+
+    input_ = modules_.platform->create_input(*window_);
 
     frame_arena_.emplace(config_.frame_arena_bytes);
 

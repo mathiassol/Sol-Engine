@@ -579,7 +579,7 @@ bool run_cvar_gate(engine::platform::IFileSystem* fs, const std::string& scratch
             walked = true;
         }
     }
-    const bool registry_ok = count >= 13
+    const bool registry_ok = count >= 17
         && walked
         && engine::find_cvar("gate.bool") == &cv_gate_bool
         && engine::find_cvar("gate.string") == &cv_gate_string

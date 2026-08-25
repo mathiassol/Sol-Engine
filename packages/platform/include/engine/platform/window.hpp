@@ -24,6 +24,15 @@ inline const char* window_mode_name(WindowMode mode) {
     }
 }
 
+// Lowercase tokens only. These come from config text, and the enum-valued cvars
+// document their accepted values in their help string.
+inline bool parse_window_mode(std::string_view text, WindowMode& out) {
+    if (text == "windowed")   { out = WindowMode::Windowed;   return true; }
+    if (text == "borderless") { out = WindowMode::Borderless; return true; }
+    if (text == "fullscreen") { out = WindowMode::Fullscreen; return true; }
+    return false;
+}
+
 struct WindowDesc {
     std::string_view title = "Engine";
     u32 width  = 1280;
