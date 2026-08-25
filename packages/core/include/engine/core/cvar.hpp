@@ -21,7 +21,6 @@ enum class CvarSetResult : u8 {
 };
 
 const char* cvar_type_name(CvarType type);
-const char* cvar_source_name(CvarSource source);
 
 // A named knob. Declare one at file scope next to the code that reads it:
 //
@@ -29,12 +28,18 @@ const char* cvar_source_name(CvarSource source);
 //
 // Construction registers it. Not thread-safe: drive it from startup and the
 // main thread only.
+//
+// Note: a `double` literal such as `2.2` is ambiguous across these overloads
+// (it converts to both `bool` and `f32`) and must be written `2.2f`. MSVC
+// reports this as a compile error, but the message does not point at the
+// missing `f`.
 class Cvar {
 public:
     Cvar(const char* name, bool value, const char* help);
     Cvar(const char* name, i32 value, const char* help);
     Cvar(const char* name, f32 value, const char* help);
     Cvar(const char* name, const char* value, const char* help);
+    ~Cvar();
 
     Cvar(const Cvar&) = delete;
     Cvar& operator=(const Cvar&) = delete;
@@ -52,6 +57,9 @@ public:
     f32              as_float() const;
     std::string_view as_string() const;
 
+    // An empty `text` is Invalid for every type, including String: this is
+    // deliberate, so `--set key=` is reported as a typo rather than a silent
+    // empty assignment.
     CvarSetResult set(std::string_view text, CvarSource source);
 
 private:

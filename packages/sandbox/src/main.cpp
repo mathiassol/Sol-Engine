@@ -614,8 +614,9 @@ bool run_cvar_gate() {
     const bool passed = registry_ok && types_ok && precedence_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Cvar gate: count=%llu types=%s precedence=%s (%s)",
+        "Cvar gate: count=%llu registry=%s types=%s precedence=%s (%s)",
         static_cast<unsigned long long>(count),
+        registry_ok ? "yes" : "no",
         types_ok ? "yes" : "no",
         precedence_ok ? "yes" : "no",
         passed ? "pass" : "FAIL");

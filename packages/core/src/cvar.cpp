@@ -2,7 +2,9 @@
 
 #include <engine/core/assert.hpp>
 
+#include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <vector>
 
 namespace engine {
@@ -50,6 +52,15 @@ bool parse_int(std::string_view text, i32& out) {
     if (text.empty()) {
         return false;
     }
+    // from_chars never consumes a leading '+'; skip at most one so "+5" parses
+    // like "5". "+" alone or "++1" still fail: the remaining text is either
+    // empty or still has a sign character, both of which from_chars rejects.
+    if (text.front() == '+') {
+        text.remove_prefix(1);
+        if (text.empty()) {
+            return false;
+        }
+    }
     i32 value = 0;
     const char* first = text.data();
     const char* last = text.data() + text.size();
@@ -65,12 +76,21 @@ bool parse_float(std::string_view text, f32& out) {
     if (text.empty()) {
         return false;
     }
+    if (text.front() == '+') {
+        text.remove_prefix(1);
+        if (text.empty()) {
+            return false;
+        }
+    }
     f32 value = 0.f;
     const char* first = text.data();
     const char* last = text.data() + text.size();
     const auto result = std::from_chars(first, last, value);
     if (result.ec != std::errc{} || result.ptr != last) {
         return false;
+    }
+    if (!std::isfinite(value)) {
+        return false;  // reject inf/nan spellings that from_chars accepts
     }
     out = value;
     return true;
@@ -94,16 +114,7 @@ const char* cvar_type_name(CvarType type) {
     case CvarType::Float:  return "float";
     case CvarType::String: return "string";
     }
-    return "bool";
-}
-
-const char* cvar_source_name(CvarSource source) {
-    switch (source) {
-    case CvarSource::File:        return "file";
-    case CvarSource::CommandLine: return "cli";
-    case CvarSource::Code:        return "code";
-    default:                      return "default";
-    }
+    return "???";  // corrupted value: announce itself rather than impersonate bool
 }
 
 Cvar::Cvar(const char* name, bool value, const char* help)
@@ -124,6 +135,11 @@ Cvar::Cvar(const char* name, f32 value, const char* help)
 Cvar::Cvar(const char* name, const char* value, const char* help)
     : name_(name), help_(help), type_(CvarType::String), string_(value ? value : "") {
     register_cvar(this);
+}
+
+Cvar::~Cvar() {
+    auto& list = registry();
+    list.erase(std::remove(list.begin(), list.end(), this), list.end());
 }
 
 bool Cvar::as_bool() const {
