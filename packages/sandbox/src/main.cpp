@@ -611,14 +611,43 @@ bool run_cvar_gate() {
         && cv_gate_prec.set("4", CvarSource::Code) == CvarSetResult::Applied
         && cv_gate_prec.as_int() == 4;
 
-    const bool passed = registry_ok && types_ok && precedence_ok;
+    // A Cvar with automatic (non-static) storage duration must leave no trace
+    // once it goes out of scope: no dangling pointer in the registry, and no
+    // false "duplicate cvar name" abort if the same name is declared again.
+    bool scope_ok;
+    {
+        const engine::usize before = engine::cvar_count();
+        bool ok = true;
+        {
+            engine::Cvar scoped("gate.scoped", false, "Cvar gate: scope-lifetime knob");
+            ok = ok
+                && engine::find_cvar("gate.scoped") == &scoped
+                && engine::cvar_count() == before + 1;
+        }
+        ok = ok
+            && engine::cvar_count() == before
+            && engine::find_cvar("gate.scoped") == nullptr;
+        {
+            // Re-entering an identical scope must not abort: that is the
+            // regression the destructor's unregister step exists to prevent.
+            engine::Cvar scoped_again("gate.scoped", false, "Cvar gate: scope-lifetime knob");
+            ok = ok && engine::find_cvar("gate.scoped") == &scoped_again;
+        }
+        ok = ok
+            && engine::cvar_count() == before
+            && engine::find_cvar("gate.scoped") == nullptr;
+        scope_ok = ok;
+    }
+
+    const bool passed = registry_ok && types_ok && precedence_ok && scope_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Cvar gate: count=%llu registry=%s types=%s precedence=%s (%s)",
+        "Cvar gate: count=%llu registry=%s types=%s precedence=%s scope=%s (%s)",
         static_cast<unsigned long long>(count),
         registry_ok ? "yes" : "no",
         types_ok ? "yes" : "no",
         precedence_ok ? "yes" : "no",
+        scope_ok ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);

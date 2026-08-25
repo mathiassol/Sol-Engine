@@ -2,7 +2,6 @@
 
 #include <engine/core/assert.hpp>
 
-#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <vector>
@@ -53,13 +52,14 @@ bool parse_int(std::string_view text, i32& out) {
         return false;
     }
     // from_chars never consumes a leading '+'; skip at most one so "+5" parses
-    // like "5". "+" alone or "++1" still fail: the remaining text is either
-    // empty or still has a sign character, both of which from_chars rejects.
+    // like "5". Only skip it when a digit immediately follows — otherwise
+    // reject outright. Without that check, stripping "+" from "+-1" would
+    // leave "-1", which from_chars happily parses as a negative number.
     if (text.front() == '+') {
-        text.remove_prefix(1);
-        if (text.empty()) {
+        if (text.size() < 2 || text[1] < '0' || text[1] > '9') {
             return false;
         }
+        text.remove_prefix(1);
     }
     i32 value = 0;
     const char* first = text.data();
@@ -76,11 +76,13 @@ bool parse_float(std::string_view text, f32& out) {
     if (text.empty()) {
         return false;
     }
+    // Same leading-'+' handling as parse_int, but a digit or a decimal point
+    // may legitimately follow (".5", "+.5").
     if (text.front() == '+') {
-        text.remove_prefix(1);
-        if (text.empty()) {
+        if (text.size() < 2 || !((text[1] >= '0' && text[1] <= '9') || text[1] == '.')) {
             return false;
         }
+        text.remove_prefix(1);
     }
     f32 value = 0.f;
     const char* first = text.data();
@@ -138,8 +140,7 @@ Cvar::Cvar(const char* name, const char* value, const char* help)
 }
 
 Cvar::~Cvar() {
-    auto& list = registry();
-    list.erase(std::remove(list.begin(), list.end(), this), list.end());
+    std::erase(registry(), this);
 }
 
 bool Cvar::as_bool() const {
