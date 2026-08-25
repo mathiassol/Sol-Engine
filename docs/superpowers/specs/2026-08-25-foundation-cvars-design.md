@@ -105,8 +105,10 @@ Repo layout puts the file at the repo root; install layout puts it next to
 ## Command line
 
 `--set key=value` and `--set key value`, applied with `CvarSource::CommandLine`.
-Unknown keys warn and count. `--gates` keeps its existing hand-rolled parse;
-this is not a general argument parser.
+Arguments that are not `--set` are ignored, so `--gates` keeps its existing
+hand-rolled parse and this stays a knob overlay, not a general argument
+parser. Unknown keys warn and count `unknown`. A trailing `--set` with no
+value, or a `--set` whose value is the next `--set`, counts `invalid`.
 
 ## Who loads what, when
 
@@ -116,7 +118,8 @@ this is not a general argument parser.
    **above** `create_window` — neither depends on the window — then loads
    `config.cfg` through `IFileSystem`, then overlays `window.width`,
    `window.height`, `window.mode` and `r.vsync` onto `config.window` before
-   the window is created. One log line: `Cvars: file=N cli=N`.
+   the window is created. One log line names the counts and the window knobs
+   actually applied: `Cvars: file=N cli=N window=1280x720 windowed vsync=on`.
 3. `r.aa` is read by the sandbox at demo setup, because the AA default is demo
    state, not engine state.
 
@@ -166,8 +169,9 @@ sandbox.exe --set window.mode=borderless --set r.aa=fxaa
 ```
 
 starts borderless with FXAA already on; F11 and F5 still cycle from there.
-A `config.cfg` holding `r.vsync 0` is visible on the F3 overlay's present
-interval.
+A `config.cfg` holding `r.vsync 0` reports as vsync off in the startup log —
+the F3 overlay carries no present-interval slot, and this row does not add
+one.
 
 ## Not this
 
