@@ -16,6 +16,7 @@ GpuMesh upload_mesh(rhi::IDevice& device, const MeshData& mesh) {
     gpu.index_buffer = device.create_buffer(ib_desc, mesh.indices.data());
 
     gpu.index_count = static_cast<u32>(mesh.indices.size());
+    gpu.bounds = mesh.bounds;
     return gpu;
 }
 

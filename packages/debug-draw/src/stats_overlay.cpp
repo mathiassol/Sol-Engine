@@ -2,8 +2,10 @@
 
 #include <engine/core/log.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace engine::debug {
@@ -34,7 +36,10 @@ constexpr u8 kFontS[8]     = {0x3C, 0x60, 0x30, 0x1C, 0x06, 0x66, 0x3C, 0x00};
 constexpr u8 kFontC[8]     = {0x3C, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00};
 constexpr u8 kFontU[8]     = {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00};
 constexpr u8 kFontM[8]     = {0x63, 0x77, 0x7F, 0x6B, 0x63, 0x63, 0x63, 0x00};
+constexpr u8 kFontE[8]     = {0x7E, 0x60, 0x60, 0x7C, 0x60, 0x60, 0x7E, 0x00};
 constexpr u8 kFontG[8]     = {0x3C, 0x66, 0x60, 0x6E, 0x66, 0x66, 0x3C, 0x00};
+constexpr u8 kFontR[8]     = {0x7C, 0x66, 0x66, 0x7C, 0x68, 0x64, 0x66, 0x00};
+constexpr u8 kFontX[8]     = {0x66, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x66, 0x00};
 constexpr u8 kFontN[8]     = {0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x00};
 constexpr u8 kFontA[8]     = {0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00};
 constexpr u8 kFontSlash[8] = {0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0, 0x80, 0x00};
@@ -58,9 +63,12 @@ const u8* glyph_rows(char c) {
     case 'P': return kFontP;
     case 'S': return kFontS;
     case 'C': return kFontC;
+    case 'E': return kFontE;
     case 'U': return kFontU;
     case 'm': return kFontM;
     case 'G': return kFontG;
+    case 'R': return kFontR;
+    case 'X': return kFontX;
     case 'n': return kFontN;
     case 'a': return kFontA;
     case '/': return kFontSlash;
@@ -102,6 +110,21 @@ void append_glyph(std::vector<Vertex>& vertices, char c, f32 origin_x, f32 origi
     }
 }
 
+rhi::GraphicsPipelineDesc overlay_pipeline_desc(std::span<const u8> vs, std::span<const u8> ps) {
+    rhi::GraphicsPipelineDesc desc{};
+    desc.vertex_shader = vs;
+    desc.pixel_shader = ps;
+    desc.attributes[0] = {rhi::VertexSemantic::Position, 0, rhi::VertexFormat::Float3, 0};
+    desc.attribute_count = 1;
+    desc.constant_buffer_count = 1;
+    desc.depth = rhi::DepthTest::Disabled;
+    desc.cull = rhi::CullMode::None;
+    desc.blend = rhi::BlendMode::Alpha;
+    desc.color_format = rhi::Format::RGBA8_UNORM;
+    desc.debug_name = "overlay";
+    return desc;
+}
+
 } // namespace
 
 bool StatsOverlay::init(rhi::IDevice& device, shaders::IShaderCompiler& compiler,
@@ -111,11 +134,11 @@ bool StatsOverlay::init(rhi::IDevice& device, shaders::IShaderCompiler& compiler
     shaders::ShaderCompileDesc vs_desc{};
     vs_desc.file_path = shader_path;
     vs_desc.entry_point = "vs_main";
-    vs_desc.target_profile = "vs_5_0";
+    vs_desc.target_profile = "vs_6_0";
 
     shaders::ShaderCompileDesc ps_desc = vs_desc;
     ps_desc.entry_point = "ps_main";
-    ps_desc.target_profile = "ps_5_0";
+    ps_desc.target_profile = "ps_6_0";
 
     shaders::ShaderBytecode vs_bytecode;
     shaders::ShaderBytecode ps_bytecode;
@@ -131,28 +154,26 @@ bool StatsOverlay::init(rhi::IDevice& device, shaders::IShaderCompiler& compiler
         return false;
     }
 
-    pipeline_ = device.create_overlay_pipeline(vs_bytecode.data, ps_bytecode.data);
+    pipeline_ = device.create_graphics_pipeline(overlay_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
     if (!pipeline_) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
             "Stats overlay pipeline creation failed");
         return false;
     }
 
-    rhi::BufferDesc cb_desc{};
-    cb_desc.size  = 256;
-    cb_desc.usage = rhi::BufferUsage::Uniform;
-    constant_buffer_ = device.create_buffer(cb_desc);
-    if (!constant_buffer_) {
-        return false;
-    }
-
-    rebuild_mesh("FPS: -- CPU: --ms GPU: n/a");
+    rebuild_mesh("FPS:0.0 P:0.0 X:0.0 E:0.0 G:0.0");
     return true;
 }
 
 void StatsOverlay::update(const FrameStats& stats) {
-    char text[64];
-    std::snprintf(text, sizeof(text), "FPS:%.1f CPU:%.1fms GPU:n/a", stats.fps, stats.cpu_ms);
+    char text[80];
+    if (stats.aa && stats.aa[0] != '\0') {
+        std::snprintf(text, sizeof(text), "FPS:%.1f P:%.1f X:%.1f E:%.1f G:%.1f %s",
+            stats.fps, stats.poll_ms, stats.extract_ms, stats.execute_ms, stats.gpu_ms, stats.aa);
+    } else {
+        std::snprintf(text, sizeof(text), "FPS:%.1f P:%.1f X:%.1f E:%.1f G:%.1f",
+            stats.fps, stats.poll_ms, stats.extract_ms, stats.execute_ms, stats.gpu_ms);
+    }
     if (cached_text_ == text) {
         return;
     }
@@ -191,10 +212,14 @@ void StatsOverlay::draw(rhi::ICommandList& cmd, u32 width, u32 height) {
     ScreenConstants constants{};
     constants.screen_width  = static_cast<f32>(std::max(width, 1u));
     constants.screen_height = static_cast<f32>(std::max(height, 1u));
-    device_->write_buffer(*constant_buffer_, 0, &constants, sizeof(constants));
+    const rhi::FrameAllocation slice = device_->alloc_frame_memory(sizeof(constants));
+    if (!slice.buffer) {
+        return;
+    }
+    device_->write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
 
     cmd.set_pipeline(*pipeline_);
-    cmd.set_constant_buffer(0, *constant_buffer_);
+    cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     cmd.set_vertex_buffer(0, *vertex_buffer_, sizeof(Vertex));
     cmd.draw(vertex_count_);
 }

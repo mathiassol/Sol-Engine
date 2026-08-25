@@ -6,7 +6,9 @@ engine_add_package(platform-win32
         src/window_win32.cpp
     PUBLIC_DEPS
         engine::platform
+        version
     PRIVATE_DEPS
         user32
         gdi32
+        xinput
 )

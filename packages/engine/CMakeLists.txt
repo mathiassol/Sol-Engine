@@ -8,4 +8,6 @@ engine_add_package(engine
         engine::rhi
         engine::renderer
         engine::assets
+        engine::audio
+        engine::physics
 )

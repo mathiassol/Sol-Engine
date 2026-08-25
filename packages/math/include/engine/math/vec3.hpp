@@ -12,11 +12,25 @@ struct Vec3 {
     f32 z = 0.f;
 
     Vec3() = default;
-    Vec3(f32 x, f32 y, f32 z) : x(x), y(y), z(z) {}
+    constexpr Vec3(f32 x, f32 y, f32 z) : x(x), y(y), z(z) {}
 
     Vec3 operator+(Vec3 o) const { return {x + o.x, y + o.y, z + o.z}; }
     Vec3 operator-(Vec3 o) const { return {x - o.x, y - o.y, z - o.z}; }
     Vec3 operator*(f32 s) const { return {x * s, y * s, z * s}; }
+    Vec3 operator-() const { return {-x, -y, -z}; }
+
+    Vec3& operator+=(Vec3 o) {
+        x += o.x;
+        y += o.y;
+        z += o.z;
+        return *this;
+    }
+    Vec3& operator-=(Vec3 o) {
+        x -= o.x;
+        y -= o.y;
+        z -= o.z;
+        return *this;
+    }
 
     f32 dot(Vec3 o) const { return x * o.x + y * o.y + z * o.z; }
     Vec3 cross(Vec3 o) const {

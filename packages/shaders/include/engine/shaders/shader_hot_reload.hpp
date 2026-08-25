@@ -12,13 +12,15 @@ struct WatchedShaderPair {
     ShaderCompileDesc pixel;
 };
 
-enum class ShaderReloadStatus : u8 { Unchanged, Reloaded, Failed };
+enum class ShaderReloadStatus : u8 { Unchanged, Reloaded, Failed, Busy };
 
 class IShaderHotReloader {
 public:
     virtual ~IShaderHotReloader() = default;
 
     virtual void begin_watch(const WatchedShaderPair& sources) = 0;
+    // Queue a compile on the worker. poll() must not wait for DXC.
+    virtual void request_compile() = 0;
     virtual ShaderReloadStatus poll(
         ShaderBytecode& out_vertex,
         ShaderBytecode& out_pixel,

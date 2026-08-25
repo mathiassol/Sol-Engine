@@ -10,6 +10,7 @@ namespace engine::assets::gpu {
 struct GpuMesh {
     std::unique_ptr<rhi::IBuffer> vertex_buffer;
     std::unique_ptr<rhi::IBuffer> index_buffer;
+    math::Aabb bounds = math::Aabb::empty();
     u32 index_count = 0;
 };
 

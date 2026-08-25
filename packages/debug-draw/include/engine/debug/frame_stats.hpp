@@ -8,6 +8,11 @@ struct FrameStats {
     f32 fps = 0.f;
     f32 frame_ms = 0.f;
     f32 cpu_ms = 0.f;
+    f32 poll_ms = 0.f;
+    f32 extract_ms = 0.f;
+    f32 execute_ms = 0.f;
+    f32 gpu_ms = 0.f;
+    const char* aa = "";
 };
 
 class FrameStatsTracker {

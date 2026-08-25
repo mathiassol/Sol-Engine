@@ -19,7 +19,7 @@ FrameContext FrameTimer::begin_frame() {
     context_.fixed_steps = 0;
 
     if (config_.frames_in_flight > 0) {
-        context_.frame_slot = static_cast<u8>(
+        context_.cpu_frame_slot = static_cast<u8>(
             context_.frame_index % config_.frames_in_flight);
     }
 

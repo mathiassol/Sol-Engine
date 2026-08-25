@@ -18,6 +18,12 @@ struct WindowState {
     u32 height = 0;
     f32 dpi_scale = 1.f;
     bool close_requested = false;
+    bool sizing = false;
+    bool vsync = true;
+    WindowMode mode = WindowMode::Windowed;
+    DWORD windowed_style = 0;
+    WINDOWPLACEMENT windowed_placement{};
+    std::string title;
     std::deque<WindowEvent> events;
 };
 
@@ -30,10 +36,20 @@ public:
     u32 width() const override;
     u32 height() const override;
     f32 dpi_scale() const override;
+    WindowMode mode() const override;
+    bool set_mode(WindowMode mode) override;
+    bool vsync() const override;
+    void set_vsync(bool enabled) override;
+    std::string_view title() const override;
 
     HWND hwnd() const;
 
 private:
+    void remember_windowed();
+    void apply_windowed();
+    void apply_cover_monitor();
+    void refresh_client_size();
+
     WindowState* state_;
 };
 

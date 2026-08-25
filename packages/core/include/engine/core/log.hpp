@@ -20,6 +20,8 @@ enum class LogChannel : u8 {
     Platform,
     Render,
     Assets,
+    Audio,
+    Physics,
 };
 
 class ILogger {

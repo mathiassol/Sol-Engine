@@ -19,6 +19,8 @@ struct DeviceDesc {
     u32 width  = 0;
     u32 height = 0;
     GraphicsAPI preferred_api = GraphicsAPI::None;
+    // 0 = immediate (tear if the swapchain allows it). 1 = wait for vblank.
+    u32 present_interval = 1;
 };
 
 class IDevice;

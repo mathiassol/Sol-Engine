@@ -65,12 +65,11 @@
 
 ## Editor
 
--   Tools are part of the engine.
--   Debug visualization is a feature.
--   Every renderer feature should have a debug mode.
--   Prioritize workflow over appearance.
--   Build reusable widgets.
--   Keep interaction consistent.
+-   The engine and the editor are separate products.
+-   Games (including the sandbox demo) are written in code against engine APIs.
+-   An editor, when it exists, is another app that only exposes what the engine already can do.
+-   Do not put an inspector, hierarchy, or content browser inside the engine or sandbox.
+-   Debug visualization (F3 / F4 / F5, hot-reload) is an engine feature, not an editor.
 
 ## Performance
 

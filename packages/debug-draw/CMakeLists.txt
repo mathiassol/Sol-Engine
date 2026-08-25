@@ -4,5 +4,6 @@ engine_add_package(debug-draw
     SOURCES
         src/frame_stats.cpp
         src/stats_overlay.cpp
-    PUBLIC_DEPS engine::core engine::rhi engine::shaders
+        src/debug_lines.cpp
+    PUBLIC_DEPS engine::core engine::math engine::rhi engine::shaders
 )

@@ -7,3 +7,7 @@ engine_add_package(rhi-d3d12
     PUBLIC_DEPS engine::rhi
     PRIVATE_DEPS d3d12 dxgi d3dcompiler
 )
+
+target_include_directories(rhi-d3d12 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)

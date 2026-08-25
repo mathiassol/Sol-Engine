@@ -1,0 +1,123 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "sol-engine-obj-to-gltf"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0.0,
+        "roughnessFactor": 1.0
+      }
+    }
+  ],
+  "textures": [
+    {
+      "source": 0
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/husky/Cartoon_Husky_Albedo1.png"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "cartoon_husky.bin",
+      "byteLength": 378248
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 85584,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 85584,
+      "byteLength": 85584,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 171168,
+      "byteLength": 57056,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 228224,
+      "byteLength": 150024,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 7132,
+      "type": "VEC3",
+      "min": [
+        -0.121063,
+        -0.000413,
+        -0.647498
+      ],
+      "max": [
+        0.121063,
+        0.712281,
+        0.503345
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 7132,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 7132,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5125,
+      "count": 37506,
+      "type": "SCALAR"
+    }
+  ]
+}

@@ -10,6 +10,8 @@ Every package in this engine must follow these rules. Review this before adding 
 - Renderer never includes graphics API headers.
 - Public headers never expose implementation details.
 - All packages build independently.
+- The editor is a separate application. Engine packages do not contain
+  inspector, hierarchy, or content-browser UI.
 
 ## Interface / implementation split
 

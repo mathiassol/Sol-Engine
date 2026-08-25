@@ -1,12 +1,14 @@
 #include <engine/core/log.hpp>
 
 #include <cstdio>
+#include <mutex>
 
 namespace engine {
 
 namespace {
 
 ILogger* g_logger = nullptr;
+std::mutex g_log_mutex;
 
 const char* level_name(LogLevel level) {
     switch (level) {
@@ -26,6 +28,8 @@ const char* channel_name(LogChannel channel) {
     case LogChannel::Platform: return "platform";
     case LogChannel::Render:   return "render";
     case LogChannel::Assets:   return "assets";
+    case LogChannel::Audio:    return "audio";
+    case LogChannel::Physics:  return "physics";
     }
     return "???";
 }
@@ -46,10 +50,12 @@ StdoutLogger g_default_logger;
 } // namespace
 
 void set_logger(ILogger* logger) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
     g_logger = logger;
 }
 
 ILogger* logger() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
     return g_logger ? g_logger : &g_default_logger;
 }
 
@@ -58,7 +64,9 @@ void log(LogLevel level, std::string_view message) {
 }
 
 void log(LogLevel level, LogChannel channel, std::string_view message) {
-    logger()->log(level, channel, message);
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    ILogger* active = g_logger ? g_logger : &g_default_logger;
+    active->log(level, channel, message);
 }
 
 } // namespace engine

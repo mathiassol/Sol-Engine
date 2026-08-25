@@ -5,6 +5,7 @@
 #include <engine/platform/window.hpp>
 
 #include <memory>
+#include <string>
 #include <string_view>
 
 namespace engine::platform {
@@ -18,6 +19,9 @@ public:
     virtual std::unique_ptr<IWindow> create_window(const WindowDesc& desc) = 0;
     virtual std::unique_ptr<IInput> create_input(IWindow& window) = 0;
     virtual std::unique_ptr<IFileSystem> create_filesystem() = 0;
+    virtual std::string executable_directory() const = 0;
+    virtual std::string executable_file_version() const = 0;
+    virtual bool executable_has_icon() const = 0;
 
     virtual std::string_view name() const = 0;
 };

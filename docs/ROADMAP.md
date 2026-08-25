@@ -1,0 +1,703 @@
+# Sol Engine roadmap
+
+**Canonical plan.** Follow this file in order. The live board is the canvas
+`sol-engine-board.canvas.tsx`.
+
+Last updated: 25 Aug 2026.
+
+---
+
+## What this engine is
+
+A **general-purpose game engine** — the same product category as Unity, Godot,
+and Unreal — written in C++20, owned by you. The long-term shape is a runtime
+you can ship games on: window and input, content from disk, a scene you can
+edit, a renderer you can extend, tools, and (when the RHI contract is ready)
+more than one platform/GPU backend.
+
+The sandbox is the **proving ground**, not the product. A lit scene with
+`--gates` is how we prove a layer. It is not a reason to stop adding engine
+systems.
+
+**How we avoid the last two failures:**
+
+1. **Stability.** RAII, explicit ownership, a heartbeat loop, D3D12 debug
+   layer, and a gate you can run. Unpredictable lifetime and “it works on my
+   machine” are how previous engines died.
+2. **Architecture you can rip.** Interface packages vs implementations,
+   dependencies only downward, renderer never includes a graphics API.
+   Replacing the renderer approach, adding a pass, or adding Vulkan later
+   should be a package-sized job, not a whole-tree rewrite. That modularity
+   is designed **now**, even when only D3D12 is implemented.
+
+Stability is the *method*. A full engine is the *goal*. Those are not opposites.
+
+Copy Unity/Godot/Unreal’s **shape** (modules, a loop, a scene, a renderer
+behind an RHI, tools). Do not copy their **org chart** onto an empty tree
+(ECS + fibers + deferred+SSAO+editor on day one). That is how small engines
+become untestable — not because those systems are forbidden forever.
+
+Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
+[Scaffold.md](../Scaffold.md), [packageRules.md](packageRules.md).
+
+---
+
+## Audit — foundation today (after phase 14)
+
+Measured 25 Aug 2026: **16,078 lines** of C++/HLSL in **124 files**, **25
+packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 15%
+of the engine (2,372 lines). `sandbox` is 4,358; `renderer` is 2,350.
+`physics-cpu` is 1,253 lines. `game.exe` reuses sandbox sources (install layout,
+no extra .cpp).
+
+| Layer | What is real | What is missing for a general engine |
+|-------|----------------|--------------------------------------|
+| Loop | Phased `Engine::run`, frame arena, F3, `--gates`, async DXC worker | No gameplay beyond fly camera + Z/X |
+| GPU | D3D12 RHI, 3-frame flight, mips, **SamplerDesc**, **compute PSO + dispatch**, **cube / array textures**, **GGX PBR**, **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA** (optional F5, default Off, exclusive with SMAA 1x / FXAA), **motion vectors** (RGBA16 UV, object+camera), RGBA16 + ACES, SM 6.0 | UAV textures, BC7 |
+| Graph | Declared reads/writes, transients, **standard frame in renderer** | max 4 refs; no compute **passes** in the graph yet |
+| Scene | Names, hierarchy, `solscene` save/load, prefab extract/instantiate | Streaming, ECS |
+| Content | Mounts, OBJ, glTF (one primitive + metal/rough factors), PNG, shader disk cache, `SOLC` cooker, `SOLP` pak next to the exe | Skins |
+| Physics | Overlap, SI bodies, Y-up capsule, sensor enter/exit, closest-hit rays | Angular/OBB, Jolt |
+| Debug | F3 overlay, F4 AABBs, F5 AA, **PIX command-list events** | No editor, no graph dump as a product UI |
+| Swap | Live passes + extract in `renderer`; `ShaderTarget` enum; samplers + **working** D3D12 compute; cubes on `TextureDesc` | SPIR-V compiler; no `rhi-vulkan` yet |
+
+**Phases 0–14 are foundation, a swappable live frame, materials, and an RHI
+contract a second backend can target.** Audio #1–#2 and Physics #1–#5
+(overlap + bodies + capsule + triggers + rays) are **Done**. Next work is
+**one Ready row** from [ENGINE_MAP.md](ENGINE_MAP.md) (UI, skins, particles,
+actions, logger, …).
+Picking rules: [TODO_LATER.md](TODO_LATER.md).
+
+---
+
+## How to use this file
+
+1. Work **only** the lowest incomplete phase.
+2. Finish its **gate** (`--gates` and/or a visible sandbox check with
+   `ENGINE_GPU_DEBUG=1`).
+3. Mark the phase done here. Update the canvas: phase status, next gate,
+   **line counts** (recount `packages/**/*.{cpp,hpp,h,hlsl}`, exclude `build/`
+   and `third_party/`).
+4. Do not start the following phase in the same session unless the gate is
+   green.
+
+**Stability rules (never drop these):** debug-layer-clean GPU changes, RAII,
+no hidden globals, renderer does not include D3D12/Vulkan headers.
+
+**Not a never-list:** Vulkan, audio, physics, PBR, deferred, TAA. An **editor
+is a separate app** (far), not an engine package. Those are **on the engine
+map**. Implement one production backend first; grow the **interface** before
+the second backend. Add systems behind packages.
+
+---
+
+## Sequence
+
+| Phase | Name | Status | Gate (one sentence) |
+|-------|------|--------|---------------------|
+| 0–4 | Foundation | **Done** | Sandbox runs, textured huskies, resize, F3, `--gates` |
+| 5 | See the world | **Done** | F4 boxes, floor, aspect-correct camera |
+| 6 | Light | **Done** | Sun + ambient + point slots; Lambert |
+| 7 | Shadow | **Done** | 1024² sun depth; comparison sample |
+| 8 | HDR | **Done** | RGBA16 scene_color + ACES tonemap |
+| 9 | Real DXC | **Done** | dxcompiler SM 6.0 / DXIL, cache hits |
+| 10 | Content | **Done** | Mips + one glTF through mounts |
+| 11 | Scale | **Done** | Async DXC; 64 instances + frustum skip |
+| 12 | Make swap real | **Done** | Adding a pass does not mean editing the sandbox blob; extract + graph live in renderer |
+| 13 | Materials | **Done** | Shading reads a material, not a hardcoded albedo slot |
+| 14 | RHI contract | **Done** | `ICommandList` can express samplers + compute; shader desc is not DXIL-only |
+| **15+** | **Engine + graphics** | **Next** | Any Ready row. TAA is Done. CSM waits on a larger scene. No in-engine editor. |
+
+---
+
+## Phase 12 — Make swap real (done)
+
+**Why:** The package diagram said the renderer was swappable while
+`sandbox/src/main.cpp` owned the live passes and extract.
+
+**Gate (met):** `setup_standard_frame` registers shadow → forward → sky →
+tonemap → debug → overlay. `extract_visible` does frustum skip and sun bounds. Sandbox
+copies `World` into `ExtractInstance` only. `--gates` logs `Swap gate: standard
+frame owned by renderer`. GPU debug clean. Renderer does not include `scene`.
+
+**Swap test:** a new engine pass is `add_pass` in
+`packages/renderer/src/standard_frame.cpp`.
+
+---
+
+## Phase 13 — Materials (done)
+
+**Why:** Shading was `forward.hlsl` plus an albedo index on `Instance`. glTF
+already had metal/rough factors; we ignored them.
+
+**Gate (met):** `World` holds up to 16 `Material`s. `Instance.material` is a
+handle (albedo + metallic + roughness). Extract copies metal/rough into
+`DrawItem`; `FrameConstants.material_params` feeds the forward shader.
+Changing roughness on a material changes extract data without rewriting HLSL
+from C++. glTF loads `metallic_factor` / `roughness_factor`. `--gates` logs
+`Material gate: materials=5 handles=yes roughness_is_data=yes`. GPU debug
+clean.
+
+**Do not (still):** a full node material graph, bindless mega-heap.
+
+---
+
+## Phase 14 — RHI contract (done)
+
+**Why:** The command list could not express compute or sampler objects. The
+comparison sampler was a D3D12-only implicit. Shader compile was a DXC
+profile string with no target enum.
+
+**Gate (met):** `SamplerDesc` on `GraphicsPipelineDesc` (forward: linear +
+comparison; tonemap: linear). `IDevice::create_sampler` returns a sampler
+object. `ICommandList` has `set_sampler`, `set_compute_pipeline`, and
+`dispatch`. D3D12 `create_compute_pipeline` returns null and logs. Shader
+compile desc has `ShaderTarget` (DXIL vs SPIR-V); DXC rejects SPIR-V.
+`--gates` logs `RHI contract gate: sampler=yes compute_stub=yes spirv_rejected=yes`.
+GPU debug clean. **No `rhi-vulkan` package.**
+
+**Do not (still):** two production backends at once. One backend stays hard.
+
+---
+
+## Renderer #8 — PBR BRDF (done)
+
+**Why:** Forward was Lambert plus a small Blinn term. Materials already stored
+metallic/roughness; shading did not use a Cook-Torrance BRDF.
+
+**Gate (met):** Filament/glTF GGX: α = roughness², Smith-GGX height-correlated V,
+Schlick F, Lambert/π diffuse with (1−F)(1−metallic). Same BRDF on sun and point
+lights. `--gates` logs `PBR gate: ggx_peak=yes metal_f0=yes points_spec=yes
+energy=kd_1-F alpha=r^2 (pass)`. CPU (`pbr.hpp`) stays in sync with
+`forward.hlsl`. Indirect lighting is split-sum IBL (map row #9, **Done**).
+
+**Do not (still):** Disney extra lobes, multi-scatter compensation.
+
+---
+
+## Build #1–#3 — `game.exe` Release (done)
+
+**Why:** The sandbox is a Debug proving ground. A player should run an optimized
+binary with content next to the exe, not a repo checkout.
+
+**Gate (met):** CMake target `game` (option `ENGINE_BUILD_GAME`) is distinct from
+`sandbox`. POST_BUILD copies `content/` and `debug/` plus DXC DLLs next to
+`game.exe`. Release: `/O2`, NDEBUG, no D3D12 debug layer even if
+`ENGINE_GPU_DEBUG=1`. `--gates` on `game.exe` logs
+`Build gate: target=game layout=install (pass)` and `Game gates passed`.
+`cmake --install` produces the same layout. Sandbox still uses the repo tree.
+
+**Do not (still):** installer, `%LOCALAPPDATA%` logs. Identity, `content.pak`,
+and DXC DLLs next to the exe are Done.
+
+---
+
+## Build #4 — game identity (done)
+
+**Why:** Explorer and the taskbar should show a game, not a nameless
+console-adjacent tool.
+
+**Gate (met):** Both runtime exes embed `VERSIONINFO` from CMake `0.1.0`.
+`game.exe` also embeds `sol.ico` (`IDI_APP_ICON` 101) and titles the window
+`Sol`. Sandbox stays `Engine Sandbox` with no branded icon. `--gates` logs
+`Identity gate: title=... icon=yes|no version=0.1.0 (pass)`.
+
+**Do not (still):** store art, code signing.
+
+---
+
+## Build #5 — cooked pack next to the exe (done)
+
+**Why:** A player binary should ship engine-native blobs, not a folder of
+glTF/PNG sources as the only pack.
+
+**Gate (met):** Host `cook.exe` writes `build/cooked/content.pak` (`SOLC`
+cube, husky, albedo, beep). POST_BUILD copies it next to `sandbox.exe` and
+`game.exe`. `--gates` logs `Pack gate: file=yes peek=yes get=yes (pass)`.
+Sandbox still mounts loose files for the live draw.
+
+**Do not (still):** zip/installer, loading the forward pass from SOLC.
+
+---
+
+## Build #9 — GPU baseline and required DLLs (done)
+
+**Why:** A player PC has no Visual Studio and no Windows SDK on PATH. DXC must
+travel with the exe. Agility is only worth shipping when the OS D3D12 runtime
+cannot do what we compile.
+
+**Gate (met):** POST_BUILD and `cmake --install` copy `dxcompiler.dll` and
+`dxil.dll` next to the runtime exes; missing DXC is a configure error.
+Device create requires Feature Level 11_0 and Shader Model 6.0 on inbox OS
+D3D12. No `D3D12Core.dll`. `--gates` logs
+`Ship gate: dxc=yes dxil=yes agility=os sm=6.0 fl=11_0 (pass)`.
+Player text: [GPU_BASELINE.md](GPU_BASELINE.md).
+
+**Do not (still):** Agility SDK, app-local `vcruntime`, zip/installer.
+
+---
+
+## Debug #4 — named GPU markers (done)
+
+**Why:** Resource `SetName` labels objects in PIX. The GPU *timeline* needs
+command-list events so a capture shows `shadow`, `forward`, bloom mips, and
+the rest as nested ranges.
+
+**Gate (met):** `ICommandList::begin_event` / `end_event` / `set_marker` map to
+D3D12 PIX ANSI events (no WinPixEventRuntime). `RenderGraph::execute` wraps
+every executed pass. `--gates` logs
+`Pix gate: begin=yes nest=yes marker=yes depth=0 (pass)`.
+
+**Do not (still):** graph dump (Debug #5), shipping a PIX capture DLL.
+
+---
+
+## Renderer #10 — PCF (done)
+
+**Why:** Sun shadows were a single `SampleCmp` tap (hardware 2×2 only). Edges
+looked like stamps.
+
+**Gate (met):** 16-tap Vogel disk, per-pixel Jimenez IGN rotation, 3 texel
+radius, comparison sampler still LINEAR. CPU (`pcf.hpp`) stays in sync with
+`forward.hlsl`. `--gates` logs
+`PCF gate: vogel=yes ign=yes edge_filter=yes taps=16 (pass)`. GPU debug clean.
+FrameConstants still 400 bytes.
+
+**Do not (still):** PCSS / DPCF blocker search, VSM, extra shadow maps.
+
+---
+
+## Renderer #9 — Image-based lighting (done)
+
+**Why:** Punctual PBR still used a flat RGB ambient. Dielectrics had no
+environment specular; metals looked matte unless a light hit them. Copying
+Filament’s 30000 lux default would blow this unitless RGB scene (sun ~4.8,
+ACES). Intensity is **1**. IBL has **no sun disk** (the directional sun stays
+separate; the visible disk is skybox-only). Dielectric F0 stays **0.04**.
+
+**Gate (met):** Karis / UE / glTF split-sum: cosine irradiance cube, GGX
+prefiltered cube (lod = perceptual roughness × 4), BRDF LUT. `--gates` logs
+`IBL gate: intensity=1 split_sum=yes lut=yes cubes=yes (pass)`. GPU debug
+clean. FrameConstants still 400 bytes. World skybox is World #1 (**Done**).
+
+**Do not (still):** Filament lux, Disney extra lobes, multi-scatter
+compensation, HDRI/EXR loader, cooked IBL pak.
+
+---
+
+## World #1 — Sky (done)
+
+**Why:** IBL lights the meshes; the backdrop was still a clear color. A
+visible sky that does not share IBL source radiance, or that draws after
+ACES, or that samples GGX mips, is how skies and reflections disagree.
+
+**Gate (met):** Fullscreen triangle in HDR `scene_color` after forward, before
+tonemap. Sharp **source cubemap** SRV (128², same `ibl::sky_radiance` bake,
+not GGX mips). Intensity 1. **Skybox-only sun disk** (Filament `showSun`);
+IBL still has no disk so the directional (~4.8) is not double-counted. Clip
+`z = w`, `LessEqual`, depth write off. `--gates` logs
+`Sky gate: cubemap=yes source_not_ggx=yes intensity=1 sun_disk=skybox (pass)`.
+GPU debug clean.
+
+**Do not (still):** Hosek-Wilkie / Preetham, HDRI/EXR loader (swap the SRV
+when that exists), a sun disk **in IBL**, a `world` package with no impl.
+
+---
+
+## Renderer #11 — Bloom (done)
+
+**Why:** HDR `scene_color` + ACES without a pyramid just clips the sun. Bloom
+the bright parts, not the whole husky. A threshold of 0 (HDRP
+energy-conserving) would veil the scene. Adding bloom after ACES looks like an
+LDR overlay. A giant Gaussian is not the modern path.
+
+**Gate (met):** Extract + first downsample together: quadratic soft-knee
+(threshold 1, knee 0.5), 13-tap Karis luma-weighted average on mip 0 (kills
+HDR fireflies), then four more 13-tap downs (no Karis). 9-tap tent upsample
+adds the matching down level (scatter). Composite `scene + bloom * 0.06` in
+HDR *before* ACES. Five mips, graphics fullscreen passes, RGBA16 transients
+that follow the swapchain (`extent_div`). `--gates` logs
+`Bloom gate: karis=yes knee=0.5 intensity=hdr_add mips=5 (pass)`. GPU debug
+clean. FrameConstants still 400 bytes.
+
+**Do not (still):** UAV / compute bloom (texture UAVs still missing), dirt
+lens, anamorphic, intensity 1 as an HDR add.
+
+---
+
+## Renderer #12 — Cheap AA (done)
+
+**Why:** Aliasing on husky silhouettes is the cheapest remaining image
+defect. TAA wants motion vectors (Renderer #13). CMAA2 wants texture UAVs.
+MSAA is a hardware layer this RHI does not expose.
+
+Modern engines keep **one** post-AA slot: Unity URP is FXAA / SMAA / TAA /
+MSAA (MSAA may sit under FXAA/SMAA, never under TAA). HDRP is TAA *or* SMAA
+early, FXAA only as a final pass. Godot is FXAA *or* SMAA for screen-space.
+Unreal is one scalability method. Sol follows that: Off / FXAA / SMAA, never
+stacked. TAA later joined the same enum; it is not a second pass on top.
+
+**Choice:** default **SMAA 1x** (Jimenez morphological, Medium: luma threshold
+0.1, search 8, Rec.709 luma). Sharper than FXAA; Unity URP/HDRP and Godot use
+it as the spatial quality option. Official High AreaTex/SearchTex LUTs are
+skipped — analytical weights, documented as Medium-quality 1x. **FXAA 3.11**
+is the Low preset (one pass). Run on LDR *after* ACES, *before* F3/F4, so
+edge detection is perceptual and debug/UI stay sharp.
+
+**Gate (met):** exclusive mode, after tonemap, pipelines live. F5 cycles
+Off → FXAA → SMAA → TAA. `--gates` logs
+`AA gate: default=off exclusive=yes after_tonemap=yes fxaa=yes (pass)`.
+Graph is 25 passes (TAA ping-pong after bloom; copy / FXAA / three SMAA;
+one AA path executes). GPU debug
+clean. FrameConstants still 400 bytes; AA has its own 16-byte CBV.
+
+**Do not (still):** TAA stacked on SMAA, MSAA, CMAA2, FSR/DLSS, spatial AA
+before tonemap or after overlay.
+
+---
+
+## Renderer #13 — Motion vectors (done)
+
+**Why:** TAA (and later motion blur) need a per-pixel UV offset from last
+frame. Cheap AA does not provide that. Unity URP stores `curr_uv - prev_uv`
+in RG; object motion needs previous world matrices, not only camera.
+
+**Choice:** Geometry velocity pass after opaque forward, before sky. RGBA16
+transient (no RG16 on the RHI). Depth equal, no depth write. Own 256-byte
+CBV so `FrameConstants` stays 400. `MotionHistory` keeps previous view-proj
+and 64 instance models. First sighting is zero motion. Unjittered. Sky
+pixels stay 0. Encoding is D3D UV (`ndc * (0.5, -0.5) + 0.5`).
+
+**Gate (met):** `--gates` logs
+`Motion gate: uv=yes camera=yes object=yes history=yes equal=yes pass=yes (pass)`.
+Graph 25 passes. GPU debug clean.
+
+**Do not (still):** motion blur, skins, RG16, camera-only fullscreen from depth.
+
+---
+
+## Renderer #14 — Karis TAA (done)
+
+**Why:** SMAA/FXAA only look at this frame. Thin husky edges and specular
+still crawl. Motion vectors are in. Karis / UE4 temporal supersampling is the
+native-res quality path (not SMAA T2x, not an upscaler).
+
+**Choice:** Exclusive enum Off / FXAA / SMAA / TAA (**default Off** — Karis
+stays on F5, not the launch path). Halton(2,3)
+jitter on forward, sky rays, and motion *raster* (so depth-equal coverage
+matches color). Stored motion UV deltas stay unjittered. Resolve in HDR after
+bloom, before ACES: unjitter the current 3×3 tent in UV, YCoCg AABB clip,
+Catmull-Rom history, history weight 0.95. Two imported RGBA16 ping-pong RTs
+(graph cannot read/write the same pair). F5 cycles all four. SMAA/FXAA remain
+the spatial presets. Not stacked.
+
+**Gate (met):** `--gates` logs
+`TAA gate: default=off optional=yes hdr=yes jitter=yes clip=ycocg pass=yes (pass)`.
+Graph 25 passes. GPU debug clean. FrameConstants still 400 bytes; TAA has its
+own 48-byte CBV.
+
+**Do not (still):** variance clip, sharpen, TAAU/FSR2/TSR, stacking on SMAA,
+sky camera-velocity pass, MSAA.
+
+---
+
+## Audio #1–#2 — 2D one-shot + XAudio2 (done)
+
+**Why:** The engine had no sound. Package rules forbid an empty interface
+with no impl, so the `audio` contract and one Windows backend landed together.
+
+**Choice:** XAudio2 (Windows SDK). Not WASAPI, not miniaudio — no extra
+`third_party`. PCM is 16-bit mono or stereo. `create_sound` copies the
+buffer. Voices retire on the main thread (`tick` after `on_update`); the
+XAudio2 callback only sets an atomic.
+
+**Gate (met):** `--gates` logs
+`Audio gate: wav=yes oneshot=yes backend=xaudio2 (pass)`. Space plays an
+880 Hz beep when the window is focused. `Engine::audio()` is the injection
+point; sandbox / `game.exe` link `audio-xaudio2`.
+
+**Do not (still):** 3D positional, buses/mixer, streaming music, effects.
+
+---
+
+## Physics #1 — overlap queries + CPU BVH (done)
+
+**Why:** Gameplay had no collision world. Scene AABBs are for frustum/F4, not
+queries. Package rules forbid an empty interface, so `physics` and
+`physics-cpu` landed together.
+
+**Choice:** Dynamic AABB tree (Catto / Box2D), fat leaves, SAH insert. AABB
+and sphere shapes. Layers + masks. Not Jolt — that stays Physics #7 behind
+the same `IPhysics`. Collision is not stored on `scene::Instance`.
+
+**Gate (met):** `--gates` logs
+`Physics gate: aabb=yes sphere=yes mask=yes move=yes gen=yes backend=cpu (pass)`.
+`Engine::physics()` is the injection point; sandbox / `game.exe` link
+`physics-cpu`.
+
+**Do not (still):** enter/exit events, raycasts, mesh colliders,
+angular/OBB, Jolt. (Rigid bodies landed as Physics #2. Capsule as Physics #3.
+Triggers as Physics #4. Rays as Physics #5.)
+
+---
+
+## Physics #2 — rigid bodies + gravity (done)
+
+**Why:** Overlaps had no motion. Games need gravity and contact response
+before a character controller.
+
+**Choice:** Catto sequential impulses (GDC 2005/2009, Box2D PGS) plus NGS
+position correction. Semi-implicit Euler on the engine **fixed** step.
+Translation only — AABB/sphere stay axis-aligned; angular waits on OBB.
+Static / Dynamic / Kinematic (Jolt types). Not penalty springs, not Jolt.
+
+**Gate (met):** `--gates` logs
+`Physics body gate: gravity=yes rest=yes floor=yes sphere=yes box=yes (pass)`.
+Overlap gate still passes. `Engine::fixed_update` calls `IPhysics::step`.
+
+**Do not (still):** angular velocity, sleeping, CCD, joints,
+Jolt. (Capsule landed as Physics #3. Triggers as Physics #4. Rays as Physics #5.)
+
+---
+
+## Physics #3 — character capsule + floor (done)
+
+**Why:** A player collider that is a tall AABB catches on edges. Games need
+a Y-up capsule (segment ⨁ radius) that can rest on a static floor before a
+character controller.
+
+**Choice:** Jolt parameterization — `radius` plus cylinder `half_height`
+(caps at `±half_height`, not Unity’s total height). Contacts from Ericson
+closest points (segment–point, segment–segment, segment–AABB), then the
+existing SI solver. Not GJK. Rotation still frozen.
+
+**Gate (met):** `--gates` logs
+`Physics capsule gate: overlap=yes rest=yes floor=yes not_aabb=yes (pass)`.
+Overlap and body gates still pass. Rest height is `floor_top + half_height +
+radius`. A corner query that a tight AABB would hit, misses.
+
+**Do not (still):** Angular / tilted capsules, Jolt. (Triggers landed as Physics #4. Rays as
+Physics #5. Character `Move()` landed as Gameplay #4.)
+
+---
+
+## Physics #4 — triggers / enter-exit (done)
+
+**Why:** Overlap queries are one-shot. Games need “entered the volume” and
+“left the volume” without polling every body every frame.
+
+**Choice:** `BodyDesc.sensor` still skips impulses. After `step()`, diff the
+current overlapping sensor pairs against the previous set. Snapshot
+`TriggerEvent` Enter/Exit (`a.id < b.id`). Poll with `trigger_events`. No
+`std::function`. Stay is silent. Solids do not emit.
+
+**Gate (met):** `--gates` logs
+`Physics trigger gate: enter=yes stay=yes exit=yes mask=yes solid=yes (pass)`.
+Overlap, body, and capsule gates still pass.
+
+**Do not (still):** Stay events, listener objects, static-only pairs,
+Jolt. (Rays landed as Physics #5. Character `Move()` landed as Gameplay #4.)
+
+---
+
+## Physics #5 — raycasts (done)
+
+**Why:** Guns and picking need a closest-hit segment query, not another
+overlap volume.
+
+**Choice:** Walk the existing dynamic AABB tree with a Kay–Kajiya slab test,
+then ray vs tight AABB / sphere / Y-up capsule (Ericson). Closest hit only.
+`ignore` skips the shooter. Origin inside a shape misses that body. Sensors
+are still shapes; mask them out if a gun should ignore volumes.
+
+**Gate (met):** `--gates` logs
+`Physics raycast gate: aabb=yes sphere=yes capsule=yes closest=yes mask=yes miss=yes (pass)`.
+Prior physics gates still pass.
+
+**Do not (still):** RaycastAll, shapecast, mesh colliders, picking UI, Jolt.
+
+---
+
+## Gameplay #4 — character controller (done)
+
+**Why:** A capsule that rests on a floor is not a character. Games need walk,
+jump, step, and slope on a kinematic body — Unity `Move()`, not a dynamic
+ragdoll.
+
+**Choice:** `packages/gameplay` (like `scene`, not a `gameplay-*` backend).
+Kinematic capsule, collide-and-slide with raycasts at four heights (feet plus
+the capsule spheres; no shapecast). Step offset retries the remaining XZ from a
+raised pose. Slope
+limit is `normal.y >= cos(limit)`. Jump is raw Space while grounded. Sandbox
+**Tab** toggles walk mode so fly-cam WASD is not stolen.
+
+**Gate (met):** `--gates` logs
+`Character gate: walk=yes jump=yes step=yes slope=yes grounded=yes (pass)`.
+Prior physics gates still pass. Husky 0 follows the capsule on the checker
+floor.
+
+**Do not (still):** Input actions, shapecast, land
+dust, 3D audio on the capsule. (Follow / orbit / FPS landed as Gameplay #3.
+XInput pad landed as Platform #3.)
+
+---
+
+## Gameplay #3 — follow / orbit / FPS cameras (done)
+
+**Why:** A walker with a fly cam is still a debug view. Games need a camera
+on the pawn: boom behind (follow), sphere around (orbit), eye on the capsule
+(FPS).
+
+**Choice:** `GameCamera` in `packages/gameplay`. Follow keeps a fixed height
+and only yaws the boom; orbit moves the eye on a sphere so pitch changes
+height; FPS is `target + eye_height` with yaw/pitch look. Snap, no spring.
+Sandbox **Tab** uses the game camera while walking; **Enter** cycles modes.
+Fly cam stays when walk is off.
+
+**Gate (met):** `--gates` logs
+`Camera gate: follow=yes orbit=yes fps=yes (pass)`.
+Character gate still passes.
+
+**Do not (still):** Actions, camera collision, mouse-wheel zoom,
+splitscreen. (XInput pad landed as Platform #3.)
+
+---
+
+## Platform #3 — gamepad (done)
+
+**Why:** A walker that only takes WASD is still keyboard-only. Games need a
+pad on the pawn — analog walk, look, jump — not a second fly-cam WASD.
+
+**Choice:** XInput 1.4, four slots, Xbox layout. `GamepadState` on
+`InputState` (snapshot). Circular stick deadzone, trigger deadzone, same
+button edges as keys. `platform-win32` polls; unfocused windows zero pads.
+No XInput types in public headers. Sandbox walk mode: left stick wish
+(analog), D-pad digital, right stick look, **A** jump, **Start** walk,
+**Y** camera. Fly cam is not pad-steered.
+
+**Gate (met):** `--gates` logs
+`Gamepad gate: deadzone=yes button=yes poll=yes connected=* (pass)`.
+`connected` is informational; no hardware required. Character and camera
+gates still pass.
+
+**Do not (still):** Input actions / remapping, rumble, DirectInput, using
+the pad as fly-cam WASD.
+
+---
+
+## Assets #4 — glTF extras (done)
+
+**Why:** One triangle primitive and albedo-only PBR is not a content path.
+Games need every primitive, packed metal-rough maps, and tangent-space
+normals.
+
+**Choice:** Concatenate all triangle primitives into one `MeshData`.
+`GltfLoadResult::primitives[]` keeps index ranges, URIs, and factors.
+Missing MR samples as white (factors pass through); missing normal is
+`(0.5, 0.5, 1)`. Forward binds 1×1 defaults on `t5`/`t6` and builds TBN from
+screen-space derivatives — `VertexPN` and `SOLC` stay 32-byte verts. The
+sandbox husky is still one primitive.
+
+**Gate (met):** `--gates` logs
+`glTF extras gate: prims=yes mr=yes normal=yes (pass)`.
+Prior glTF / cook / PBR gates still pass.
+
+**Do not (still):** Skins, morphs, BC7, alpha, vertex tangents, per-primitive
+draws for the 63 huskies.
+
+---
+
+## After 14 — engine map (next, pick with a gate)
+
+Still one at a time. Still modular. Still `--gates`.
+
+**Full list (21 categories, implementation order inside each):**
+[ENGINE_MAP.md](ENGINE_MAP.md). Later rows include **Finish first** (what
+blocks them).
+
+Short version of what that file contains: renderer (IBL, PCF, World sky,
+Bloom, cheap AA, motion vectors, and Karis TAA are done; PCSS only if
+contacts still look like stamps), assets cooker (`SOLC`). 2D audio and
+rigid-body physics with a Y-up capsule, sensor enter/exit, and closest-hit
+rays are **done**. Ready rows are open (UI quads, skins, additive worlds,
+alpha, CPU particles, 3D audio, navmesh, terrain, actions, logger, cvars,
+installer). Gameplay #4 walk/jump, Gameplay #3 follow/orbit/FPS, Platform #3
+XInput pad, and Assets #4 glTF extras are **done**.
+Named GPU markers
+are **done**. No in-engine inspector — an
+editor is a separate app, far. `game.exe` Release install layout is **done**.
+GPU baseline and DXC DLLs next to the exe are **done**.
+
+**Still not “copy the org chart”:** fiber job stealing, ECS as a second scene
+truth, bindless SM 6.6 before material count exists. Use arrays until types
+explode. Use one worker until many systems hitch.
+
+---
+
+## Foundation log (phases 5–11, done)
+
+Kept so the gates stay auditable. Do not re-open these unless a regression
+shows up.
+
+### Phase 5 — See the world (done)
+
+**Gate (met):** `--gates` logs a non-zero husky AABB; F4 draws world boxes that
+move with Z/X on husky 0; a checker floor sits under the huskies; projection
+scale is `1/(aspect*tan(fov/2))` from swapchain width/height.
+
+### Phase 6 — Light (done)
+
+**Gate (met):** `World` holds sun + ambient + four point slots; extract copies
+them onto `RenderSnapshot.lighting`; the renderer never includes `World`.
+Forward HLSL at this gate was Lambert + a small Blinn term (Renderer #8 later
+replaced specular with GGX Cook-Torrance). `--gates` logs a unit sun, nonzero
+ambient, and at least one point light (`FrameConstants` was 384 bytes then;
+400 after phase 13).
+
+### Phase 7 — Shadow (done)
+
+**Gate (met):** 1024² `D32` shadow map is a graph transient; depth-only sun pass
+from the scene AABB; forward samples with a comparison sampler. `--gates` logs
+a non-identity sun view-proj and a live shadow pipeline. GPU debug clean.
+
+### Phase 8 — HDR (done)
+
+**Gate (met):** `scene_color` is an RGBA16 graph transient; forward writes it;
+ACES tonemap presents to the swapchain. Sun is intense (`~4.8`); `--gates`
+logs a live tonemap pipeline. F3/F4 still draw on the LDR backbuffer. GPU
+debug clean.
+
+### Phase 9 — Real DXC (done)
+
+**Gate (met):** `IDxcCompiler3` produces DXIL at SM 6.0. `--gates` logs
+`dxil=yes`. Second launch is a disk-cache hit. `dxcompiler.dll` / `dxil.dll`
+copy next to `sandbox.exe`. GPU debug clean.
+
+### Phase 10 — Content (done)
+
+**Gate (met):** Albedo uploads with `mip_levels = 0` generate a full box-filter
+chain (`2048²` → 12 levels). Husky mesh is `/content/meshes/cartoon_husky.gltf`
+(7132 verts, 37506 indices, albedo URI). `--gates` logs both. GPU debug clean.
+
+### Phase 11 — Scale (done)
+
+**Gate (met):** Hot-reload compiles on a worker thread; `--gates` logs
+`Async compile gate` with poll under 16 ms while Busy, then Reloaded. World
+holds 64 instances (63 huskies + floor); extract skips AABBs outside the
+camera frustum (`visible=33 skipped=31` on the default camera). GPU debug
+clean. One worker thread, not a fiber job graph.
+
+---
+
+## Agent / session checklist
+
+After finishing a phase (or any roadmap edit):
+
+1. Set the phase **Status** in this file.
+2. Recount lines: `packages` `*.cpp *.hpp *.h *.hlsl` (exclude `build/` and
+   `third_party/`).
+3. Update the progress canvas `sol-engine-board.canvas.tsx`: next gate, usage
+   bar, package LOC chart, package table, date, **goal line** (general-purpose
+   engine, not “play in the sandbox”).
+4. Run `sandbox --gates` with `ENGINE_GPU_DEBUG=1` when GPU code changed.
+5. Do not start the next phase until the gate is written as done here.

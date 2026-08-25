@@ -39,9 +39,17 @@ Thumbs.db
 *.pdb
 *.ilk
 *.obj
+!packages/**/content/**/*.obj
+
+# Shader pipeline cache
+.cache/
 *.o
 *.a
 *.so
 *.dylib
+
+# Personal research library — kept locally, not published (public repo)
+reasarch/*.pdf
+reasarch/*.pptx
 
 # Keep *.lib out of repo root only; build/ is already ignored

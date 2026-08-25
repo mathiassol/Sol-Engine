@@ -15,6 +15,17 @@ using engine::LogLevel;
 
 namespace {
 
+struct Position {
+    f32 x = 0.f;
+    f32 y = 0.f;
+    f32 z = 0.f;
+};
+
+struct TexCoord {
+    f32 u = 0.f;
+    f32 v = 0.f;
+};
+
 struct FaceKey {
     i32 vi = 0;
     i32 vti = 0;
@@ -55,19 +66,24 @@ void parse_face_corner(std::string_view corner, i32& vi, i32& vti, i32& vni) {
     vti = std::stoi(std::string(corner.substr(slash1 + 1)));
 }
 
-VertexPN make_vertex(const std::vector<VertexPN>& positions,
-    const std::vector<VertexPN>& normals, i32 vi, i32 vni) {
+VertexPN make_vertex(const std::vector<Position>& positions,
+    const std::vector<TexCoord>& uvs, const std::vector<Position>& normals,
+    i32 vi, i32 vti, i32 vni) {
     VertexPN v{};
     if (vi >= 0 && static_cast<usize>(vi) < positions.size()) {
-        v.px = positions[static_cast<usize>(vi)].px;
-        v.py = positions[static_cast<usize>(vi)].py;
-        v.pz = positions[static_cast<usize>(vi)].pz;
+        v.px = positions[static_cast<usize>(vi)].x;
+        v.py = positions[static_cast<usize>(vi)].y;
+        v.pz = positions[static_cast<usize>(vi)].z;
+    }
+    if (vti >= 0 && static_cast<usize>(vti) < uvs.size()) {
+        v.u = uvs[static_cast<usize>(vti)].u;
+        v.v = uvs[static_cast<usize>(vti)].v;
     }
     if (vni >= 0 && static_cast<usize>(vni) < normals.size()) {
-        v.nx = normals[static_cast<usize>(vni)].nx;
-        v.ny = normals[static_cast<usize>(vni)].ny;
-        v.nz = normals[static_cast<usize>(vni)].nz;
-    } else if (vi >= 0 && static_cast<usize>(vi) < positions.size()) {
+        v.nx = normals[static_cast<usize>(vni)].x;
+        v.ny = normals[static_cast<usize>(vni)].y;
+        v.nz = normals[static_cast<usize>(vni)].z;
+    } else {
         v.ny = 1.f;
     }
     return v;
@@ -82,8 +98,9 @@ public:
             return false;
         }
 
-        std::vector<VertexPN> positions;
-        std::vector<VertexPN> normals;
+        std::vector<Position> positions;
+        std::vector<TexCoord> uvs;
+        std::vector<Position> normals;
         std::unordered_map<FaceKey, u32, FaceKeyHash> dedupe;
 
         out.vertices.clear();
@@ -100,12 +117,13 @@ public:
             parse_face_corner(corner, vi, vti, vni);
 
             const i32 vi0 = resolve_index(vi, positions.size());
+            const i32 vti0 = resolve_index(vti, uvs.size());
             const i32 vni0 = resolve_index(vni, normals.size());
 
-            FaceKey key{vi0, resolve_index(vti, 0), vni0};
+            FaceKey key{vi0, vti0, vni0};
             auto [it, inserted] = dedupe.emplace(key, static_cast<u32>(out.vertices.size()));
             if (inserted) {
-                out.vertices.push_back(make_vertex(positions, normals, vi0, vni0));
+                out.vertices.push_back(make_vertex(positions, uvs, normals, vi0, vti0, vni0));
             }
             out.indices.push_back(it->second);
         };
@@ -119,12 +137,16 @@ public:
             ss >> tag;
 
             if (tag == "v") {
-                VertexPN p{};
-                ss >> p.px >> p.py >> p.pz;
+                Position p{};
+                ss >> p.x >> p.y >> p.z;
                 positions.push_back(p);
+            } else if (tag == "vt") {
+                TexCoord t{};
+                ss >> t.u >> t.v;
+                uvs.push_back(t);
             } else if (tag == "vn") {
-                VertexPN n{};
-                ss >> n.nx >> n.ny >> n.nz;
+                Position n{};
+                ss >> n.x >> n.y >> n.z;
                 normals.push_back(n);
             } else if (tag == "f") {
                 std::vector<std::string> corners;
@@ -147,6 +169,7 @@ public:
             return false;
         }
 
+        compute_mesh_bounds(out);
         return true;
     }
 };

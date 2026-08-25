@@ -25,7 +25,6 @@ private:
     rhi::IDevice* device_ = nullptr;
     std::unique_ptr<rhi::IGraphicsPipeline> pipeline_;
     std::unique_ptr<rhi::IBuffer> vertex_buffer_;
-    std::unique_ptr<rhi::IBuffer> constant_buffer_;
     u32 vertex_count_ = 0;
     std::string cached_text_;
     bool visible_ = false;

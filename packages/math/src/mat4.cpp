@@ -54,6 +54,17 @@ Mat4 Mat4::perspective(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z) {
     return m;
 }
 
+Mat4 Mat4::ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z) {
+    Mat4 m = identity();
+    m.cols[0].x = 2.f / (right - left);
+    m.cols[1].y = 2.f / (top - bottom);
+    m.cols[2].z = 1.f / (near_z - far_z);
+    m.cols[3].x = -(right + left) / (right - left);
+    m.cols[3].y = -(top + bottom) / (top - bottom);
+    m.cols[3].z = near_z / (near_z - far_z);
+    return m;
+}
+
 Mat4 Mat4::inverse_affine(Mat4 m) {
     // Inverse of [R | t; 0 0 0 1] for orthonormal R.
     Vec3 c0{m.cols[0].x, m.cols[0].y, m.cols[0].z};

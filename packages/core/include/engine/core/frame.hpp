@@ -7,7 +7,7 @@ namespace engine {
 
 struct FrameContext {
     u64 frame_index   = 0;
-    u8  frame_slot    = 0;   // cycles 0..frames_in_flight-1
+    u8  cpu_frame_slot = 0; // CPU timer ring 0..frames_in_flight-1; not IDevice::frame_slot()
     f64 time          = 0.0;   // total elapsed seconds
     f32 delta         = 0.0f;  // variable frame delta (clamped)
     f32 fixed_delta   = 0.0f;  // constant simulation step

@@ -2,17 +2,21 @@
 
 #include <engine/core/types.hpp>
 
-#include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace engine::shaders {
 
+enum class ShaderTarget : u8 {
+    Dxil,
+    Spirv,
+};
+
 struct ShaderCompileDesc {
-    std::string_view file_path;
-    std::string_view entry_point = "main";
-    std::string_view target_profile = "vs_5_0";
+    std::string file_path;
+    std::string entry_point = "main";
+    std::string target_profile = "vs_6_0";
+    ShaderTarget target = ShaderTarget::Dxil;
 };
 
 struct ShaderBytecode {
@@ -24,6 +28,7 @@ public:
     virtual ~IShaderCompiler() = default;
 
     virtual bool compile(const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) = 0;
+    virtual bool last_compile_from_cache() const = 0;
 };
 
 } // namespace engine::shaders
