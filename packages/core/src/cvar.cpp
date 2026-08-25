@@ -1,6 +1,7 @@
 #include <engine/core/cvar.hpp>
 
 #include <engine/core/assert.hpp>
+#include <engine/core/log.hpp>
 
 #include <charconv>
 #include <cmath>
@@ -96,6 +97,65 @@ bool parse_float(std::string_view text, f32& out) {
     }
     out = value;
     return true;
+}
+
+std::string_view trim(std::string_view text) {
+    usize begin = 0;
+    while (begin < text.size()
+        && (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\r')) {
+        ++begin;
+    }
+    usize end = text.size();
+    while (end > begin
+        && (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\r')) {
+        --end;
+    }
+    return text.substr(begin, end - begin);
+}
+
+bool is_comment(std::string_view line) {
+    return line.starts_with("#") || line.starts_with("//");
+}
+
+// "key value", "key = value" and "key=value" all split the same way.
+bool split_line(std::string_view line, std::string_view& key, std::string_view& value) {
+    const usize split = line.find_first_of(" \t=");
+    if (split == std::string_view::npos) {
+        return false;  // a bare key with no value
+    }
+    key = trim(line.substr(0, split));
+    std::string_view rest = trim(line.substr(split));
+    if (rest.starts_with("=")) {
+        rest = trim(rest.substr(1));
+    }
+    value = rest;
+    return !key.empty() && !value.empty();
+}
+
+void apply_one(std::string_view key, std::string_view value, CvarSource source,
+    CvarApplyStats& stats) {
+    Cvar* cvar = find_cvar(key);
+    if (!cvar) {
+        ++stats.unknown;
+        log(LogLevel::Warn, LogChannel::General,
+            std::string("Unknown cvar '") + std::string(key) + "'");
+        return;
+    }
+    switch (cvar->set(value, source)) {
+    case CvarSetResult::Applied:
+        ++stats.applied;
+        break;
+    case CvarSetResult::Ignored:
+        ++stats.ignored;
+        break;
+    case CvarSetResult::Invalid:
+        ++stats.invalid;
+        log(LogLevel::Warn, LogChannel::General,
+            std::string("Cvar '") + cvar->name() + "' rejected value '"
+                + std::string(value) + "' (expected "
+                + cvar_type_name(cvar->type()) + ")");
+        break;
+    }
 }
 
 void register_cvar(Cvar* cvar) {
@@ -215,8 +275,30 @@ Cvar* cvar_at(usize index) {
     return index < registry().size() ? registry()[index] : nullptr;
 }
 
-CvarApplyStats apply_cvar_text(std::string_view, CvarSource) {
-    return {};
+CvarApplyStats apply_cvar_text(std::string_view text, CvarSource source) {
+    CvarApplyStats stats{};
+    usize begin = 0;
+    while (begin <= text.size()) {
+        const usize newline = text.find('\n', begin);
+        const usize end = newline == std::string_view::npos ? text.size() : newline;
+        const std::string_view line = trim(text.substr(begin, end - begin));
+        if (!line.empty() && !is_comment(line)) {
+            std::string_view key;
+            std::string_view value;
+            if (split_line(line, key, value)) {
+                apply_one(key, value, source, stats);
+            } else {
+                ++stats.invalid;
+                log(LogLevel::Warn, LogChannel::General,
+                    std::string("Malformed cvar line '") + std::string(line) + "'");
+            }
+        }
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        begin = newline + 1;
+    }
+    return stats;
 }
 
 CvarApplyStats apply_cvar_args(int, const char* const*) {

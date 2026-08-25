@@ -127,6 +127,9 @@ engine::Cvar cv_gate_string{"gate.string", "default", "Cvar gate: string knob"};
 engine::Cvar cv_gate_prec{"gate.prec", 0, "Cvar gate: precedence knob"};
 engine::Cvar cv_gate_args{"gate.args", 0, "Cvar gate: command-line knob"};
 engine::Cvar cv_gate_file{"gate.file", 0, "Cvar gate: config-file knob"};
+engine::Cvar cv_text_int{"gate.text_int", 0, "Cvar gate: text parser int"};
+engine::Cvar cv_text_float{"gate.text_float", 0.f, "Cvar gate: text parser float"};
+engine::Cvar cv_text_string{"gate.text_string", "unset", "Cvar gate: text parser string"};
 
 struct FlyCamera {
     engine::math::Vec3 position{0.f, 0.35f, -2.2f};
@@ -572,7 +575,7 @@ bool run_cvar_gate() {
             walked = true;
         }
     }
-    const bool registry_ok = count >= 7
+    const bool registry_ok = count >= 10
         && walked
         && engine::find_cvar("gate.bool") == &cv_gate_bool
         && engine::find_cvar("gate.string") == &cv_gate_string
@@ -598,6 +601,26 @@ bool run_cvar_gate() {
         && cv_gate_int.type() == engine::CvarType::Int
         && cv_gate_float.type() == engine::CvarType::Float
         && cv_gate_string.type() == engine::CvarType::String;
+
+    // Comments, both separators, blank lines, one unknown key, one bad value.
+    static constexpr const char* kText =
+        "# hash comment\n"
+        "// slash comment\n"
+        "\n"
+        "   \n"
+        "gate.text_int 7\n"
+        "gate.text_float = 1.5\n"
+        "gate.text_string   hello world  \r\n"
+        "gate.nothere 1\n"
+        "gate.text_int oops\n";
+    const auto text_stats = engine::apply_cvar_text(kText, CvarSource::File);
+    const bool text_ok = text_stats.applied == 3
+        && text_stats.unknown == 1
+        && text_stats.invalid == 1
+        && text_stats.ignored == 0
+        && cv_text_int.as_int() == 7
+        && cv_text_float.as_float() > 1.49f && cv_text_float.as_float() < 1.51f
+        && cv_text_string.as_string() == "hello world";
 
     // A lower source never overwrites a higher one. This is what lets the
     // engine load config.cfg after the command line.
@@ -639,12 +662,13 @@ bool run_cvar_gate() {
         scope_ok = ok;
     }
 
-    const bool passed = registry_ok && types_ok && precedence_ok && scope_ok;
+    const bool passed = registry_ok && text_ok && types_ok && precedence_ok && scope_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Cvar gate: count=%llu registry=%s types=%s precedence=%s scope=%s (%s)",
+        "Cvar gate: count=%llu registry=%s text=%s types=%s precedence=%s scope=%s (%s)",
         static_cast<unsigned long long>(count),
         registry_ok ? "yes" : "no",
+        text_ok ? "yes" : "no",
         types_ok ? "yes" : "no",
         precedence_ok ? "yes" : "no",
         scope_ok ? "yes" : "no",
