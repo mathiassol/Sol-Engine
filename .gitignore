@@ -29,6 +29,10 @@ CLAUDE.local.md
 .claude/settings.local.json
 
 # Local / secrets — never commit
+# Local cvar overrides. Unanchored on purpose: the engine looks for this file in
+# a discoverable repo root first, then in the content root (which is next to the
+# exe in an install), so it can legitimately show up in more than one place.
+config.cfg
 .pp/
 *.keys
 .env

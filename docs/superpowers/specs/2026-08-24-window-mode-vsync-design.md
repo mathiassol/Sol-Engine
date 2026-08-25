@@ -24,7 +24,7 @@ exposes the handle so games can toggle without cvars (Build #10).
 
 ## Gate
 
-`Window gate: windowed=yes borderless=yes fullscreen=yes restore=yes vsync=yes present=yes (pass)`
+`Window gate: startup=yes borderless=yes fullscreen=yes restore=yes vsync=yes present=yes (pass)`
 
 1. Default after init is Windowed + vsync on.
 2. `set_mode(Borderless)` then `Fullscreen` report those modes.

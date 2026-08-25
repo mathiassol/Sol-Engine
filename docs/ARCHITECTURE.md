@@ -49,7 +49,7 @@ interfaces, and can be replaced independently. See [packageRules.md](packageRule
 
 | Package | Layer | Type | Responsibility |
 |---------|-------|------|----------------|
-| `core` | 0 | lib | Clock, frame timer, log, arena, profile scopes |
+| `core` | 0 | lib | Clock, frame timer, log, arena, profile scopes, cvars |
 | `math` | 0 | lib | Vec3, Mat4, AABB, Frustum, ortho, column-major RH Y-up |
 | `platform` | 1 | interface | `IPlatform`, `IWindow`, `IInput` (keys, mouse, four `GamepadState` slots), `IFileSystem` |
 | `rhi` | 1 | interface | `IRHI`, `IDevice`, buffers, graphics + compute pipelines, commands, `SamplerDesc` |
@@ -72,7 +72,7 @@ interfaces, and can be replaced independently. See [packageRules.md](packageRule
 | `debug-draw` | 3 | lib | Frame stats, F3 overlay, F4 world AABBs, F5 AA mode |
 | `scene` | 3 | lib | Flat instance list (64) with interned names, parent indices, `solscene` files, and prefab extract/instantiate (prefix + root transform); world = parent * local; materials (16), camera, sun + point lights (`World`); no ECS |
 | `gameplay` | 3 | lib | Kinematic `CharacterController` (walk, jump, step, slope; analog wish) and `GameCamera` (follow / orbit / FPS, stick look) on `IPhysics` + math; no input map |
-| `engine` | 4 | lib | Phased loop, module injection, repo vs install content layout |
+| `engine` | 4 | lib | Phased loop, module injection, repo vs install content layout, `config.cfg` load |
 | `sandbox` | app | exe | Dev harness (`--gates`, repo mounts, Debug + `ENGINE_GPU_DEBUG`) |
 | `cook` | app | exe | Offline `SOLC`/`SOLP` cooker; writes `content.pak` |
 | `game` | app | exe | Player binary (Release, identity + content + `content.pak` + DXC DLLs next to exe; OS D3D12, no Agility) |
