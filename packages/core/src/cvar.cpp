@@ -99,22 +99,61 @@ bool parse_float(std::string_view text, f32& out) {
     return true;
 }
 
+// The whitespace set trim() strips and the trailing-comment rule below keys
+// off of. '\v' and '\f' are rare in hand-edited config files, but a stray one
+// used to leave trim() reporting a "line" that looked empty as instead
+// malformed ("Malformed cvar line ''"), which reads like a complaint about
+// nothing.
+bool is_space(char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f';
+}
+
 std::string_view trim(std::string_view text) {
     usize begin = 0;
-    while (begin < text.size()
-        && (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\r')) {
+    while (begin < text.size() && is_space(text[begin])) {
         ++begin;
     }
     usize end = text.size();
-    while (end > begin
-        && (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\r')) {
+    while (end > begin && is_space(text[end - 1])) {
         --end;
     }
     return text.substr(begin, end - begin);
 }
 
+// A '#' or a leading "//" starts a *line* comment — the whole line is
+// ignored. See strip_trailing_comment() below for the separate, narrower rule
+// that lets a comment trail after a value on an otherwise real line.
 bool is_comment(std::string_view line) {
     return line.starts_with("#") || line.starts_with("//");
+}
+
+// A '#' starts a *trailing* comment only when it is preceded by whitespace,
+// so "window.title Room#3" keeps the '#' (part of the value) while
+// "window.mode borderless   # my note" does not (comment, stripped). This
+// runs for every cvar type, not just String, so "r.vsync 0 # off for now"
+// also parses cleanly.
+//
+// Deliberately NOT "//": unlike a line that starts with "//" (a full-line
+// comment, see is_comment()), "//" appearing after real content stays part
+// of the value. Treating a trailing "//" as a comment marker would corrupt
+// legitimate values that contain it, such as UNC paths ("//server/share")
+// and URLs ("http://host/x"). Only '#' gets the trailing-comment treatment.
+//
+// A value that collapses to nothing but a comment returns empty — including
+// when the "whitespace before #" was the key/value separator itself, e.g.
+// "window.mode  # note" has no value at all once the comment is gone, and
+// that must fail the same way an explicitly empty value does, not silently
+// store "# note".
+std::string_view strip_trailing_comment(std::string_view value) {
+    if (value.starts_with('#')) {
+        return {};
+    }
+    for (usize i = 1; i < value.size(); ++i) {
+        if (value[i] == '#' && is_space(value[i - 1])) {
+            return trim(value.substr(0, i));
+        }
+    }
+    return value;
 }
 
 // "key value", "key = value" and "key=value" all split the same way.
@@ -127,18 +166,22 @@ bool split_line(std::string_view line, std::string_view& key, std::string_view& 
     std::string_view rest = trim(line.substr(split));
     if (rest.starts_with("=")) {
         rest = trim(rest.substr(1));
+        if (rest.starts_with("=")) {
+            return false;  // "key==value": a stray leftover separator, not a value
+        }
     }
-    value = rest;
+    value = trim(strip_trailing_comment(rest));
     return !key.empty() && !value.empty();
 }
 
 void apply_one(std::string_view key, std::string_view value, CvarSource source,
-    CvarApplyStats& stats) {
+    usize line_number, CvarApplyStats& stats) {
     Cvar* cvar = find_cvar(key);
     if (!cvar) {
         ++stats.unknown;
         log(LogLevel::Warn, LogChannel::General,
-            std::string("Unknown cvar '") + std::string(key) + "'");
+            std::string("Unknown cvar '") + std::string(key) + "' (line "
+                + std::to_string(line_number) + ")");
         return;
     }
     switch (cvar->set(value, source)) {
@@ -153,7 +196,8 @@ void apply_one(std::string_view key, std::string_view value, CvarSource source,
         log(LogLevel::Warn, LogChannel::General,
             std::string("Cvar '") + cvar->name() + "' rejected value '"
                 + std::string(value) + "' (expected "
-                + cvar_type_name(cvar->type()) + ")");
+                + cvar_type_name(cvar->type()) + ", line "
+                + std::to_string(line_number) + ")");
         break;
     }
 }
@@ -277,8 +321,31 @@ Cvar* cvar_at(usize index) {
 
 CvarApplyStats apply_cvar_text(std::string_view text, CvarSource source) {
     CvarApplyStats stats{};
+
+    // A UTF-8 BOM is invisible in most editors but glues itself to the first
+    // key, turning a real cvar into an "Unknown cvar" report. Notepad's
+    // "UTF-8 with BOM" and PowerShell 5.1's `Out-File -Encoding utf8` both
+    // write one, so this is not a hypothetical. Strip it silently.
+    //
+    // A UTF-16 BOM means the whole file is the wrong encoding: read
+    // byte-by-byte, every line degrades into one garbled "Unknown cvar"
+    // warning. Refuse with a single clear message instead of forty bad ones.
+    if (text.size() >= 3 && static_cast<u8>(text[0]) == 0xEF
+        && static_cast<u8>(text[1]) == 0xBB && static_cast<u8>(text[2]) == 0xBF) {
+        text.remove_prefix(3);
+    } else if (text.size() >= 2
+        && ((static_cast<u8>(text[0]) == 0xFF && static_cast<u8>(text[1]) == 0xFE)
+            || (static_cast<u8>(text[0]) == 0xFE && static_cast<u8>(text[1]) == 0xFF))) {
+        log(LogLevel::Warn, LogChannel::General,
+            "Cvar config text looks like UTF-16 (found a UTF-16 byte-order mark); "
+            "save the file as UTF-8 and try again");
+        return stats;
+    }
+
     usize begin = 0;
-    while (begin <= text.size()) {
+    usize line_number = 0;
+    for (;;) {
+        ++line_number;
         const usize newline = text.find('\n', begin);
         const usize end = newline == std::string_view::npos ? text.size() : newline;
         const std::string_view line = trim(text.substr(begin, end - begin));
@@ -286,11 +353,12 @@ CvarApplyStats apply_cvar_text(std::string_view text, CvarSource source) {
             std::string_view key;
             std::string_view value;
             if (split_line(line, key, value)) {
-                apply_one(key, value, source, stats);
+                apply_one(key, value, source, line_number, stats);
             } else {
                 ++stats.invalid;
                 log(LogLevel::Warn, LogChannel::General,
-                    std::string("Malformed cvar line '") + std::string(line) + "'");
+                    std::string("Malformed cvar line '") + std::string(line) + "' (line "
+                        + std::to_string(line_number) + ")");
             }
         }
         if (newline == std::string_view::npos) {

@@ -130,6 +130,9 @@ engine::Cvar cv_gate_file{"gate.file", 0, "Cvar gate: config-file knob"};
 engine::Cvar cv_text_int{"gate.text_int", 0, "Cvar gate: text parser int"};
 engine::Cvar cv_text_float{"gate.text_float", 0.f, "Cvar gate: text parser float"};
 engine::Cvar cv_text_string{"gate.text_string", "unset", "Cvar gate: text parser string"};
+engine::Cvar cv_text_eq{"gate.text_eq", 0, "Cvar gate: text parser no-space '=' knob"};
+engine::Cvar cv_text_prec{"gate.text_prec", 0, "Cvar gate: text parser precedence-through-text knob"};
+engine::Cvar cv_text_comment{"gate.text_comment", "unset", "Cvar gate: text parser trailing-comment knob"};
 
 struct FlyCamera {
     engine::math::Vec3 position{0.f, 0.35f, -2.2f};
@@ -575,7 +578,7 @@ bool run_cvar_gate() {
             walked = true;
         }
     }
-    const bool registry_ok = count >= 10
+    const bool registry_ok = count >= 13
         && walked
         && engine::find_cvar("gate.bool") == &cv_gate_bool
         && engine::find_cvar("gate.string") == &cv_gate_string
@@ -614,13 +617,52 @@ bool run_cvar_gate() {
         "gate.nothere 1\n"
         "gate.text_int oops\n";
     const auto text_stats = engine::apply_cvar_text(kText, CvarSource::File);
+
+    // "key=value" with no spaces at all: the comment above split_line() in
+    // cvar.cpp claims all three separator forms behave identically, but until
+    // now only "key value" and "key = value" were exercised.
+    const auto text_eq_stats = engine::apply_cvar_text("gate.text_eq=42\n", CvarSource::File);
+    const bool text_eq_ok = text_eq_stats.applied == 1 && cv_text_eq.as_int() == 42;
+
+    // The entire reason the precedence rule exists: a File write must lose to
+    // a CommandLine-owned value even when it arrives as config text rather
+    // than a direct set() call. Until now `ignored` was only ever produced by
+    // calling set() directly, never through apply_cvar_text.
+    cv_text_prec.set("5", CvarSource::CommandLine);
+    const auto text_prec_stats = engine::apply_cvar_text("gate.text_prec 9\n", CvarSource::File);
+    const bool text_prec_ok = text_prec_stats.applied == 0
+        && text_prec_stats.ignored == 1
+        && cv_text_prec.as_int() == 5;
+
+    // Pin the trailing-comment fix: a String knob must have the comment
+    // stripped, not stored verbatim.
+    const auto text_comment_stats = engine::apply_cvar_text(
+        "gate.text_comment borderless   # my note\n", CvarSource::File);
+    const bool text_comment_ok = text_comment_stats.applied == 1
+        && cv_text_comment.as_string() == "borderless";
+
+    const auto text_empty_stats = engine::apply_cvar_text("", CvarSource::File);
+    const bool text_empty_ok = text_empty_stats.applied == 0
+        && text_empty_stats.unknown == 0
+        && text_empty_stats.invalid == 0
+        && text_empty_stats.ignored == 0;
+
+    // A bare key with no separator at all is malformed, not silently ignored.
+    const auto text_bare_stats = engine::apply_cvar_text("just_a_bare_key\n", CvarSource::File);
+    const bool text_bare_ok = text_bare_stats.invalid == 1 && text_bare_stats.applied == 0;
+
     const bool text_ok = text_stats.applied == 3
         && text_stats.unknown == 1
         && text_stats.invalid == 1
         && text_stats.ignored == 0
         && cv_text_int.as_int() == 7
         && cv_text_float.as_float() > 1.49f && cv_text_float.as_float() < 1.51f
-        && cv_text_string.as_string() == "hello world";
+        && cv_text_string.as_string() == "hello world"
+        && text_eq_ok
+        && text_prec_ok
+        && text_comment_ok
+        && text_empty_ok
+        && text_bare_ok;
 
     // A lower source never overwrites a higher one. This is what lets the
     // engine load config.cfg after the command line.
