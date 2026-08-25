@@ -676,6 +676,27 @@ bool run_cvar_gate() {
         && cv_gate_prec.set("4", CvarSource::Code) == CvarSetResult::Applied
         && cv_gate_prec.as_int() == 4;
 
+    // Both value forms, plus the two malformed tails.
+    static const char* kArgvOk[] = {
+        "sandbox.exe", "--gates", "--set", "gate.args=11", "--set", "gate.args", "12"};
+    const auto args_stats = engine::apply_cvar_args(7, kArgvOk);
+    // Captured immediately: the later dangling/no_value calls below mutate
+    // gate.args again, so reading cv_gate_args.as_int() inside the args_ok
+    // expression at that point would see the final value (13), not this one.
+    const engine::i32 args_after_ok = cv_gate_args.as_int();
+    static const char* kArgvDangling[] = {"sandbox.exe", "--set"};
+    const auto dangling_stats = engine::apply_cvar_args(2, kArgvDangling);
+    static const char* kArgvNoValue[] = {
+        "sandbox.exe", "--set", "gate.args", "--set", "gate.args=13"};
+    const auto no_value_stats = engine::apply_cvar_args(5, kArgvNoValue);
+    const bool args_ok = args_stats.applied == 2
+        && args_stats.unknown == 0
+        && args_stats.invalid == 0
+        && args_after_ok == 12
+        && dangling_stats.invalid == 1 && dangling_stats.applied == 0
+        && no_value_stats.invalid == 1 && no_value_stats.applied == 1
+        && cv_gate_args.as_int() == 13;
+
     // A Cvar with automatic (non-static) storage duration must leave no trace
     // once it goes out of scope: no dangling pointer in the registry, and no
     // false "duplicate cvar name" abort if the same name is declared again.
@@ -704,16 +725,17 @@ bool run_cvar_gate() {
         scope_ok = ok;
     }
 
-    const bool passed = registry_ok && text_ok && types_ok && precedence_ok && scope_ok;
+    const bool passed = registry_ok && text_ok && types_ok && precedence_ok && scope_ok && args_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Cvar gate: count=%llu registry=%s text=%s types=%s precedence=%s scope=%s (%s)",
+        "Cvar gate: count=%llu registry=%s text=%s types=%s precedence=%s scope=%s args=%s (%s)",
         static_cast<unsigned long long>(count),
         registry_ok ? "yes" : "no",
         text_ok ? "yes" : "no",
         types_ok ? "yes" : "no",
         precedence_ok ? "yes" : "no",
         scope_ok ? "yes" : "no",
+        args_ok ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);
@@ -4227,6 +4249,8 @@ int main(int argc, char** argv) {
             gates_mode = true;
         }
     }
+    // Before Engine::init, so config.cfg cannot overwrite a --set value.
+    engine::apply_cvar_args(argc, argv);
 
 #ifdef ENGINE_GAME_APP
     constexpr const char* kAppName = "Game";

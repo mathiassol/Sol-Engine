@@ -174,14 +174,19 @@ bool split_line(std::string_view line, std::string_view& key, std::string_view& 
     return !key.empty() && !value.empty();
 }
 
+// Line number is 1-based when the value came from a config file. A value
+// from the command line has no line, so callers pass 0, which means "omit
+// the '(line N)' suffix" rather than "report line zero".
 void apply_one(std::string_view key, std::string_view value, CvarSource source,
     usize line_number, CvarApplyStats& stats) {
     Cvar* cvar = find_cvar(key);
     if (!cvar) {
         ++stats.unknown;
-        log(LogLevel::Warn, LogChannel::General,
-            std::string("Unknown cvar '") + std::string(key) + "' (line "
-                + std::to_string(line_number) + ")");
+        std::string message = std::string("Unknown cvar '") + std::string(key) + "'";
+        if (line_number != 0) {
+            message += " (line " + std::to_string(line_number) + ")";
+        }
+        log(LogLevel::Warn, LogChannel::General, message);
         return;
     }
     switch (cvar->set(value, source)) {
@@ -193,11 +198,16 @@ void apply_one(std::string_view key, std::string_view value, CvarSource source,
         break;
     case CvarSetResult::Invalid:
         ++stats.invalid;
-        log(LogLevel::Warn, LogChannel::General,
-            std::string("Cvar '") + cvar->name() + "' rejected value '"
-                + std::string(value) + "' (expected "
-                + cvar_type_name(cvar->type()) + ", line "
-                + std::to_string(line_number) + ")");
+        {
+            std::string message = std::string("Cvar '") + cvar->name() + "' rejected value '"
+                + std::string(value) + "' (expected " + cvar_type_name(cvar->type());
+            if (line_number != 0) {
+                message += ", line " + std::to_string(line_number) + ")";
+            } else {
+                message += ")";
+            }
+            log(LogLevel::Warn, LogChannel::General, message);
+        }
         break;
     }
 }
@@ -369,8 +379,44 @@ CvarApplyStats apply_cvar_text(std::string_view text, CvarSource source) {
     return stats;
 }
 
-CvarApplyStats apply_cvar_args(int, const char* const*) {
-    return {};
+// split_line is deliberately not reused here: it applies strip_trailing_comment,
+// which is a config-file rule ('#' preceded by whitespace starts a comment).
+// A command line has no comments — a shell-quoted value like
+// `--set window.title "Room # 3"` must keep its '#' verbatim. An empty value
+// after '=' reaches Cvar::set, which rejects it as Invalid, which is the
+// behaviour we want, so no extra empty-value check is needed here either.
+CvarApplyStats apply_cvar_args(int argc, const char* const* argv) {
+    CvarApplyStats stats{};
+    if (argc <= 0 || !argv) {
+        return stats;
+    }
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i] ? argv[i] : "";
+        if (arg != "--set") {
+            continue;  // not an argument parser; --gates and friends are not ours
+        }
+        if (i + 1 >= argc) {
+            ++stats.invalid;
+            log(LogLevel::Warn, LogChannel::General, "--set with no key=value");
+            break;
+        }
+        const std::string_view token = argv[++i] ? argv[i] : "";
+        const usize equals = token.find('=');
+        if (equals != std::string_view::npos) {
+            apply_one(trim(token.substr(0, equals)), trim(token.substr(equals + 1)),
+                CvarSource::CommandLine, 0, stats);
+            continue;
+        }
+        if (i + 1 >= argc
+            || std::string_view(argv[i + 1] ? argv[i + 1] : "") == "--set") {
+            ++stats.invalid;
+            log(LogLevel::Warn, LogChannel::General,
+                std::string("--set ") + std::string(token) + " has no value");
+            continue;
+        }
+        apply_one(token, trim(argv[++i] ? argv[i] : ""), CvarSource::CommandLine, 0, stats);
+    }
+    return stats;
 }
 
 } // namespace engine
