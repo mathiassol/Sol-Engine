@@ -777,7 +777,44 @@ bool run_window_gate(engine::platform::IWindow* window, engine::rhi::IDevice* de
         return false;
     }
 
-    const bool default_ok = window->mode() == WindowMode::Windowed && window->vsync();
+    // window.mode and r.vsync are now user-settable, so asserting the factory
+    // default unconditionally would go red for any developer with a config.cfg.
+    // Assert the factory default only while a knob is untouched; once a knob has
+    // set it, assert the window matches what the knob asked for instead. That
+    // tests the wiring, which is the assertion worth having. The knobs live in
+    // engine.cpp's anonymous namespace -- the public registry is how a gate
+    // reaches them without exporting engine internals.
+    const engine::Cvar* cv_mode = engine::find_cvar("window.mode");
+    const engine::Cvar* cv_vsync_knob = engine::find_cvar("r.vsync");
+
+    bool mode_ok = window->mode() == WindowMode::Windowed;
+    if (cv_mode && cv_mode->type() == engine::CvarType::String
+        && cv_mode->source() != engine::CvarSource::Default) {
+        WindowMode wanted = WindowMode::Windowed;
+        // An unparsable value is refused by the engine, which keeps the default.
+        if (!engine::platform::parse_window_mode(cv_mode->as_string(), wanted)) {
+            wanted = WindowMode::Windowed;
+        }
+        mode_ok = window->mode() == wanted;
+    }
+
+    bool vsync_startup_ok = window->vsync();
+    if (cv_vsync_knob && cv_vsync_knob->type() == engine::CvarType::Bool
+        && cv_vsync_knob->source() != engine::CvarSource::Default) {
+        vsync_startup_ok = window->vsync() == cv_vsync_knob->as_bool();
+    }
+
+    const bool default_ok = mode_ok && vsync_startup_ok;
+
+    // The restore check below compares against the windowed dimensions, so the
+    // baseline has to be read while the window really is windowed -- startup is
+    // no longer guaranteed to be. Without this, a window.mode knob reds the gate
+    // on the restore clause instead of the startup clause.
+    const WindowMode startup_mode = window->mode();
+    const bool startup_vsync = window->vsync();
+    if (startup_mode != WindowMode::Windowed) {
+        window->set_mode(WindowMode::Windowed);
+    }
     const engine::u32 windowed_w = window->width();
     const engine::u32 windowed_h = window->height();
 
@@ -796,6 +833,16 @@ bool run_window_gate(engine::platform::IWindow* window, engine::rhi::IDevice* de
     window->set_vsync(true);
     const bool vsync_on = window->vsync();
 
+    // Hand the window back in the state the user asked for. The sweep above used
+    // to leave it windowed with vsync on, which silently undid the knobs a
+    // moment after startup applied them.
+    if (startup_mode != WindowMode::Windowed) {
+        window->set_mode(startup_mode);
+    }
+    if (!startup_vsync) {
+        window->set_vsync(false);
+    }
+
     bool present_ok = device == nullptr;
     if (device) {
         device->set_present_interval(0);
@@ -808,7 +855,13 @@ bool run_window_gate(engine::platform::IWindow* window, engine::rhi::IDevice* de
         && vsync_off && vsync_on && present_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Window gate: windowed=yes borderless=yes fullscreen=yes restore=yes vsync=yes present=yes (%s)",
+        "Window gate: startup=%s borderless=%s fullscreen=%s restore=%s vsync=%s present=%s (%s)",
+        default_ok ? "yes" : "no",
+        borderless_ok ? "yes" : "no",
+        fullscreen_ok ? "yes" : "no",
+        restore_ok ? "yes" : "no",
+        (vsync_off && vsync_on) ? "yes" : "no",
+        present_ok ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Platform, message);

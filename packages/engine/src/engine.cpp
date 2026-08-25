@@ -73,6 +73,15 @@ std::string walk_for_content_root(std::filesystem::path start) {
     return {};
 }
 
+// Empty when this is not a dev tree: a player install has no repo root above it.
+std::string discover_repo_root(platform::IPlatform& platform) {
+    std::string found = walk_for_content_root(std::filesystem::current_path());
+    if (!found.empty()) {
+        return found;
+    }
+    return walk_for_content_root(std::filesystem::path{platform.executable_directory()});
+}
+
 std::string discover_content_root(platform::IPlatform& platform, std::string_view override_root) {
     if (!override_root.empty()) {
         return canonicalize(std::filesystem::path(override_root));
@@ -83,12 +92,7 @@ std::string discover_content_root(platform::IPlatform& platform, std::string_vie
         return canonicalize(exe_dir);
     }
 
-    std::string found = walk_for_content_root(std::filesystem::current_path());
-    if (!found.empty()) {
-        return found;
-    }
-
-    found = walk_for_content_root(exe_dir);
+    const std::string found = discover_repo_root(platform);
     if (!found.empty()) {
         return found;
     }
@@ -175,11 +179,34 @@ bool Engine::init(const EngineConfig& config) {
         std::string("Content root: ") + content_root_ + " ("
             + content_layout_name(content_layout_) + ")");
 
+    // config.cfg is looked for in two places, and the first that exists wins.
+    // A discoverable repo root comes first: in a dev tree the content root is
+    // build output, so knobs left there die on the next clean. A player install
+    // has no repo root above it, so candidate 1 does not exist and the file
+    // shipped next to the exe is used -- unchanged behaviour for shipping.
     CvarApplyStats file_stats{};
+    std::string cvar_file_used;
     if (filesystem_) {
-        const std::string cvar_path =
+        std::string candidates[2];
+        usize candidate_count = 0;
+        const std::string repo_root = discover_repo_root(*modules_.platform);
+        if (!repo_root.empty() && repo_root != content_root_) {
+            candidates[candidate_count++] =
+                (std::filesystem::path(repo_root) / kCvarFileName).string();
+        }
+        candidates[candidate_count++] =
             (std::filesystem::path(content_root_) / kCvarFileName).string();
-        file_stats = apply_cvar_file(*filesystem_, cvar_path);
+
+        for (usize i = 0; i < candidate_count; ++i) {
+            bool found = false;
+            const CvarApplyStats stats =
+                apply_cvar_file(*filesystem_, candidates[i], &found);
+            if (found) {
+                file_stats = stats;
+                cvar_file_used = candidates[i];
+                break;
+            }
+        }
     }
 
     auto window_desc = config.window;
@@ -209,14 +236,15 @@ bool Engine::init(const EngineConfig& config) {
             ++cli_count;
         }
     }
-    char cvar_message[192];
+    char cvar_message[640];
     std::snprintf(cvar_message, sizeof(cvar_message),
-        "Cvars: file=%llu cli=%llu window=%ux%u %s vsync=%s",
+        "Cvars: file=%llu cli=%llu window=%ux%u %s vsync=%s cfg=%s",
         static_cast<unsigned long long>(file_stats.applied),
         static_cast<unsigned long long>(cli_count),
         window_desc.width, window_desc.height,
         platform::window_mode_name(window_desc.mode),
-        window_desc.vsync ? "on" : "off");
+        window_desc.vsync ? "on" : "off",
+        cvar_file_used.empty() ? "none" : cvar_file_used.c_str());
     log(LogLevel::Info, LogChannel::General, cvar_message);
 
     window_ = modules_.platform->create_window(window_desc);
