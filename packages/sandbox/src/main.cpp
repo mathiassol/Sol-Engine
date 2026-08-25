@@ -1,4 +1,5 @@
 #include <engine/engine.hpp>
+#include <engine/cvar_file.hpp>
 #include <engine/audio/audio.hpp>
 #include <engine/audio/wav.hpp>
 #include <engine/core/arena.hpp>
@@ -567,7 +568,7 @@ bool compile_fullscreen_hlsl(engine::shaders::IShaderCompiler& compiler, const s
     return true;
 }
 
-bool run_cvar_gate() {
+bool run_cvar_gate(engine::platform::IFileSystem* fs, const std::string& scratch_dir) {
     using engine::CvarSetResult;
     using engine::CvarSource;
 
@@ -725,10 +726,33 @@ bool run_cvar_gate() {
         scope_ok = ok;
     }
 
-    const bool passed = registry_ok && text_ok && types_ok && precedence_ok && scope_ok && args_ok;
+    // The engine's own loader, not a private copy of it.
+    bool file_ok = false;
+    bool missing_ok = false;
+    if (fs) {
+        const std::string path = scratch_dir + "/gate_cvars.cfg";
+        static constexpr const char* kBody = "# written by the cvar gate\ngate.file 99\n";
+        const std::span<const engine::u8> body{
+            reinterpret_cast<const engine::u8*>(kBody), std::strlen(kBody)};
+        if (fs->write_file(path, body)) {
+            bool found = false;
+            const auto stats = engine::apply_cvar_file(*fs, path, &found);
+            file_ok = found && stats.applied == 1 && stats.invalid == 0
+                && cv_gate_file.as_int() == 99;
+        }
+        bool missing_found = true;
+        const auto missing_stats =
+            engine::apply_cvar_file(*fs, scratch_dir + "/no_such_file.cfg", &missing_found);
+        missing_ok = !missing_found && missing_stats.applied == 0
+            && missing_stats.invalid == 0 && missing_stats.unknown == 0;
+    }
+
+    const bool passed = registry_ok && text_ok && types_ok && precedence_ok && scope_ok && args_ok
+        && file_ok && missing_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Cvar gate: count=%llu registry=%s text=%s types=%s precedence=%s scope=%s args=%s (%s)",
+        "Cvar gate: count=%llu registry=%s text=%s types=%s precedence=%s scope=%s args=%s "
+        "file=%s missing=%s (%s)",
         static_cast<unsigned long long>(count),
         registry_ok ? "yes" : "no",
         text_ok ? "yes" : "no",
@@ -736,6 +760,8 @@ bool run_cvar_gate() {
         precedence_ok ? "yes" : "no",
         scope_ok ? "yes" : "no",
         args_ok ? "yes" : "no",
+        file_ok ? "yes" : "no",
+        missing_ok ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);
@@ -4497,7 +4523,7 @@ int main(int argc, char** argv) {
     }
 
     bool gates_ok = run_mount_gate(*loader) && run_build_gate(app.content_layout());
-    if (!run_cvar_gate()) {
+    if (!run_cvar_gate(app.filesystem(), app.executable_directory())) {
         gates_ok = false;
     }
     if (!run_window_gate(app.window(), app.device())) {
