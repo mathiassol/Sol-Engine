@@ -3,10 +3,9 @@
 Everything a general-purpose engine in the Unity / Godot / Unreal category
 eventually needs. Not a sprint. Not an org chart to copy on day one.
 
-**Live view:** the engine map canvas defaults to **Ready to pick** — that is
-the work list. **Later blockers** is everything still blocked. Category
-pills are the full catalog; add features there when they become real engine
-work. This markdown is the source of truth the canvas mirrors.
+**This file is the work list.** Every **Ready** row in the tables below is a
+fair next pick; **Later** rows name what blocks them. There is no dashboard or
+canvas — read this file directly.
 
 **How to use:** pick **one Ready** item, give it a **gate** (`--gates` and/or
 a visible sandbox check with `ENGINE_GPU_DEBUG=1`), put it behind a package
@@ -37,9 +36,11 @@ A “missing consumer” we would write as the gate is not a blocker.
 When a Ready row becomes **Done**, every Later whose only remaining Finish
 first is that row becomes **Ready**. That is the path until Far.
 
-Phases 0–14 are **Done**. Next work is any **Ready** row you choose
-(logger, UI quads, actions, skins, additive worlds, alpha, CPU particles,
-3D audio, navmesh, terrain, installer, fullscreen/quality options).
+Phases 0–14 are **Done**. Next work is any **Ready** row you choose.
+
+Read the Status column in the tables below for that list — it is the only
+copy. A hand-written summary here would drift from the tables above it, so
+there isn't one.
 
 ---
 

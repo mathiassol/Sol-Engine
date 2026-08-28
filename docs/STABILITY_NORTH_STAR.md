@@ -174,11 +174,11 @@ observability stack we need for years.
 
 | Area | Why it bites later |
 |------|-------------------|
-| Raw COM on `D3D12Device` members | Exception / early-out leaks; dtor order bugs. |
-| Profiler no-op | You cannot keep the “measure first” promise. |
-| Upload `wait_idle` | First hitch when meshes get large. |
-| No GPU timestamps | Overlay lies about where the frame went. |
-| Gates only inside `sandbox.exe` | Easy to ship a broken compile check. |
+| ~~Raw COM on `D3D12Device` members~~ | **Done** (Horizon A1) — `ComPtr` throughout. |
+| ~~Profiler no-op~~ | **Done** (Horizon A2) — real RAII scopes, F3 shows `P`/`X`/`E` ms. |
+| ~~Upload `wait_idle`~~ | **Done** (Horizon B2) — fenced upload ring. |
+| ~~No GPU timestamps~~ | **Done** (Horizon A3) — F3 shows `G` GPU ms. |
+| Gates only inside `sandbox.exe` / `game.exe` | Nothing runs them automatically — no CI, no git hook. Easy to ship a broken compile check. |
 | `DrawItem` raw GPU pointers | Fine for one frame; dangling if owners reset mid-frame. Document + assert, don’t invent an ID indirection yet. |
 | FXC (`D3DCompile`) in a package named dxc | Done in Phase 9 (`IDxcCompiler3`, SM 6.0). Bindless SM 6.6 still waits on material count. |
 
@@ -291,9 +291,11 @@ phases 12+:
 ## 7. How to choose work on a Monday
 
 1. If the debug layer yells, that is the only task.
-2. Else the lowest incomplete phase in [ROADMAP.md](ROADMAP.md) (now 12+).
-3. Do not skip 12 to “look better.” A PBR shader in `main.cpp` makes the
-   renderer *harder* to rip.
+2. Else pick **one Ready row** from [ENGINE_MAP.md](ENGINE_MAP.md). (Phases
+   0–14 are all done; the numbered-phase model this section once described is
+   finished. [ROADMAP.md](ROADMAP.md) is now the decision log, not the queue.)
+3. Do not skip a Ready row to “look better.” A PBR shader in `main.cpp` makes
+   the renderer *harder* to rip.
 4. If you want a new graphics paper feature, it is a **pass + material**, not
    a new architecture.
 

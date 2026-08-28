@@ -1,7 +1,7 @@
 # Physics overlaps (Physics #1)
 
 Date: 20 Aug 2026  
-Status: approved — implement this spec
+Status: implemented
 
 ## Problem
 

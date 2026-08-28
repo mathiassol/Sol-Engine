@@ -1,7 +1,7 @@
 # Physics rigid bodies (Physics #2)
 
 Date: 20 Aug 2026  
-Status: implement
+Status: implemented
 
 ## Sources (use these)
 

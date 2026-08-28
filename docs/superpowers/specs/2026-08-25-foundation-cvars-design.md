@@ -1,7 +1,7 @@
 # Config / cvars (Foundation #8)
 
 Date: 25 Aug 2026  
-Status: spec
+Status: implemented
 
 ## Decision
 

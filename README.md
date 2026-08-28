@@ -12,8 +12,12 @@ The sandbox is the proving ground, not the product.
 
 - Windows 10/11 x64
 - Direct3D 12 GPU (Feature Level 11_0, Shader Model 6.0). See [docs/GPU_BASELINE.md](docs/GPU_BASELINE.md).
-- [Visual Studio 2022](https://visualstudio.microsoft.com/) with **Desktop development with C++**
-- [CMake 3.24+](https://cmake.org/download/) (or VS bundled CMake)
+- [Visual Studio 2026](https://visualstudio.microsoft.com/) with **Desktop development with C++**
+- Windows 10/11 SDK (ships with that workload) — supplies `dxcompiler.dll` +
+  `dxil.dll`. Configure fails with a `FATAL_ERROR` without it.
+- [CMake 4.2+](https://cmake.org/download/) (or VS bundled CMake) — the
+  `Visual Studio 18 2026` generator was added in CMake 4.2
+- C++20 (`/std:c++20`, no compiler extensions) — set by the build
 - Git
 
 **Clone and build**
@@ -48,15 +52,36 @@ cmake --install build --config Release --prefix dist
 .\dist\game.exe
 ```
 
-Or via CPM scripts (`cpm run` if CPM CLI installed):
+## Controls
 
-```powershell
-cpm configure
-cpm build
-cpm run
-```
+| Key | Gamepad | Action |
+|-----|---------|--------|
+| `WASD` + `Q`/`E` | — | Fly-camera move |
+| Right mouse | Right stick | Look |
+| `Tab` | Start | Toggle walk mode (husky 0 is the capsule) |
+| `WASD` | Left stick / D-pad | Walk, camera-relative |
+| `Space` | A | Jump in walk mode — 2D beep otherwise |
+| `Enter` | Y | Cycle game camera: follow / orbit / FPS |
+| `Z` / `X` | — | Nudge the walker on world X |
+| `F3` | — | Stats overlay: `P` poll / `X` extract / `E` execute / `G` GPU ms, plus AA mode |
+| `F4` | — | Instance AABBs |
+| `F5` | — | Cycle AA: **Off** (default) → FXAA → SMAA → TAA |
+| `F11` | — | Toggle windowed / borderless |
+| `Esc` | — | Quit |
 
-**Controls:** WASD + Q/E move, right-mouse look, **Tab** / **Start** walk mode (WASD or left stick / D-pad camera-relative, **Space** / **A** jump, **Enter** / **Y** cycle follow / orbit / FPS, right stick look; husky 0 is the capsule), **Z/X** nudge the walker on world X, **Space** 2D beep when not walking, **F3** stats overlay (`P` poll / `X` extract / `E` execute / `G` GPU ms, plus AA mode), **F4** instance AABBs, **F5** cycle AA (Off / FXAA / SMAA; default SMAA 1x after ACES), **Esc** quit. Sixty-three huskies plus a checker floor live in `scene::World` (64 instances, frustum-culled at extract), lit by a directional sun (with a floor shadow), split-sum IBL, and one rim point light. A source cubemap sky fills leftover pixels in HDR before ACES. Scene color is RGBA16; ACES writes LDR, then SMAA (or FXAA) before the swapchain. Shaders compile with Windows SDK DXC (SM 6.0 / DXIL) on a worker thread for hot-reload. The husky mesh is glTF (`/content/meshes/cartoon_husky.gltf`); the cube stays OBJ. Albedos upload a full mip chain. Huskies sample `/content/textures/husky/Cartoon_Husky_Albedo1.png` … `Albedo4.png`.
+Startup AA can also be set without a rebuild: `sandbox.exe --set r.aa=taa`
+(`off` | `fxaa` | `smaa` | `taa`). See [docs/FOUNDATION.md](docs/FOUNDATION.md)
+for the full cvar list.
+
+**What the sandbox renders:** 63 huskies plus a checker floor in `scene::World`
+(64 instances, frustum-culled at extract), lit by a directional sun with a
+shadow, split-sum IBL, and one rim point light. A source cubemap sky fills
+leftover pixels in HDR before ACES. Scene color is RGBA16; ACES writes LDR,
+then the chosen AA pass before the swapchain. Shaders compile with Windows SDK
+DXC (SM 6.0 / DXIL) on a worker thread for hot-reload. The husky mesh is glTF
+(`/content/meshes/cartoon_husky.gltf`); the cube stays OBJ. Albedos upload a
+full mip chain, sampling `/content/textures/husky/Cartoon_Husky_Albedo1.png` …
+`Albedo4.png`.
 
 **Gates (no interactive loop):**
 
@@ -69,33 +94,27 @@ Exits `0` on pass, `1` on fail.
 
 **Optional:** in **Debug**, `ENGINE_GPU_DEBUG=1` enables the D3D12 debug layer and shader debug flags. Release `game.exe` ignores it.
 
-## Git on a new PC
-
-This repo should have a single initial commit before moving machines:
-
-```powershell
-git add .
-git status          # verify .pp/, build/, .cursor-tmp/ are NOT listed
-git commit -m "Initial engine scaffold with D3D12 forward pass"
-git remote add origin <url>
-git push -u origin main
-```
-
-On the new PC: clone, configure, build — no extra secrets in repo (`.pp/` is gitignored).
-
 ## Project layout
 
 ```
 packages/
-  core, math              Layer 0 — foundation
-  platform, rhi, assets     Layer 1 — interfaces
-  *-win32, *-d3d12, ...    Layer 2 — implementations
-  renderer, debug-draw    Layer 3 — systems
-  engine                  Layer 4 — runtime loop
-  sandbox                 Dev harness
-  game                    Player exe (Release install layout)
-docs/                     Architecture, roadmap, rules
+  core, math                          Layer 0 — foundation
+  platform, rhi, shaders, assets,     Layer 1 — interfaces
+  audio, physics
+  *-win32, *-d3d12, *-dxc,            Layer 2 — implementations
+  *-xaudio2, physics-cpu, assets-*
+  renderer, debug-draw,               Layer 3 — systems
+  scene, gameplay
+  engine                              Layer 4 — runtime loop
+  cook                                Tool — offline SOLC/SOLP cooker
+  sandbox                             Dev harness
+  game                                Player exe (Release install layout)
+docs/                                 Architecture, roadmap, rules
 ```
+
+`engine` depends on the interfaces plus `renderer` — **not** on `scene`,
+`gameplay`, or `debug-draw`. The apps link those. That is why the renderer
+never sees the scene.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -113,8 +132,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROAD
 - [Philosophy.md](Philosophy.md) — design principles
 - [docs/packageRules.md](docs/packageRules.md) — package rules
 - [docs/FOUNDATION.md](docs/FOUNDATION.md) — core/math/platform API
-- [docs/ROADMAP.md](docs/ROADMAP.md) — live numbered sequence (after 14: pick from the engine map)
-- [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — full engine map by category (implementation order)
+- [docs/ROADMAP.md](docs/ROADMAP.md) — decision log: why each shipped feature was built the way it was
+- [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — the backlog. Pick one **Ready** row
 - [docs/GPU_BASELINE.md](docs/GPU_BASELINE.md) — player GPU / OS / DLL baseline
-- [docs/WHATS_NEXT.md](docs/WHATS_NEXT.md) — archive of the 2026 foundation list
 - [docs/TODO_LATER.md](docs/TODO_LATER.md) — how to pick the next gate from the map
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Third-party: [`cgltf`](https://github.com/jkuhlmann/cgltf) (MIT) is vendored at
+`packages/assets-gltf/third_party/cgltf.h`; its licence notice is at the end of
+that file. Everything else links only Windows system libraries.

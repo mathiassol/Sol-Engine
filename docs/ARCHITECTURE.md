@@ -5,45 +5,49 @@ interfaces, and can be replaced independently. See [packageRules.md](packageRule
 
 ## Dependency graph
 
+Read as `package → what it links`. Derived from `target_link_libraries` in each
+`packages/*/CMakeLists.txt`; keep it that way rather than drawing it by hand.
+
 ```
-                         ┌──────────┐   ┌──────────┐
-                         │ sandbox  │   │   game   │  (apps — sandbox proves, game ships)
-                         └────┬─────┘   └────┬─────┘
-                              │              │
-                         ┌────▼──────────────▼─────┐
-                         │         engine          │  (runtime, module wiring)
-                         └────────────┬────────────┘
-          ┌───────────┬───────────┬───┴────┬───────────┐
-          │           │           │        │           │
-     ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌─▼──────┐ ┌─▼──────┐
-     │renderer │ │  assets │ │platform │ │ audio  │ │physics │
-     │debug-draw│ └────┬────┘ └────┬────┘ └───┬────┘ └───┬────┘
-     └────┬────┘      │          │          │          │
-          │      ┌────▼──────────┼──────────┼──────────┼─────────┐
-          │      │ assets-fs     │          │          │         │
-          │      │ assets-obj    │   ┌──────▼──────────┐         │
-          │      │ assets-gltf   │   │  platform-win32 │         │
-          │      │ assets-png    │   └─────────────────┘         │
-          │      │ assets-gpu    │                               │
-          │      └───────────────┘     ┌────────────┐  ┌─────────▼────────┐
-     ┌────▼────┐                       │audio-xaudio2│  │   physics-cpu    │
-     │   rhi   │                       └────────────┘  └──────────────────┘
-     └────┬────┘
-          │
-     ┌────▼────────┐
-     │  rhi-d3d12  │  (+ shaders-dxc)
-     └──────┬──────┘
-            │
-     ┌──────▼──────┐
-     │    math     │
-     └──────┬──────┘
-            │
-     ┌──────▼──────┐
-     │    core     │
-     └─────────────┘
+Layer 0  core            → (nothing)
+         math            → core
+
+Layer 1  platform        → core          rhi       → core
+         shaders         → core          assets    → core, math
+         audio           → core, math    physics   → core, math
+
+Layer 2  platform-win32  → platform          rhi-d3d12  → rhi
+         shaders-dxc     → shaders           audio-xaudio2 → audio
+         physics-cpu     → physics           assets-gpu → assets, rhi
+         assets-filesystem → assets, platform
+         assets-obj / assets-gltf / assets-png → assets
+
+Layer 3  renderer        → rhi, core, math
+         debug-draw      → core, math, rhi, shaders
+         scene           → core, math, assets
+         gameplay        → core, math, physics
+
+Layer 4  engine          → core, platform, rhi, renderer, assets, audio, physics
+
+Tool     cook            → core, math, assets, assets-obj, assets-gltf, assets-png
+
+Apps     sandbox / game  → engine, scene, gameplay, debug-draw, math,
+                           assets-*, and the Layer 2 backends (guarded by
+                           ENGINE_* options). Same sources; game adds the
+                           install layout and identity resources.
 ```
 
-**Rule:** dependencies only point downward.
+**Rule:** dependencies only point downward. Verified: no cycles, no upward
+edges, and no package reaching around an interface to a concrete backend.
+
+Two facts the shape is load-bearing on:
+
+- `engine` does **not** depend on `scene`, `gameplay`, or `debug-draw` — the
+  **apps** link those. That is *why* the renderer never sees the scene: the
+  `scene → RenderSnapshot` bridge lives in the app
+  (`packages/sandbox/src/world_extract.cpp`).
+- `rhi` depends on `core` only — **not** `math`. `rhi-d3d12` links `rhi`, and
+  nothing else.
 
 ## Packages
 
@@ -66,7 +70,7 @@ interfaces, and can be replaced independently. See [packageRules.md](packageRule
 | `audio-xaudio2` | 2 | lib | XAudio2 backend (`create_audio()`); 16-bit PCM one-shots |
 | `physics-cpu` | 2 | lib | Dynamic AABB tree + sequential-impulse solver; AABB / sphere / Y-up capsule; sensor enter/exit; closest-hit raycasts (`create_physics()`) |
 | `shaders-dxc` | 2 | lib | HLSL compile via Windows SDK `dxcompiler` (SM 6.0 / DXIL); `ShaderTarget` enum (SPIR-V rejected); disk cache; worker-thread hot-reload |
-| `rhi-d3d12` | 2 | lib | D3D12 backend (`create_rhi()` is the public header; device types stay in `src/`). Inbox OS D3D12 (FL 11_0 + SM 6.0, no Agility). PIX ANSI `BeginEvent`/`EndEvent`/`SetMarker` on the command list. SamplerDesc static samplers, `create_sampler`, compute stub, per-SRV tables, device shader-visible SRV heap, color+SRV transients, RGBA8 mip generation |
+| `rhi-d3d12` | 2 | lib | D3D12 backend (`create_rhi()` is the public header; device types stay in `src/`). Inbox OS D3D12 (FL 11_0 + SM 6.0, no Agility). PIX ANSI `BeginEvent`/`EndEvent`/`SetMarker` on the command list. SamplerDesc static samplers, `create_sampler` (object only — `set_sampler` is a deliberate stub), compute PSO + dispatch + buffer UAV readback, per-SRV tables, device shader-visible SRV heap, color+SRV transients, RGBA8 mip generation |
 | `renderer` | 3 | lib | Render graph, **standard frame** (shadow → forward → motion → sky → bloom → TAA → tonemap → AA → debug → overlay), per-pass GPU debug events, frustum extract, **GGX PBR** (albedo + packed MR + derivative TBN normals), **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA**, **SMAA 1x / FXAA** |
 | `debug-draw` | 3 | lib | Frame stats, F3 overlay, F4 world AABBs, F5 AA mode |
 | `scene` | 3 | lib | Flat instance list (64) with interned names, parent indices, `solscene` files, and prefab extract/instantiate (prefix + root transform); world = parent * local; materials (16), camera, sun + point lights (`World`); no ECS |
@@ -85,12 +89,19 @@ GPU / DLL baseline: [GPU_BASELINE.md](GPU_BASELINE.md).
 |-----------|-------------------|
 | `platform` | `platform-win32` |
 | `rhi` | `rhi-d3d12` |
-| `assets` | `assets-filesystem`, `assets-obj`, `assets-gltf`, `assets-png`, `assets-gpu` |
+| `assets` (`IAssetLoader`) | `assets-filesystem`, plus the in-tree `pak` loader |
+| `assets` (`IMeshLoader`) | `assets-obj` |
 | `audio` | `audio-xaudio2` |
 | `physics` | `physics-cpu` |
 | `shaders` | `shaders-dxc` |
 
 Applications link implementations. `engine` and `renderer` only see interfaces.
+
+Two `assets-*` packages sit outside that pattern and it is worth knowing which:
+`assets-gltf` exposes its own `IGltfLoader` (returns a glTF-specific result
+with texture URIs, so it is not substitutable for `IMeshLoader`), and
+`assets-png` has no interface at all — free functions over WIC. `assets-gpu` is
+not a loader either; it uploads CPU meshes to GPU buffers.
 
 ## Swap test — where a new pass goes
 

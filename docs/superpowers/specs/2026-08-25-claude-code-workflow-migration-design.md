@@ -1,7 +1,7 @@
 # Claude Code workflow migration (Cursor → Claude Code)
 
 Date: 25 Aug 2026
-Status: approved, not yet implemented
+Status: implemented
 
 ## Why
 

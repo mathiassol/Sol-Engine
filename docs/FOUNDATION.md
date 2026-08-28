@@ -18,7 +18,8 @@ Linear bump allocator. Reset once per frame via `Engine::frame_arena()`. No indi
 
 ### Diagnostics
 
-- `log(level, channel, message)` — channels: `General`, `Platform`, `Render`, `Assets`. Default logger is mutex-serialized stderr.
+- `log(level, channel, message)` — channels: `General`, `Platform`, `Render`, `Assets`, `Audio`, `Physics`. Default logger is mutex-serialized stderr. There is no file logger yet (Foundation #6).
+- `fnv1a64(bytes)` (`core/hash.hpp`) — 64-bit FNV-1a, with `kFnvOffset64` / `kFnvPrime64` exposed for incremental hashing. Used for asset handle ids and shader cache keys.
 - `ENGINE_ASSERT` / `ENGINE_ASSERT_MSG` — Debug and Release abort on programmer error (arena OOM, buffer write bounds)
 - `ENGINE_PROFILE_SCOPE("name")` — RAII CPU scope. Default `FrameProfiler` keeps 8 named slots and reports the previous frame via `profiler_scope_ms()`. `profiler_begin_frame()` runs at the start of `Engine::run`. Overlay: F3 `P`/`X`/`E`/`G`.
 
@@ -140,11 +141,25 @@ inside the D3D12 and DXC backends before any registry exists.
 
 Column-major `Mat4`, right-handed Y-up. Object space uses **counter-clockwise** fronts (Blender / OBJ). The D3D12 backend sets `FrontCounterClockwise`.
 
-- `Mat4::translate`, `scale`, `look_at`, `perspective`
+- `Mat4::identity`, `translate`, `scale`, `look_at`, `perspective`, `ortho`
 - `Mat4::inverse_affine` — view matrix inversion
-- `operator*(Mat4, Mat4)`
-- `Vec3::cross`, `constants.hpp` for `radians()` / `degrees()`
+- `Mat4::transform_point`, `operator*(Mat4, Mat4)`
+- `Vec2`, `Vec3`, `Vec4`. `Vec3::cross` / `dot` / `normalized` (zero-length and
+  NaN both return a zero vector); `constants.hpp` for `radians()` / `degrees()`
+- `Aabb` — `empty()`, `valid()`, `include()`, `transformed()`, `center()`,
+  `half_extents()`. An empty `Aabb` carries ±1e30 sentinels, so guard with
+  `valid()` before transforming one.
 - `Frustum::from_view_proj` — six clip planes; `intersects(Aabb)` for extract skip
+
+**There is no rotation constructor and no quaternion type.** `Mat4` cannot
+build a rotation; cameras derive their basis from yaw/pitch trig, and physics
+is translation-only. Anything that needs to rotate an instance must build the
+matrix itself for now.
+
+Clip-space conventions (already correct for D3D12, Vulkan and Metal alike):
+depth range `[0,1]`, column-major storage with `mul(M, v)` in HLSL, texture
+origin top-left. Only **NDC Y direction** is API-specific — D3D12 and Metal
+agree; a Vulkan backend would need the flip.
 
 ## Platform
 
@@ -156,6 +171,12 @@ deadzone; triggers 0..1. `IInput::key_pressed` / `button_pressed` are convenienc
 helpers. Window `Focus` / `Unfocus` events call `IInput::set_focused`. Unfocused
 windows report no keys, mouse buttons, or pads, so `GetAsyncKeyState` / XInput
 cannot steer from another app. `platform-win32` polls XInput 1.4.
+
+`platform::Key` is a **hand-maintained short list**, not a full keyboard:
+`Escape`, `Space`, `Enter`, `Tab`, `W A S D Q E`, `Z X`, `F3 F4 F5 F11`,
+`Shift`, `Control`, `Alt` — 19 keys. There are **no digits and no arrow keys**.
+Adding one means editing `platform/input.hpp` and the VK mapping in
+`platform-win32/src/platform_win32.cpp` together.
 
 ### Window
 

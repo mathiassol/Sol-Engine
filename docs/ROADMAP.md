@@ -1,9 +1,12 @@
 # Sol Engine roadmap
 
-**Canonical plan.** Follow this file in order. The live board is the canvas
-`sol-engine-board.canvas.tsx`.
+**Decision log.** Every shipped feature has a Why / Choice / Gate (met) /
+Do-not entry here. This file records *why the tree looks the way it does* — it
+is not the work list. The backlog is [ENGINE_MAP.md](ENGINE_MAP.md): pick one
+**Ready** row. There is no dashboard or canvas; these two files are read
+directly.
 
-Last updated: 25 Aug 2026.
+Last updated: 28 Aug 2026.
 
 ---
 
@@ -76,14 +79,18 @@ Picking rules: [TODO_LATER.md](TODO_LATER.md).
 
 ## How to use this file
 
-1. Work **only** the lowest incomplete phase.
+Phases 0–14 are all **Done**. The numbered-phase model is finished; work is now
+picked from the map.
+
+1. Pick **one Ready row** from [ENGINE_MAP.md](ENGINE_MAP.md). Picking rules:
+   [TODO_LATER.md](TODO_LATER.md).
 2. Finish its **gate** (`--gates` and/or a visible sandbox check with
    `ENGINE_GPU_DEBUG=1`).
-3. Mark the phase done here. Update the canvas: phase status, next gate,
-   **line counts** (recount `packages/**/*.{cpp,hpp,h,hlsl}`, exclude `build/`
-   and `third_party/`).
-4. Do not start the following phase in the same session unless the gate is
-   green.
+3. Add its Why / Choice / Gate (met) / Do-not entry here, flip the row to
+   **Done** in ENGINE_MAP.md, and recount **line counts**
+   (`packages/**/*.{cpp,hpp,h,hlsl}`, exclude `build/` and `third_party/`).
+   `/ship-feature` does all of this.
+4. Do not start the next row in the same session unless the gate is green.
 
 **Stability rules (never drop these):** debug-layer-clean GPU changes, RAII,
 no hidden globals, renderer does not include D3D12/Vulkan headers.
@@ -341,7 +348,10 @@ early, FXAA only as a final pass. Godot is FXAA *or* SMAA for screen-space.
 Unreal is one scalability method. Sol follows that: Off / FXAA / SMAA, never
 stacked. TAA later joined the same enum; it is not a second pass on top.
 
-**Choice:** default **SMAA 1x** (Jimenez morphological, Medium: luma threshold
+**Choice:** default **SMAA 1x** — *superseded: the default is now `Off`. When
+TAA joined the same enum (Renderer #14 below), the launch path became `Off` and
+every AA mode moved behind F5 / `r.aa`. The rest of this entry still stands.*
+(Jimenez morphological, Medium: luma threshold
 0.1, search 8, Rec.709 luma). Sharper than FXAA; Unity URP/HDRP and Godot use
 it as the spatial quality option. Official High AreaTex/SearchTex LUTs are
 skipped — analytical weights, documented as Medium-quality 1x. **FXAA 3.11**
@@ -668,8 +678,9 @@ Bloom, cheap AA, motion vectors, and Karis TAA are done; PCSS only if
 contacts still look like stamps), assets cooker (`SOLC`). 2D audio and
 rigid-body physics with a Y-up capsule, sensor enter/exit, and closest-hit
 rays are **done**. Ready rows are open (UI quads, skins, additive worlds,
-alpha, CPU particles, 3D audio, navmesh, terrain, actions, logger, cvars,
-installer). Gameplay #4 walk/jump, Gameplay #3 follow/orbit/FPS, Platform #3
+alpha, CPU particles, 3D audio, navmesh, terrain, actions, logger,
+installer). Foundation #8 cvars is **done**.
+Gameplay #4 walk/jump, Gameplay #3 follow/orbit/FPS, Platform #3
 XInput pad, and Assets #4 glTF extras are **done**.
 Named GPU markers
 are **done**. No in-engine inspector — an
@@ -741,11 +752,13 @@ clean. One worker thread, not a fiber job graph.
 
 After finishing a phase (or any roadmap edit):
 
-1. Set the phase **Status** in this file.
-2. Recount lines: `packages` `*.cpp *.hpp *.h *.hlsl` (exclude `build/` and
-   `third_party/`).
-3. Update the progress canvas `sol-engine-board.canvas.tsx`: next gate, usage
-   bar, package LOC chart, package table, date, **goal line** (general-purpose
-   engine, not “play in the sandbox”).
-4. Run `sandbox --gates` with `ENGINE_GPU_DEBUG=1` when GPU code changed.
-5. Do not start the next phase until the gate is written as done here.
+1. Add the feature's Why / Choice / Gate (met) / Do-not entry in this file.
+2. Flip the row to **Done** in [ENGINE_MAP.md](ENGINE_MAP.md), and promote any
+   **Later** row whose only remaining *Finish first* was that row.
+3. Recount lines: `packages` `*.cpp *.hpp *.h *.hlsl` (exclude `build/` and
+   `third_party/`). Recount with the command; do not adjust by hand.
+4. Set the design spec's `Status:` to `implemented`.
+5. Run `sandbox --gates` with `ENGINE_GPU_DEBUG=1` when GPU code changed.
+6. Do not start the next row until the gate is written as done here.
+
+`/ship-feature` performs all six.
