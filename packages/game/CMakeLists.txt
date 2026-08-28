@@ -7,10 +7,6 @@ install(TARGETS game RUNTIME DESTINATION .)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/sandbox/content/" DESTINATION content)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/debug-draw/content/" DESTINATION debug)
 
-install(TARGETS game RUNTIME DESTINATION .)
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/sandbox/content/" DESTINATION content)
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/debug-draw/content/" DESTINATION debug)
-
 if(ENGINE_RHI_D3D12)
     include(EngineDxc)
     engine_locate_dxc()
