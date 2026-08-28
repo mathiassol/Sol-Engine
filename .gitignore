@@ -8,13 +8,6 @@ x64/
 *.suo
 *.sln.docstates
 
-# CPM
-cpm_modules/
-cpm-lock.json
-
-# vcpkg
-vcpkg_installed/
-
 # IDE / editor
 .idea/
 .vscode/
@@ -38,9 +31,10 @@ config.cfg
 .env
 .env.*
 
-# OS
+# OS / tooling crash artifacts
 Thumbs.db
 .DS_Store
+*.stackdump
 
 # Artifacts (build outputs live under build/)
 *.exe
@@ -57,8 +51,11 @@ Thumbs.db
 *.so
 *.dylib
 
-# Personal research library — kept locally, not published (public repo)
+# Personal research library — kept locally, not published (public repo).
+# Schematics are figures extracted from those same papers, so they follow the
+# same rule: they stay on disk, they don't go in a public MIT repo.
 reasarch/*.pdf
 reasarch/*.pptx
+reasarch/Schematics/
 
 # Keep *.lib out of repo root only; build/ is already ignored

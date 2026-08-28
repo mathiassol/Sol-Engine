@@ -5,3 +5,18 @@
 *.md text eol=lf
 *.cmake text eol=lf
 *.json text eol=lf
+
+# Windows shells need CRLF. cmd.exe mis-parses multi-line if/for blocks in an
+# LF-only .bat, which run.bat has.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Never touch these — today they survive only on git's NUL-byte heuristic.
+*.png  binary
+*.ico  binary
+*.bin  binary
+*.pak  binary
+*.pdf  binary
+*.pptx binary
+*.wav  binary

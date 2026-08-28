@@ -1,0 +1,39 @@
+; Sol Engine — editor defaults.
+; .gitattributes normalizes line endings at the commit boundary; this makes
+; editors *produce* the right ones in the first place.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+; C++ formatting proper is owned by .clang-format (LLVM base, 4-space indent,
+; 100-column limit). Keep the two in agreement.
+[*.{cpp,hpp,h,hlsl,hlsli}]
+indent_size = 4
+max_line_length = 100
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+indent_size = 2
+; Markdown uses two trailing spaces as a hard line break.
+trim_trailing_whitespace = false
+
+[{CMakeLists.txt,*.cmake}]
+indent_size = 4
+
+; Windows shells require CRLF — matches .gitattributes.
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+; Vendored third-party code keeps its upstream formatting.
+[packages/*/third_party/**]
+trim_trailing_whitespace = false
+insert_final_newline = false
