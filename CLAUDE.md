@@ -32,8 +32,10 @@ These outrank convenience every time, regardless of what a session's context
 window still holds:
 
 - Renderer never includes a graphics-API header (`d3d12.h` or equivalent) —
-  only `rhi`. A new pass is `add_pass` in
-  `packages/renderer/src/standard_frame.cpp`, never the sandbox.
+  only `rhi`. A new pass is registered with `add_pass` in
+  `packages/renderer/src/standard_frame.cpp`, never from the sandbox — but the
+  pass's shader and pipeline *are* app-owned, so a working pass spans four
+  files. Full checklist: [.claude/rules/renderer-boundaries.md](.claude/rules/renderer-boundaries.md).
 - Dependencies only point downward. No circular dependencies.
 - Engine ≠ editor. No inspector, hierarchy, or content-browser UI inside any
   engine package or the sandbox. An editor, if it ever exists, is a separate
@@ -55,6 +57,41 @@ cmake --build build --config Debug
 
 Optional: `ENGINE_GPU_DEBUG=1` in Debug enables the D3D12 debug layer. Treat
 any debug-layer message as a build-breaking bug, not a warning to skip.
+
+### What a gate is
+
+There is no test framework. A gate is a plain function in
+`packages/sandbox/src/main.cpp`:
+
+```cpp
+bool run_<name>_gate(/* the things it needs */) {
+    const bool passed = /* real assertions on real values */;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "<Name> gate: thing=%d other=%s (%s)", thing, other,
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::<Channel>, message);
+    return passed;
+}
+```
+
+Rules that make a gate worth having:
+
+- **Assert on values, not on "it didn't crash."** Compare against a number you
+  derived independently — a resting height, an analytic camera delta, a
+  readback magic value. `a != b` on two distinct enum values proves nothing.
+- **Put the real measurements in the message**, including on failure. A `FAIL`
+  line that hard-codes `thing=yes` tells you nothing when it goes red.
+- Call it from the gate sequence in `main()`. `--gates` exits `0`/`1`; a normal
+  run also executes gates and logs `FAIL` but still exits `0`.
+- Write the gate **before** the implementation and watch it fail first.
+
+### CLAUDE.local.md
+
+`CLAUDE.local.md` at the repo root is gitignored — use it for machine-specific
+notes (local paths, scratch state) that shouldn't be shared. Same for
+`.claude/settings.local.json`.
 
 Release / player build:
 
@@ -93,6 +130,5 @@ cmake --build build --config Release --target game
 | [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) | Canonical backlog (Done/Ready/Later/Far) |
 | [docs/TODO_LATER.md](docs/TODO_LATER.md) | How to pick the next row from the map |
 | [docs/GPU_BASELINE.md](docs/GPU_BASELINE.md) | Player GPU/OS/DLL requirements |
-| [docs/WHATS_NEXT.md](docs/WHATS_NEXT.md) | Archived 2026 foundation list (superseded) |
 | [reasarch/GRAPICS-RESEARCH.md](reasarch/GRAPICS-RESEARCH.md) | Personal paraphrased learning notes — **unverified, not a technical reference**. Do independent research before implementing a graphics technique from it. |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Design specs, one per shipped/in-progress feature |
