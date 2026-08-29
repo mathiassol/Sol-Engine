@@ -121,47 +121,65 @@ bool has_pass_cycle(const std::vector<RenderPassDesc>& passes, std::string& cycl
     return true;
 }
 
+// Upload the frame's per-instance array and hand back its slice. Called once
+// per frame from `execute`, not once per pass: shadow, forward and motion read
+// identical bytes, so a per-pass upload would cost 3x144 bytes of ring per
+// drawn instance instead of 144 and undo most of what batching bought.
+rhi::FrameAllocation upload_instances(rhi::IDevice& device,
+    std::span<const InstanceData> instances) {
+    if (instances.empty()) {
+        return {};
+    }
+    const usize bytes = instances.size() * sizeof(InstanceData);
+    const rhi::FrameAllocation slice = device.alloc_frame_memory(bytes);
+    if (!slice.buffer) {
+        return {};  // ring exhausted; it logged
+    }
+    device.write_buffer(*slice.buffer, slice.offset, instances.data(), bytes);
+    return slice;
+}
+
 // One draw-recording skeleton for the three geometry passes. They differ only
 // in the constants type, which pipeline they bind, and what extra resources go
-// with each draw; everything else - the per-draw filter, the constant-slice
-// allocation, the uniqueness check, the vertex/index/draw calls - was
-// copy-pasted three times and is now here once.
+// with each batch.
 //
-// `pipeline` null means "use the pipeline on the DrawItem" (the forward pass);
-// otherwise every draw shares one pipeline (shadow, motion).
+// Per *batch*, not per draw: the pass constants and the instance array carry
+// what used to be re-uploaded for every object, and one draw_indexed covers
+// the whole run. `pipeline` null means "use the pipeline on the batch" (the
+// forward pass); otherwise every batch shares one pipeline (shadow, motion).
 template <typename Constants, typename FillFn, typename BindFn>
 void record_draws(PassContext& ctx, rhi::IGraphicsPipeline* pipeline, Constants& constants,
     FillFn&& fill, BindFn&& bind) {
-    usize last_cbv_offset = ~static_cast<usize>(0);
-    rhi::IBuffer* last_cbv_buffer = nullptr;
+    const rhi::FrameAllocation instance_slice = ctx.instances;
+    if (!instance_slice.buffer) {
+        return;  // nothing to draw, or the frame's upload failed
+    }
 
-    for (const DrawItem& draw : ctx.snapshot.draws) {
-        rhi::IGraphicsPipeline* pso = pipeline ? pipeline : draw.pipeline;
-        if (!pso || !draw.vertex_buffer || !draw.index_buffer) {
+    for (const DrawBatch& batch : ctx.snapshot.batches) {
+        rhi::IGraphicsPipeline* pso = pipeline ? pipeline : batch.pipeline;
+        if (!pso || !batch.vertex_buffer || !batch.index_buffer || batch.instance_count == 0) {
             continue;
         }
 
-        fill(constants, draw);
+        constants.instance_base.value = batch.first_instance;
+        fill(constants, batch);
 
         const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(Constants));
         if (!slice.buffer) {
-            // Per-frame constant ring is full; it logs once per frame. Drop
-            // this draw. A frame missing an object is recoverable; the assert
-            // that used to be here took the process with it.
+            // Ring full; it logs once per frame. Dropping a batch now costs a
+            // group of objects rather than one, so it is louder than it was -
+            // but still a recoverable frame rather than a dead process.
             continue;
         }
-        ENGINE_ASSERT_MSG(slice.buffer != last_cbv_buffer || slice.offset != last_cbv_offset,
-            "DrawItems must not share a constant buffer slice");
-        last_cbv_buffer = slice.buffer;
-        last_cbv_offset = slice.offset;
 
         ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(Constants));
         ctx.cmd.set_pipeline(*pso);
         ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
-        bind(ctx, draw);
-        ctx.cmd.set_vertex_buffer(0, *draw.vertex_buffer, draw.vertex_stride);
-        ctx.cmd.set_index_buffer(*draw.index_buffer);
-        ctx.cmd.draw_indexed(draw.index_count);
+        ctx.cmd.set_structured_buffer(0, *instance_slice.buffer, instance_slice.offset);
+        bind(ctx, batch);
+        ctx.cmd.set_vertex_buffer(0, *batch.vertex_buffer, batch.vertex_stride);
+        ctx.cmd.set_index_buffer(*batch.index_buffer);
+        ctx.cmd.draw_indexed(batch.index_count, 0, 0, batch.instance_count);
     }
 }
 
@@ -188,11 +206,8 @@ void record_opaque_draws(PassContext& ctx) {
     rhi::ITexture* shadow = ctx.shader_read_count > 0 ? ctx.shader_reads[0] : nullptr;
 
     record_draws(ctx, nullptr, constants,
-        [](FrameConstants& c, const DrawItem& draw) {
-            c.model = draw.model;
-            c.material_params = {draw.metallic, draw.roughness, 0.f, 0.f};
-        },
-        [shadow](PassContext& c, const DrawItem& draw) {
+        [](FrameConstants&, const DrawBatch&) {},
+        [shadow](PassContext& c, const DrawBatch& draw) {
             if (draw.texture) {
                 c.cmd.set_shader_resource(0, *draw.texture);
             }
@@ -226,8 +241,8 @@ void record_shadow_draws(PassContext& ctx) {
     constants.view_proj = ctx.snapshot.sun_view_proj;
 
     record_draws(ctx, ctx.snapshot.shadow_pipeline, constants,
-        [](ShadowConstants& c, const DrawItem& draw) { c.model = draw.model; },
-        [](PassContext&, const DrawItem&) {});
+        [](ShadowConstants&, const DrawBatch&) {},
+        [](PassContext&, const DrawBatch&) {});
 }
 
 void record_motion_draws(PassContext& ctx) {
@@ -241,11 +256,8 @@ void record_motion_draws(PassContext& ctx) {
     constants.jitter = {ctx.snapshot.taa_jitter.x, ctx.snapshot.taa_jitter.y, 0.f, 0.f};
 
     record_draws(ctx, ctx.snapshot.motion_pipeline, constants,
-        [](motion::Constants& c, const DrawItem& draw) {
-            c.model = draw.model;
-            c.prev_model = draw.prev_model;
-        },
-        [](PassContext&, const DrawItem&) {});
+        [](motion::Constants&, const DrawBatch&) {},
+        [](PassContext&, const DrawBatch&) {});
 }
 
 void record_sky(PassContext& ctx) {
@@ -755,6 +767,12 @@ void RenderGraph::execute(rhi::IDevice& device, const RenderSnapshot& snapshot) 
         return;
     }
 
+    // Before any pass records: the ring allocator hands out memory that stays
+    // valid for the whole frame, so one upload here serves shadow, forward and
+    // motion. Doing it inside `record_draws` would upload the same array three
+    // times.
+    const rhi::FrameAllocation instance_slice = upload_instances(device, snapshot.instances);
+
     for (RenderPassDesc& pass : passes_) {
         if (pass.should_execute && !pass.should_execute(snapshot)) {
             continue;
@@ -795,7 +813,7 @@ void RenderGraph::execute(rhi::IDevice& device, const RenderSnapshot& snapshot) 
         info.clear_depth = pass.clear_depth;
         cmd.begin_render_pass(info);
         if (pass.execute) {
-            PassContext ctx{device, cmd, snapshot};
+            PassContext ctx{device, cmd, snapshot, instance_slice};
             for (u32 i = 0; i < pass.read_count && ctx.shader_read_count < 4; ++i) {
                 if (pass.reads[i].access == Access::ShaderRead) {
                     ctx.shader_reads[ctx.shader_read_count] = resolve(device, pass.reads[i].handle);

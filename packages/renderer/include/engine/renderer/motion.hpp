@@ -5,6 +5,7 @@
 #include <engine/math/vec2.hpp>
 #include <engine/math/vec3.hpp>
 #include <engine/math/vec4.hpp>
+#include <engine/renderer/render_snapshot.hpp>
 #include <engine/rhi/resources.hpp>
 
 #include <cmath>
@@ -32,13 +33,14 @@ inline constexpr f32 kUvScaleY = -0.5f;
 
 struct Constants {
     math::Mat4 view_proj{};
-    math::Mat4 model{};
     math::Mat4 prev_view_proj{};
-    math::Mat4 prev_model{};
     math::Vec4 jitter{};
+    InstanceBase instance_base{};
 };
 
-static_assert(sizeof(Constants) == 272);
+// Was 272 with model and prev_model embedded; both now come from the
+// per-instance structured buffer, which is also what let this pass be batched.
+static_assert(sizeof(Constants) == 160);
 
 struct MotionHistory {
     math::Mat4 prev_view{};

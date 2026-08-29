@@ -341,6 +341,8 @@ engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     desc.blend = engine::rhi::BlendMode::Opaque;
     desc.color_format = engine::rhi::Format::RGBA16_FLOAT;
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
+    // One root SRV (t0, space1) holding the frame's per-instance array.
+    desc.structured_buffer_count = 1;
     desc.debug_name = "forward";
     return desc;
 }
@@ -358,6 +360,8 @@ engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(std::span<const engi
     desc.color_format = engine::rhi::Format::Unknown;
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
     desc.slope_scaled_depth_bias = 1.5f;
+    // One root SRV (t0, space1) holding the frame's per-instance array.
+    desc.structured_buffer_count = 1;
     desc.debug_name = "shadow";
     return desc;
 }
@@ -493,6 +497,8 @@ engine::rhi::GraphicsPipelineDesc make_motion_pipeline_desc(
     desc.blend = engine::rhi::BlendMode::Opaque;
     desc.color_format = engine::renderer::motion::kFormat;
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
+    // One root SRV (t0, space1) holding the frame's per-instance array.
+    desc.structured_buffer_count = 1;
     desc.debug_name = "motion_vectors";
     return desc;
 }
@@ -2038,7 +2044,7 @@ bool run_light_gate(const engine::scene::World& world) {
             point_ok = true;
         }
     }
-    const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 400;
+    const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 336;
     const bool copied = lighting.sun_color.x == world.sun.color.x
         && lighting.ambient.y == world.ambient.y;
     const bool passed = sun_ok && ambient_ok && point_ok && layout_ok && copied;
@@ -2061,7 +2067,7 @@ bool run_shadow_gate(const engine::scene::World& world,
     const bool matrix_ok = std::memcmp(&sun, &identity, sizeof(engine::math::Mat4)) != 0
         && std::isfinite(sun.cols[0].x) && std::abs(sun.cols[0].x) > 0.01f;
     const bool pipeline_ok = shadow_pipeline != nullptr;
-    const bool layout_ok = sizeof(engine::renderer::ShadowConstants) == 128;
+    const bool layout_ok = sizeof(engine::renderer::ShadowConstants) == 80;
     const bool passed = matrix_ok && pipeline_ok && layout_ok;
     char message[192];
     std::snprintf(message, sizeof(message),
@@ -2184,11 +2190,17 @@ bool run_frustum_gate(const engine::scene::World& world, const FlyCamera& camera
     const auto stats = sandbox::extract_world(copy, camera.position, assets, false, nullptr, arena,
         snapshot);
     const engine::u32 skipped = stats.considered - stats.visible;
-    const bool passed = world.instance_count >= 64 && stats.visible >= 5 && skipped >= 16;
-    char message[192];
+    // Batches must collapse the drawn set, never exceed it. Reported here
+    // because this is the one gate that runs the real demo world, so the
+    // numbers describe actual content rather than a synthetic scene.
+    const bool batched = stats.batches > 0 && stats.batches <= stats.drawn;
+    const bool passed = world.instance_count >= 64 && stats.visible >= 5 && skipped >= 16
+        && batched;
+    char message[224];
     std::snprintf(message, sizeof(message),
-        "Frustum gate: instances=%u visible=%u skipped=%u (%s)",
-        world.instance_count, stats.visible, skipped, passed ? "pass" : "FAIL");
+        "Frustum gate: instances=%u visible=%u skipped=%u drawn=%u batches=%u (%s)",
+        world.instance_count, stats.visible, skipped, stats.drawn, stats.batches,
+        passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
     return passed;
@@ -2233,7 +2245,7 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     }
     const bool changed = !before.draws.empty() && !after.draws.empty()
         && before.draws[0].roughness != after.draws[0].roughness;
-    const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 400;
+    const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 336;
     const bool gltf_ok = gltf_metallic >= 0.f && gltf_metallic <= 1.f
         && gltf_roughness >= 0.f && gltf_roughness <= 1.f;
     const bool passed = table_ok && handles_ok && draws_ok && changed && layout_ok && gltf_ok;
@@ -2574,7 +2586,7 @@ bool run_taa_gate(const ForwardDemo& demo) {
     const engine::math::Mat4 none = apply_jitter(proj, {0.f, 0.f});
     const bool apply_ok = std::abs(jittered.cols[2].x - proj.cols[2].x) > 1e-8f
         && std::abs(none.cols[0].x - proj.cols[0].x) < 1e-6f
-        && sizeof(engine::renderer::FrameConstants) == 400
+        && sizeof(engine::renderer::FrameConstants) == 336
         && sizeof(engine::renderer::taa::Constants) == 48
         && std::abs(engine::renderer::taa::make_constants(1280, 720, j, false).jitter.x - j_uv.x)
             < 1e-8f;
@@ -2723,6 +2735,117 @@ bool run_instance_capacity_gate() {
     return passed;
 }
 
+// Batching is only correct if three things line up: runs are grouped by
+// everything the pipeline binds per draw, every drawn instance appears exactly
+// once, and instances[batch.first_instance + k] is the k-th instance of that
+// batch - because that last expression is literally what the vertex shader
+// evaluates as sol_instances[instance_base.x + SV_InstanceID].
+bool run_instancing_gate() {
+    char mesh_a{}, mesh_b{}, tex_a{}, tex_b{}, pipe{};
+    auto make = [&](void* mesh, void* tex, engine::u32 id, engine::f32 x) {
+        engine::renderer::ExtractInstance inst{};
+        inst.pipeline = reinterpret_cast<engine::rhi::IGraphicsPipeline*>(&pipe);
+        inst.vertex_buffer = reinterpret_cast<engine::rhi::IBuffer*>(mesh);
+        inst.index_buffer = reinterpret_cast<engine::rhi::IBuffer*>(mesh);
+        inst.texture = reinterpret_cast<engine::rhi::ITexture*>(tex);
+        inst.model = engine::math::Mat4::translate({x, 0.f, 0.f});
+        inst.id = id;
+        inst.index_count = 3;
+        inst.vertex_stride = 32;
+        inst.metallic = x;              // distinct per instance, so a wrong
+        inst.roughness = x + 100.f;     // index shows up as wrong material
+        return inst;
+    };
+
+    // Three runs: 3x(mesh_a,tex_a), 2x(mesh_a,tex_b), 2x(mesh_b,tex_a).
+    // The middle run shares a mesh with its neighbours and differs only by
+    // texture - which must still split the batch, because the texture is
+    // bound per draw.
+    std::vector<engine::renderer::ExtractInstance> instances;
+    for (engine::u32 i = 0; i < 3; ++i) instances.push_back(make(&mesh_a, &tex_a, i, 1.f + i));
+    for (engine::u32 i = 0; i < 2; ++i) instances.push_back(make(&mesh_a, &tex_b, 3 + i, 10.f + i));
+    for (engine::u32 i = 0; i < 2; ++i) instances.push_back(make(&mesh_b, &tex_a, 5 + i, 20.f + i));
+
+    engine::renderer::motion::MotionHistory history{};
+    engine::renderer::ExtractDesc desc{};
+    desc.view = engine::math::Mat4::look_at({0.f, 0.f, -50.f}, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f});
+    desc.projection =
+        engine::math::Mat4::perspective(engine::math::radians(90.f), 16.f / 9.f, 0.1f, 500.f);
+    desc.history = &history;
+    desc.instances = {instances.data(), instances.size()};
+
+    engine::Arena arena(256 * 1024);
+    engine::renderer::RenderSnapshot snap{};
+    const auto stats = engine::renderer::extract_visible(desc, arena, snap);
+
+    const bool grouped = snap.batches.size() == 3 && stats.batches == 3
+        && snap.batches[0].instance_count == 3
+        && snap.batches[1].instance_count == 2
+        && snap.batches[2].instance_count == 2;
+
+    // Texture alone must split a batch even when the mesh matches.
+    const bool split_on_texture = snap.batches.size() >= 2
+        && snap.batches[0].vertex_buffer == snap.batches[1].vertex_buffer
+        && snap.batches[0].texture != snap.batches[1].texture;
+
+    // Every drawn instance covered exactly once, no gaps and no overlap.
+    engine::u32 covered = 0;
+    bool contiguous = true;
+    for (const auto& batch : snap.batches) {
+        contiguous = contiguous && batch.first_instance == covered;
+        covered += batch.instance_count;
+    }
+    const bool coverage_ok = contiguous && covered == stats.drawn
+        && snap.instances.size() == stats.drawn;
+
+    // The shader evaluates sol_instances[instance_base.x + SV_InstanceID].
+    // Grouping permutes instances relative to `draws`, so the check is that
+    // every instance a batch will read came from a draw with *that batch's
+    // key*, and that the draws are covered exactly once - no loss, no
+    // duplication, nothing landing under the wrong texture.
+    std::vector<bool> used(snap.draws.size(), false);
+    bool mapping_ok = coverage_ok;
+    for (const auto& batch : snap.batches) {
+        for (engine::u32 k = 0; k < batch.instance_count && mapping_ok; ++k) {
+            const auto& inst = snap.instances[batch.first_instance + k];
+            bool matched = false;
+            for (engine::usize d = 0; d < snap.draws.size(); ++d) {
+                const auto& draw = snap.draws[d];
+                if (used[d] || draw.texture != batch.texture
+                    || draw.vertex_buffer != batch.vertex_buffer) {
+                    continue;
+                }
+                if (inst.model.cols[3].x == draw.model.cols[3].x
+                    && inst.material_params.x == draw.metallic
+                    && inst.material_params.y == draw.roughness) {
+                    used[d] = true;
+                    matched = true;
+                    break;
+                }
+            }
+            mapping_ok = matched;
+        }
+    }
+    for (bool u : used) {
+        mapping_ok = mapping_ok && u;
+    }
+
+    const bool passed = grouped && split_on_texture && coverage_ok && mapping_ok;
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Instancing gate: drawn=%u batches=%u sizes=%zu/%zu/%zu split_on_texture=%s "
+        "coverage=%s shader_mapping=%s (%s)",
+        stats.drawn, stats.batches,
+        snap.batches.size() > 0 ? static_cast<size_t>(snap.batches[0].instance_count) : 0,
+        snap.batches.size() > 1 ? static_cast<size_t>(snap.batches[1].instance_count) : 0,
+        snap.batches.size() > 2 ? static_cast<size_t>(snap.batches[2].instance_count) : 0,
+        split_on_texture ? "yes" : "no", coverage_ok ? "yes" : "no",
+        mapping_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_motion_gate(const ForwardDemo& demo) {
     using engine::renderer::motion::Constants;
     using engine::renderer::motion::kFormat;
@@ -2747,8 +2870,8 @@ bool run_motion_gate(const ForwardDemo& demo) {
     const bool camera_ok = !nearly_zero(camera);
     const engine::math::Vec2 object = screen_uv_motion(vp_a, moved, vp_a, model, local);
     const bool object_ok = !nearly_zero(object);
-    const bool uv_ok = static_ok && sizeof(engine::renderer::FrameConstants) == 400
-        && sizeof(Constants) == 272 && kFormat == engine::rhi::Format::RGBA16_FLOAT;
+    const bool uv_ok = static_ok && sizeof(engine::renderer::FrameConstants) == 336
+        && sizeof(Constants) == 160 && kFormat == engine::rhi::Format::RGBA16_FLOAT;
 
     char dummy{};
     engine::renderer::ExtractInstance inst{};
@@ -4812,6 +4935,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         return false;
     }
     if (!run_instance_capacity_gate() && fail_on_gate) {
+        return false;
+    }
+    if (!run_instancing_gate() && fail_on_gate) {
         return false;
     }
     if (!run_motion_gate(*demo) && fail_on_gate) {

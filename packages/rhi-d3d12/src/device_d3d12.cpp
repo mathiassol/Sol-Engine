@@ -23,25 +23,35 @@ constexpr usize kBufferAlign = 256;
 // hit them, and both used to abort on exhaustion. They are now sized off the
 // actual per-draw cost and degrade instead of terminating.
 //
-// The standard frame spends, per drawn instance:
-//     shadow  ShadowConstants  128 ->  256 aligned
-//     forward FrameConstants   400 ->  512 aligned
-//     motion  motion::Constants 272 ->  512 aligned
+// Since instanced draws, the standard frame spends per drawn *instance* only
+// the 144-byte `InstanceData` (model, prev_model, material), uploaded once for
+// the whole frame - shadow, forward and motion read the same array.
+//
+// The per-pass constants are now per *batch*:
+//     shadow  ShadowConstants    80 ->  256 aligned
+//     forward FrameConstants    336 ->  512 aligned
+//     motion  motion::Constants 160 ->  256 aligned
 //                                     ---------------
-//                                      1280 bytes
+//                                      1024 bytes per batch
 // plus a fixed ~3 KB for sky, bloom (5 down + 4 up), TAA, tonemap and overlay,
-// plus 576 bytes per debug AABB when F4 is on. 1 MiB covers roughly 800 drawn
-// instances with every pass active. Three slots costs 3 MiB of upload heap.
+// plus 576 bytes per debug AABB when F4 is on. Batch count is bounded by
+// distinct material/mesh keys, not by scene size, so instances dominate: 1 MiB
+// covers roughly 7,000 drawn instances with every pass active - against 800
+// before batching, which was the tightest ceiling in the engine. Three slots
+// costs 3 MiB of upload heap.
 constexpr usize kFrameRingBytes = 1024 * 1024;
-constexpr usize kFrameRingBytesPerDraw = 1280;
+constexpr usize kFrameRingBytesPerInstance = 144;
 
 // One shader-visible descriptor per SRV bind per frame.
 //
-// The forward pass binds 7 SRVs per drawn instance, so this - not memory - is
-// what caps scene size: 4096 slots was 581 drawn instances, below the 512
-// instance cap once anything else in the frame takes descriptors. 8192 at 32
-// bytes is 256 KiB per slot (768 KiB across the three), and lifts the ceiling
-// to ~1,167 drawn.
+// The forward pass binds 7 SRVs per *batch* since instanced draws, so scene
+// size no longer drives this - distinct material/mesh keys do. It used to be
+// per drawn instance and was the binding ceiling: 4096 slots was 581 drawn,
+// below the 512 instance cap once anything else in the frame took descriptors.
+// 8192 at 32 bytes is 256 KiB per slot (768 KiB across the three); it is kept
+// at 8192 because the per-instance path returns the moment a scene has as many
+// distinct materials as objects, which is exactly the case batching cannot
+// help.
 constexpr u32 kMaxShaderSrvsPerFrame = 8192;
 
 constexpr u32 kMaxMips = 16;
@@ -546,14 +556,16 @@ D3D12Sampler::D3D12Sampler(ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HAND
     : heap_(heap), cpu_(cpu), desc_(desc) {}
 
 D3D12Pipeline::D3D12Pipeline(ID3D12PipelineState* pso, ID3D12RootSignature* root_sig,
-    u32 srv_table_root, D3D12_PRIMITIVE_TOPOLOGY topology)
-    : pso_(pso), root_sig_(root_sig), srv_table_root_(srv_table_root), topology_(topology) {}
+    u32 srv_table_root, u32 structured_root, D3D12_PRIMITIVE_TOPOLOGY topology)
+    : pso_(pso), root_sig_(root_sig), srv_table_root_(srv_table_root),
+      structured_root_(structured_root), topology_(topology) {}
 
 D3D12Pipeline::~D3D12Pipeline() = default;
 
 ID3D12PipelineState* D3D12Pipeline::pso() const { return pso_.get(); }
 ID3D12RootSignature* D3D12Pipeline::root_signature() const { return root_sig_.get(); }
 u32 D3D12Pipeline::srv_table_root() const { return srv_table_root_; }
+u32 D3D12Pipeline::structured_root() const { return structured_root_; }
 D3D12_PRIMITIVE_TOPOLOGY D3D12Pipeline::topology() const { return topology_; }
 
 D3D12ComputePipeline::D3D12ComputePipeline(ID3D12PipelineState* pso, ID3D12RootSignature* root_sig,
@@ -749,12 +761,32 @@ void D3D12CommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
         bound_compute_->uav_table_root());
 }
 
+void D3D12CommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
+    ENGINE_ASSERT(bound_pipeline_ != nullptr);
+    ENGINE_ASSERT_MSG(bound_pipeline_->structured_root() != ~0u,
+        "pipeline declares no structured buffers (GraphicsPipelineDesc::structured_buffer_count)");
+    auto& d3d_buffer = static_cast<D3D12Buffer&>(buffer);
+    ENGINE_ASSERT(d3d_buffer.resource() != nullptr);
+    // A root SRV takes a raw GPU virtual address - no descriptor, no heap, no
+    // barrier. The frame ring lives on an upload heap permanently in
+    // GENERIC_READ, so a slice of it can be handed over directly.
+    device_.d3d12_cmd_list()->SetGraphicsRootShaderResourceView(
+        bound_pipeline_->structured_root() + slot,
+        d3d_buffer.resource()->GetGPUVirtualAddress() + offset_bytes);
+}
+
 void D3D12CommandList::draw(u32 vertex_count, u32 start_vertex) {
     device_.d3d12_cmd_list()->DrawInstanced(vertex_count, 1, start_vertex, 0);
 }
 
-void D3D12CommandList::draw_indexed(u32 index_count, u32 start_index, i32 base_vertex) {
-    device_.d3d12_cmd_list()->DrawIndexedInstanced(index_count, 1, start_index, base_vertex, 0);
+void D3D12CommandList::draw_indexed(u32 index_count, u32 start_index, i32 base_vertex,
+    u32 instance_count) {
+    if (instance_count == 0) {
+        return;  // an empty batch is not an error
+    }
+    // StartInstanceLocation stays 0 on purpose - see ICommandList::draw_indexed.
+    device_.d3d12_cmd_list()->DrawIndexedInstanced(index_count, instance_count, start_index,
+        base_vertex, 0);
 }
 
 void D3D12CommandList::dispatch(u32 group_count_x, u32 group_count_y, u32 group_count_z) {
@@ -822,6 +854,14 @@ D3D12Device::~D3D12Device() {
     if (fence_) {
         wait_for_gpu();
     }
+
+    // "The debug layer stayed silent" is this project's hard rule for a GPU
+    // change, and until now nothing checked it: the info queue was only ever
+    // drained when some *other* call already failed, so a run could accumulate
+    // debug-layer errors and still look clean. Drain it once at shutdown so
+    // the claim is observed rather than assumed.
+    report_debug_layer_messages();
+
     flush_retired();
     cleanup_swapchain_resources();
     cleanup_depth_buffer();
@@ -829,6 +869,47 @@ D3D12Device::~D3D12Device() {
         CloseHandle(fence_event_);
         fence_event_ = nullptr;
     }
+}
+
+void D3D12Device::report_debug_layer_messages() const {
+    if (!device_ || !gpu_debug_enabled()) {
+        return;
+    }
+    ID3D12InfoQueue* info = nullptr;
+    if (FAILED(device_->QueryInterface(IID_PPV_ARGS(&info))) || !info) {
+        return;
+    }
+    const UINT64 total = info->GetNumStoredMessages();
+    UINT64 errors = 0;
+    UINT64 warnings = 0;
+    for (UINT64 i = 0; i < total; ++i) {
+        SIZE_T bytes = 0;
+        if (FAILED(info->GetMessage(i, nullptr, &bytes)) || bytes == 0) {
+            continue;
+        }
+        std::vector<u8> storage(bytes);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+        if (FAILED(info->GetMessage(i, message, &bytes))) {
+            continue;
+        }
+        if (message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION
+            || message->Severity == D3D12_MESSAGE_SEVERITY_ERROR) {
+            ++errors;
+        } else if (message->Severity == D3D12_MESSAGE_SEVERITY_WARNING) {
+            ++warnings;
+        }
+    }
+
+    char summary[160];
+    std::snprintf(summary, sizeof(summary),
+        "D3D12 debug layer: %llu message(s), %llu error(s), %llu warning(s)",
+        static_cast<unsigned long long>(total), static_cast<unsigned long long>(errors),
+        static_cast<unsigned long long>(warnings));
+    log(errors > 0 ? LogLevel::Error : LogLevel::Info, LogChannel::Render, summary);
+    if (errors > 0 || warnings > 0) {
+        dump_info_queue_messages(device_.get());
+    }
+    info->Release();
 }
 
 bool D3D12Device::init(const DeviceDesc& desc) {
@@ -1470,8 +1551,13 @@ std::unique_ptr<IBuffer> D3D12Device::create_buffer(const BufferDesc& desc, cons
         ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
         : D3D12_RESOURCE_FLAG_NONE;
 
+    // COMMON, not COPY_DEST. D3D12 ignores the initial state of a buffer on a
+    // DEFAULT heap and creates it in COMMON regardless, warning every time -
+    // 314 of them in one --gates run, which is most of what was hiding in the
+    // debug layer. Buffers promote implicitly, so the upload path's
+    // COPY_DEST -> final barrier is unaffected.
     ID3D12Resource* resource = create_committed_buffer(
-        D3D12_HEAP_TYPE_DEFAULT, aligned_size, D3D12_RESOURCE_STATE_COPY_DEST, flags);
+        D3D12_HEAP_TYPE_DEFAULT, aligned_size, D3D12_RESOURCE_STATE_COMMON, flags);
     if (!resource) {
         return nullptr;
     }
@@ -1629,9 +1715,10 @@ FrameAllocation D3D12Device::alloc_frame_memory(usize size) {
             frame_ring_exhausted_ = true;
             char message[192];
             std::snprintf(message, sizeof(message),
-                "Frame constant ring exhausted: %zu of %zu bytes used (~%zu draws). "
+                "Frame constant ring exhausted: %zu of %zu bytes used (~%zu instances). "
                 "Dropping draws this frame - raise kFrameRingBytes.",
-                frame_ring_offset_, kFrameRingBytes, frame_ring_offset_ / kFrameRingBytesPerDraw);
+                frame_ring_offset_, kFrameRingBytes,
+                frame_ring_offset_ / kFrameRingBytesPerInstance);
             log(LogLevel::Error, LogChannel::Render, message);
         }
         return {};
@@ -2111,9 +2198,10 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
     // this was one texture away from a 16-byte stack overwrite carrying a
     // pointer, immediately before a driver call.
     ENGINE_ASSERT_MSG(
-        desc.constant_buffer_count + desc.shader_resource_count <= kMaxRootParams,
+        desc.constant_buffer_count + desc.shader_resource_count
+            + desc.structured_buffer_count <= kMaxRootParams,
         "graphics pipeline exceeds the root parameter budget "
-        "(constant_buffer_count + shader_resource_count)");
+        "(constant_buffer_count + shader_resource_count + structured_buffer_count)");
     ENGINE_ASSERT_MSG(desc.shader_resource_count <= kMaxRootRanges,
         "graphics pipeline exceeds the SRV descriptor-range budget");
 
@@ -2139,6 +2227,21 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
             root_params[root_count].DescriptorTable.NumDescriptorRanges = 1;
             root_params[root_count].DescriptorTable.pDescriptorRanges = &srv_ranges[i];
             root_params[root_count].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+            ++root_count;
+        }
+    }
+
+    // Root SRVs last, so srv_table_root keeps its meaning. Space 1 keeps them
+    // clear of the t0.. texture registers, and ALL visibility is the whole
+    // point - a vertex shader cannot read the pixel-visible tables above.
+    u32 structured_root = ~0u;
+    if (desc.structured_buffer_count > 0) {
+        structured_root = root_count;
+        for (u32 i = 0; i < desc.structured_buffer_count; ++i) {
+            root_params[root_count].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+            root_params[root_count].Descriptor.ShaderRegister = i;
+            root_params[root_count].Descriptor.RegisterSpace = 1;
+            root_params[root_count].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
             ++root_count;
         }
     }
@@ -2279,7 +2382,8 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
     std::snprintf(pso_name, sizeof(pso_name), "engine/pso_%s", name);
     set_object_name(root_sig, root_name);
     set_object_name(pso, pso_name);
-    return std::make_unique<D3D12Pipeline>(pso, root_sig, srv_table_root, ia_topology);
+    return std::make_unique<D3D12Pipeline>(pso, root_sig, srv_table_root, structured_root,
+        ia_topology);
 }
 
 std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(const ComputePipelineDesc& desc) {

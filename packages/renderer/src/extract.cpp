@@ -155,6 +155,98 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
 
     out.sun_view_proj = make_sun_view_proj(desc.sun_direction, visible_bounds);
     out.draws = {draws, draw_count};
+
+    // ── Batch the survivors ──────────────────────────────────────────────
+    //
+    // After the cull, not before: batch membership depends on what survived,
+    // so batches cannot be cached across frames. This is an O(n) group-by over
+    // an array already sitting in the arena.
+    //
+    // One batch list serves all three passes. Building per-pass would let
+    // shadow, forward and motion disagree about how instances are grouped -
+    // and the motion pass draws with DepthTest::Equal, so if its geometry does
+    // not rasterize identically to forward it silently writes nothing.
+    if (draw_count > 0) {
+        DrawBatch* batches = arena.push_n<DrawBatch>(draw_count);
+        InstanceData* instances = arena.push_n<InstanceData>(draw_count);
+        u32* draw_batch = arena.push_n<u32>(draw_count);
+        if (batches && instances && draw_batch) {
+            auto same_key = [](const DrawBatch& b, const DrawItem& d) {
+                return b.pipeline == d.pipeline
+                    && b.vertex_buffer == d.vertex_buffer
+                    && b.index_buffer == d.index_buffer
+                    && b.texture == d.texture
+                    && b.metallic_roughness == d.metallic_roughness
+                    && b.normal_map == d.normal_map
+                    && b.index_count == d.index_count
+                    && b.vertex_stride == d.vertex_stride;
+            };
+
+            // Group by key, not by adjacency. Merging only neighbours sounds
+            // cheaper and is worthless in practice: the sandbox alternates
+            // albedo between neighbouring instances, so run-length batching
+            // produced 33 batches for 33 draws - no batching at all.
+            //
+            // Not a sort either. The key is made of pointers, and *ordering*
+            // pointers makes batch composition depend on allocator addresses,
+            // so it would vary run to run and any gate asserting batch counts
+            // would be flaky. Pointers are only ever compared for equality
+            // here; batch order is first-appearance order, which is scene
+            // order, which is stable.
+            u32 batch_count = 0;
+            for (u32 i = 0; i < draw_count; ++i) {
+                const DrawItem& draw = draws[i];
+                u32 found = batch_count;
+                for (u32 b = 0; b < batch_count; ++b) {
+                    if (same_key(batches[b], draw)) {
+                        found = b;
+                        break;
+                    }
+                }
+                if (found == batch_count) {
+                    DrawBatch& fresh = batches[batch_count];
+                    fresh.pipeline = draw.pipeline;
+                    fresh.vertex_buffer = draw.vertex_buffer;
+                    fresh.index_buffer = draw.index_buffer;
+                    fresh.texture = draw.texture;
+                    fresh.metallic_roughness = draw.metallic_roughness;
+                    fresh.normal_map = draw.normal_map;
+                    fresh.index_count = draw.index_count;
+                    fresh.vertex_stride = draw.vertex_stride;
+                    ++batch_count;
+                }
+                draw_batch[i] = found;
+                batches[found].instance_count += 1;
+            }
+
+            // Lay the batches out contiguously, then fill each one's slice.
+            // The instance array is therefore a permutation of `draws` grouped
+            // by key - `draws` itself keeps scene order for everything else.
+            u32 running = 0;
+            for (u32 b = 0; b < batch_count; ++b) {
+                batches[b].first_instance = running;
+                running += batches[b].instance_count;
+            }
+            u32* cursor = arena.push_n<u32>(batch_count);
+            if (cursor) {
+                for (u32 b = 0; b < batch_count; ++b) {
+                    cursor[b] = batches[b].first_instance;
+                }
+                for (u32 i = 0; i < draw_count; ++i) {
+                    const DrawItem& draw = draws[i];
+                    const u32 dst = cursor[draw_batch[i]]++;
+                    instances[dst].model = draw.model;
+                    instances[dst].prev_model = draw.prev_model;
+                    instances[dst].material_params = {draw.metallic, draw.roughness, 0.f, 0.f};
+                }
+                out.batches = {batches, batch_count};
+                out.instances = {instances, draw_count};
+                stats.batches = batch_count;
+            }
+        }
+        // If the arena could not fit them it already logged; out.batches stays
+        // empty and the recorder draws nothing rather than drawing garbage.
+    }
     if (desc.history) {
         desc.history->prev_view = desc.view;
         desc.history->prev_projection = desc.projection;

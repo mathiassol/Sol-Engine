@@ -1,6 +1,7 @@
+#include "instancing.hlsli"
+
 cbuffer FrameConstants : register(b0) {
     float4x4 view_proj;
-    float4x4 model;
     float4x4 sun_view_proj;
     float4 sun_direction;
     float4 sun_color;
@@ -8,7 +9,7 @@ cbuffer FrameConstants : register(b0) {
     float4 camera_pos;
     float4 point_pos_radius[4];
     float4 point_color_intensity[4];
-    float4 material_params;
+    uint4 instance_base;
 };
 
 Texture2D albedo_map : register(t0);
@@ -43,14 +44,19 @@ struct PSInput {
     float3 normal    : NORMAL;
     float2 uv        : TEXCOORD;
     float3 world_pos : TEXCOORD1;
+    // Constant across the instance, so nointerpolation - the pixel shader
+    // needs it and SV_InstanceID is a vertex-stage input only.
+    nointerpolation float2 material : TEXCOORD2;
 };
 
-PSInput vs_main(VSInput input) {
+PSInput vs_main(VSInput input, uint id : SV_InstanceID) {
     PSInput output;
-    float4 world = mul(model, float4(input.pos, 1.0));
+    InstanceData inst = sol_instance(id, instance_base);
+    float4 world = mul(inst.model, float4(input.pos, 1.0));
     output.pos = mul(view_proj, world);
     output.world_pos = world.xyz;
-    output.normal = mul((float3x3)model, input.normal);
+    output.normal = mul((float3x3)inst.model, input.normal);
+    output.material = inst.material.xy;
     output.uv = float2(input.uv.x, 1.0 - input.uv.y);
     return output;
 }
@@ -167,8 +173,8 @@ float4 ps_main(PSInput input) : SV_TARGET {
     float3 n = sample_normal(normalize(input.normal), input.world_pos, input.uv);
     float3 albedo = albedo_map.Sample(albedo_sampler, input.uv).rgb;
     float4 mr = metallic_roughness_map.Sample(albedo_sampler, input.uv);
-    float metallic = saturate(material_params.x * mr.b);
-    float roughness = clamp(material_params.y * mr.g, kMinPerceptualRoughness, 1.0);
+    float metallic = saturate(input.material.x * mr.b);
+    float roughness = clamp(input.material.y * mr.g, kMinPerceptualRoughness, 1.0);
     float3 view_dir = normalize(camera_pos.xyz - input.world_pos);
     float3 lit = evaluate_ibl(n, view_dir, albedo, metallic, roughness);
 

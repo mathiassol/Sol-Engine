@@ -47,9 +47,9 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **22,135 lines** of C++/HLSL in **133 files**, **26
+Measured 29 Aug 2026: **22,607 lines** of C++/HLSL in **134 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
-of the engine (2,901 lines). `sandbox` is 6,387; `renderer` is 2,687.
+of the engine (3,014 lines). `sandbox` is 6,555; `renderer` is 2,867.
 `physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
 (install layout, no extra .cpp).
 
@@ -712,6 +712,83 @@ failure mode is silently dropped draws. Going past that wants instanced draws
 wants a heap-backed `World`, a name hash table, and cached world matrices - the
 name intern is O(n^2) and the parent walk is uncached. Both are invisible at
 512.
+
+---
+
+## Renderer #27 / RHI #14 — instanced draws (done)
+
+**Why:** Scene #1 raised the instance cap to 512 and named the next ceiling in
+its own Do-not: the 1 MiB frame constant ring at ~816 drawn instances, failing
+by *silently dropping draws*. The cost was per drawn instance because every
+object re-uploaded its own `model`, `prev_model` and material to three passes
+and issued its own `draw_indexed`. 512 identical huskies cost 512 draw calls and
+1,280 bytes of ring each, to say the same thing 512 times.
+
+**Choice:** per-instance data in one `StructuredBuffer` behind a **root SRV**,
+not a descriptor table and not a cbuffer array.
+
+- *Root SRV, not a table.* A table costs a descriptor per frame per bind and
+  another indirection. A root SRV is a raw GPU virtual address in the root
+  signature - one `SetGraphicsRootShaderResourceView` per pass. `space1` keeps
+  it clear of the material SRVs the passes already bind in `space0`.
+- *StructuredBuffer, not a cbuffer array.* cbuffer arrays pack to 16-byte
+  registers and cap at 64 KiB; a structured buffer packs tight (144 bytes per
+  instance, no padding) and is bounded only by the ring.
+- *`first_instance` in the constants, not `StartInstanceLocation`.* This is the
+  portability trap. `DrawIndexedInstanced`'s `StartInstanceLocation` is **not**
+  visible to `SV_InstanceID` on D3D - but Vulkan folds the equivalent into
+  `gl_InstanceIndex` and Metal exposes it as a separate `[[base_instance]]`
+  input. A shader written against any one of those three reads a different
+  index on the other two, and the failure is objects rendering as each other,
+  not a validation error. Passing the base explicitly in the pass constants
+  means `sol_instance(id, instance_base)` means the same thing on every backend
+  the RHI will ever grow.
+
+Batching is **group-by-key, not run-length and not sorted**. Run-length was
+tried first and bought nothing: the demo alternates albedo between neighbours,
+so 33 draws produced 33 batches. Sorting was rejected because the key is made of
+pointers - ordering them would make batch composition depend on allocator
+addresses and any gate asserting a batch count would be flaky. Pointers are only
+compared for equality; batch order is first-appearance order, which is scene
+order, which is stable.
+
+Three things moved with it:
+
+- **One batch list for all three passes**, built in extract. Per-pass batching
+  would let shadow, forward and motion group differently, and motion draws with
+  `DepthTest::Equal` - geometry that does not rasterize identically to forward
+  writes nothing, silently.
+- **The instance array uploads once per frame**, in `RenderGraph::execute`, not
+  once per `record_draws`. The ring hands out frame-lifetime memory, so three
+  passes reading identical bytes should pay for them once; uploading per pass
+  cost 3x144 bytes per instance and would have given back most of the ceiling.
+- **Constants shrank** now that they are per batch, not per draw:
+  `FrameConstants` 400 -> 336, `ShadowConstants` 128 -> 80,
+  `motion::Constants` 272 -> 160.
+
+**Gate (met):** `Instancing gate: drawn=7 batches=3 sizes=3/2/2
+split_on_texture=yes coverage=yes shader_mapping=yes (pass)` - it builds a scene
+that *must* split (same mesh, different albedo), checks the split happened,
+checks every drawn instance appears in exactly one batch's slice, and checks
+`first_instance + SV_InstanceID` addresses the right row. Plus
+`Frustum gate: ... drawn=33 batches=5` and `Instance capacity gate: cap=512
+drawn=512 ... arena_overflow=no`, both unchanged in what they assert.
+
+Verified with `ENGINE_GPU_DEBUG=1`: **0 messages, 0 errors, 0 warnings**. That
+number is new. The debug layer was only ever dumped when some *other* call had
+already failed, so "the debug layer is silent" had never actually been measured
+- and it was not silent: 314 warnings per `--gates` run, all
+`Ignoring InitialState D3D12_RESOURCE_STATE_COPY_DEST`, because D3D12 ignores
+the initial state of a DEFAULT-heap buffer. `~D3D12Device` now counts the info
+queue by severity and logs the total whether or not anything failed.
+
+**Do not:** this is batching, not a GPU-driven pipeline. There is no per-batch
+culling (the cull is still per instance, before batching), no indirect draw, no
+persistent instance buffer across frames, and no sorting - front-to-back or by
+state. Batch membership depends on what survived the cull, so it cannot be
+cached across frames as written. The next real ceiling is the O(n x batches)
+linear scan in extract, which is invisible at 512 instances and a handful of
+keys and would want a hash the moment either grows an order of magnitude.
 
 ---
 

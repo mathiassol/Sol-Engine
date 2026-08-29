@@ -71,6 +71,9 @@ struct ExtractStats {
     u32 considered = 0;
     u32 visible = 0;
     u32 drawn = 0;
+    // Draw calls actually issued per geometry pass. `drawn / batches` is the
+    // average instances collapsed into one call.
+    u32 batches = 0;
 };
 
 math::Mat4 make_sun_view_proj(math::Vec3 sun_direction, math::Aabb bounds);

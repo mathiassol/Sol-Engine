@@ -56,7 +56,7 @@ Two facts the shape is load-bearing on:
 | `core` | 0 | lib | Clock, frame timer, log, arena, profile scopes, cvars |
 | `math` | 0 | lib | Vec3, Mat4, AABB, Frustum, ortho, column-major RH Y-up |
 | `platform` | 1 | interface | `IPlatform`, `IWindow`, `IInput` (keys, mouse, four `GamepadState` slots), `IFileSystem` |
-| `rhi` | 1 | interface | `IRHI`, `IDevice`, buffers, graphics + compute pipelines, commands, `SamplerDesc` |
+| `rhi` | 1 | interface | `IRHI`, `IDevice`, buffers, graphics + compute pipelines, commands, `SamplerDesc`, **instanced `draw_indexed`** + `set_structured_buffer` |
 | `assets` | 1 | lib | `IAssetLoader`, mesh/image types, `SOLC` cooker, `SOLP` pak |
 | `audio` | 1 | interface | `IAudio`: create PCM sound, play 2D one-shot, tick |
 | `physics` | 1 | interface | `IPhysics`: overlap queries, translation-only rigid bodies, `step(dt)` |
@@ -70,8 +70,8 @@ Two facts the shape is load-bearing on:
 | `audio-xaudio2` | 2 | lib | XAudio2 backend (`create_audio()`); 16-bit PCM one-shots |
 | `physics-cpu` | 2 | lib | Dynamic AABB tree + sequential-impulse solver; AABB / sphere / Y-up capsule; sensor enter/exit; closest-hit raycasts (`create_physics()`) |
 | `shaders-dxc` | 2 | lib | HLSL compile via Windows SDK `dxcompiler` (SM 6.0 / DXIL); `ShaderTarget` enum (SPIR-V rejected); disk cache; worker-thread hot-reload |
-| `rhi-d3d12` | 2 | lib | D3D12 backend (`create_rhi()` is the public header; device types stay in `src/`). Inbox OS D3D12 (FL 11_0 + SM 6.0, no Agility). PIX ANSI `BeginEvent`/`EndEvent`/`SetMarker` on the command list. SamplerDesc static samplers, `create_sampler` (object only — `set_sampler` is a deliberate stub), compute PSO + dispatch + buffer UAV readback, per-SRV tables, device shader-visible SRV heap, color+SRV transients, RGBA8 mip generation |
-| `renderer` | 3 | lib | Render graph, **standard frame** (shadow → forward → motion → sky → bloom → TAA → tonemap → AA → debug → overlay), per-pass GPU debug events, frustum extract, **GGX PBR** (albedo + packed MR + derivative TBN normals), **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA**, **SMAA 1x / FXAA** |
+| `rhi-d3d12` | 2 | lib | D3D12 backend (`create_rhi()` is the public header; device types stay in `src/`). Inbox OS D3D12 (FL 11_0 + SM 6.0, no Agility). PIX ANSI `BeginEvent`/`EndEvent`/`SetMarker` on the command list. SamplerDesc static samplers, `create_sampler` (object only — `set_sampler` is a deliberate stub), compute PSO + dispatch + buffer UAV readback, per-SRV tables, device shader-visible SRV heap, color+SRV transients, RGBA8 mip generation, **root SRVs** (`space1`) for per-instance structured buffers |
+| `renderer` | 3 | lib | Render graph, **standard frame** (shadow → forward → motion → sky → bloom → TAA → tonemap → AA → debug → overlay), per-pass GPU debug events, frustum extract, **GGX PBR** (albedo + packed MR + derivative TBN normals), **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA**, **SMAA 1x / FXAA**, **instanced draws** (extract batches by material/mesh key; one `draw_indexed` and one constant upload per batch) |
 | `debug-draw` | 3 | lib | Frame stats, F3 overlay, F4 world AABBs, F5 AA mode |
 | `scene` | 3 | lib | Flat instance list (**512**) with interned names, parent indices, `solscene` files, and prefab extract/instantiate (prefix + root transform); world = parent * local; materials (16), camera, sun + point lights (`World`); no ECS |
 | `gameplay` | 3 | lib | Kinematic `CharacterController` (walk, jump, step, slope; analog wish) and `GameCamera` (follow / orbit / FPS, stick look) on `IPhysics` + math; no input map |
@@ -111,6 +111,16 @@ not a loader either; it uploads CPU meshes to GPU buffers.
 Frustum cull and sun bounds live in `renderer::extract_visible`. The sandbox only
 copies `scene::World` into `ExtractInstance` (`packages/sandbox/src/world_extract.cpp`),
 including metal/rough from `scene::Material`. The renderer does not include `scene`.
+
+Extract also *batches* the survivors, grouping by pipeline + buffers + textures +
+index count. One batch list serves shadow, forward and motion: building it per
+pass would let them disagree about grouping, and the motion pass draws with
+`DepthTest::Equal`, so geometry that does not rasterize identically to forward
+writes nothing and says nothing. Per-instance transforms go to the GPU in one
+`StructuredBuffer` (root SRV, `space1`) uploaded once per frame; a batch's
+`first_instance` rides in the pass constants because `StartInstanceLocation` is
+not portable — D3D excludes it from `SV_InstanceID`, Vulkan folds it into
+`gl_InstanceIndex`, Metal splits it out as `[[base_instance]]`.
 
 Overlay/debug *drawing* stays in `debug-draw`; the graph calls them through
 function pointers on `StandardFrameDesc`.

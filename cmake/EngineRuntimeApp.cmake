@@ -56,9 +56,17 @@ function(engine_add_runtime_app TARGET)
         engine_copy_dxc_runtime(${TARGET})
     endif()
 
+    # Both apps get the content copy, not just the install-layout one.
+    #
+    # The engine resolves its mounts next to the executable, so `sandbox.exe`
+    # reads shaders from <exe_dir>/content. Copying only for `game` meant
+    # `cmake --build --target sandbox` left stale HLSL there: shader edits
+    # appeared to work because the gates check C++ constants, while the runtime
+    # kept compiling the previous shader. That failure is silent and expensive.
+    engine_copy_install_content(${TARGET})
+
     if(APP_INSTALL_LAYOUT)
         target_compile_definitions(${TARGET} PRIVATE ENGINE_GAME_APP)
-        engine_copy_install_content(${TARGET})
         install(FILES "${CMAKE_BINARY_DIR}/cooked/content.pak" DESTINATION .)
     endif()
 

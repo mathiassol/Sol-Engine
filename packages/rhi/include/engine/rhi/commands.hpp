@@ -53,13 +53,31 @@ public:
     virtual void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes = 0) = 0;
     virtual void set_shader_resource(u32 slot, ITexture& texture) = 0;
     virtual void set_unordered_access(u32 slot, IBuffer& buffer) = 0;
+    // Bind a buffer as a shader-readable array, visible to every stage.
+    //
+    // Backed by a *root* SRV, not a descriptor table: no descriptor is copied,
+    // no heap is set, and it costs 2 DWORDs of root signature. That is what
+    // makes it usable from a vertex shader - the texture SRV tables above are
+    // pixel-visible only. Lives in register space 1 so it never collides with
+    // the t0.. texture registers.
+    virtual void set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes = 0) = 0;
     // Samplers are bound as static samplers on GraphicsPipelineDesc, not per
     // draw. There is deliberately no set_sampler: a dynamic sampler table has
     // no consumer, and a dead virtual is a trap for a second backend author,
     // who must implement it, discover it is never called, and reproduce the
     // stub. Add it back with the pass that actually needs it.
     virtual void draw(u32 vertex_count, u32 start_vertex = 0) = 0;
-    virtual void draw_indexed(u32 index_count, u32 start_index = 0, i32 base_vertex = 0) = 0;
+    // instance_count > 1 draws the geometry that many times; the shader reads
+    // per-instance data with SV_InstanceID.
+    //
+    // There is deliberately no start_instance. D3D excludes StartInstanceLocation
+    // from SV_InstanceID, Vulkan *includes* firstInstance in gl_InstanceIndex,
+    // and Metal splits it into a separate [[base_instance]] input - so the same
+    // shader would read different data on each backend. Pass a batch base
+    // offset in the pass constant buffer instead; that behaves identically
+    // everywhere.
+    virtual void draw_indexed(u32 index_count, u32 start_index = 0, i32 base_vertex = 0,
+        u32 instance_count = 1) = 0;
     virtual void dispatch(u32 group_count_x, u32 group_count_y = 1, u32 group_count_z = 1) = 0;
 
     // PIX-style GPU timeline. begin/end nest; set_marker is a tick with no duration.

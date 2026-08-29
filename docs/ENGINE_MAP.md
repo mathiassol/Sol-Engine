@@ -99,6 +99,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 11 | Mesh shaders / bindless heaps | Far | |
 | 12 | `rhi-vulkan` (SPIR-V compiler + this contract; D3D12 stays daily driver) | Far | |
 | 13 | Metal / console backends | Far | |
+| 14 | Instanced draws + root SRV structured buffers (per-instance data) | **Done** | |
 
 ---
 
@@ -151,8 +152,13 @@ features, not a school pile.
 | 24 | Multiple views / split-screen | Later | Platform #5 multi-window **or** split-screen gameplay, plus running the graph twice. One camera, one swapchain view. |
 | 25 | Volumetric fog / SSGI / full GI | Far | |
 | 26 | Virtual shadow maps, nanite-like vis, hardware RT | Far | |
+| 27 | Instanced draws: batch the extract by material/mesh key, one `draw_indexed` per batch | **Done** | |
 
 Do not skip PBR to start deferred. Do not add SSAO because a paper has it.
+
+Row numbers are ids, not a sort order - #27 is Done and lands after the Far
+rows because renumbering would break every `Renderer #N` reference in
+[ROADMAP.md](ROADMAP.md) and the specs.
 
 ---
 

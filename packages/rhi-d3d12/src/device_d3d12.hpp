@@ -106,18 +106,20 @@ private:
 class D3D12Pipeline final : public IGraphicsPipeline {
 public:
     D3D12Pipeline(ID3D12PipelineState* pso, ID3D12RootSignature* root_sig, u32 srv_table_root,
-        D3D12_PRIMITIVE_TOPOLOGY topology);
+        u32 structured_root, D3D12_PRIMITIVE_TOPOLOGY topology);
     ~D3D12Pipeline() override;
 
     ID3D12PipelineState* pso() const;
     ID3D12RootSignature* root_signature() const;
     u32 srv_table_root() const;
+    u32 structured_root() const;
     D3D12_PRIMITIVE_TOPOLOGY topology() const;
 
 private:
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_sig_;
     u32 srv_table_root_ = ~0u;
+    u32 structured_root_ = ~0u;
     D3D12_PRIMITIVE_TOPOLOGY topology_ = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 };
 
@@ -159,8 +161,10 @@ public:
     void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) override;
     void set_shader_resource(u32 slot, ITexture& texture) override;
     void set_unordered_access(u32 slot, IBuffer& buffer) override;
+    void set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) override;
     void draw(u32 vertex_count, u32 start_vertex) override;
-    void draw_indexed(u32 index_count, u32 start_index, i32 base_vertex) override;
+    void draw_indexed(u32 index_count, u32 start_index, i32 base_vertex,
+        u32 instance_count) override;
     void dispatch(u32 group_count_x, u32 group_count_y, u32 group_count_z) override;
     void begin_event(std::string_view name) override;
     void end_event() override;
@@ -268,6 +272,7 @@ private:
     bool device_removed() const;
     u32  next_shader_descriptor();
     void log_device_error(const char* what, HRESULT hr = E_FAIL);
+    void report_debug_layer_messages() const;
     void log_resize_failure(const char* what, HRESULT hr, u32 width, u32 height) const;
     void wait_for_frame(u32 index);
     void wait_for_gpu();

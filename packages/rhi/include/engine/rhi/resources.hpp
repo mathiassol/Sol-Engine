@@ -110,6 +110,8 @@ struct GraphicsPipelineDesc {
     u32 attribute_count = 0;
     u32 constant_buffer_count = 0;
     u32 shader_resource_count = 0;
+    // Root SRVs in register space 1, visible to all stages (t0..tN, space1).
+    u32 structured_buffer_count = 0;
     SamplerDesc samplers[kMaxSamplers]{};
     u32 sampler_count = 0;
     DepthTest depth = DepthTest::Disabled;
