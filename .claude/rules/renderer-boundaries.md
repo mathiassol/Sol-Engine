@@ -63,7 +63,9 @@ forgotten copy line produces a pass that never runs and never complains.
 6. **Gate** → a `run_<name>_gate()` in `main.cpp` (see the gate protocol in
    CLAUDE.md), then run with `ENGINE_GPU_DEBUG=1`.
 
-Budget note: per-draw constants come from a **64 KB frame ring** and each drawn
-instance already costs 1,280 bytes across shadow + forward + motion. A new
-per-draw constant buffer eats into that, and overflow is a hard abort — prefer
-a single per-pass CBV over growing `FrameConstants` (already 400 bytes).
+Budget note: per-draw constants come from a **1 MiB frame ring** (per
+frame-in-flight slot) and each drawn instance already costs 1,280 bytes across
+shadow + forward + motion — so the ring is the binding constraint at roughly
+800 drawn instances. A new per-draw constant buffer eats into that. Exhaustion
+drops draws rather than aborting, but a dropped draw is still a missing object:
+prefer a single per-pass CBV over growing `FrameConstants` (already 400 bytes).

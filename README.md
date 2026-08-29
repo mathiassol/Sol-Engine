@@ -76,7 +76,7 @@ Startup AA can also be set without a rebuild: `sandbox.exe --set r.aa=taa`
 for the full cvar list.
 
 **What the sandbox renders:** 63 huskies plus a checker floor in `scene::World`
-(64 instances, frustum-culled at extract), lit by a directional sun with a
+(the scene holds up to 512; all are frustum-culled at extract), lit by a directional sun with a
 shadow, split-sum IBL, and one rim point light. A source cubemap sky fills
 leftover pixels in HDR before ACES. Scene color is RGBA16; ACES writes LDR,
 then the chosen AA pass before the swapchain. Shaders compile with Windows SDK

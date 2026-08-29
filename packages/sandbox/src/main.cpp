@@ -2638,6 +2638,91 @@ bool run_taa_gate(const ForwardDemo& demo) {
     return passed;
 }
 
+// scene::kMaxInstances is not just an array bound - it is coupled to
+// motion::kHistorySlots, to the frame arena, and (through the extract path) to
+// the GPU per-frame budgets. Those couplings are invisible: exceeding
+// kHistorySlots does not crash or warn, it silently hands every instance past
+// the limit prev_model == model, which reads as "this object did not move" and
+// makes TAA reproject it wrongly.
+//
+// This gate fills the scene to capacity and checks the whole range survives
+// extract, twice, with movement in between.
+bool run_instance_capacity_gate() {
+    using engine::renderer::motion::MotionHistory;
+
+    constexpr engine::u32 kCount = engine::scene::kMaxInstances;
+    char dummy{};
+    std::vector<engine::renderer::ExtractInstance> instances(kCount);
+    for (engine::u32 i = 0; i < kCount; ++i) {
+        auto& inst = instances[i];
+        inst.pipeline = reinterpret_cast<engine::rhi::IGraphicsPipeline*>(&dummy);
+        inst.vertex_buffer = reinterpret_cast<engine::rhi::IBuffer*>(&dummy);
+        inst.index_buffer = reinterpret_cast<engine::rhi::IBuffer*>(&dummy);
+        inst.texture = reinterpret_cast<engine::rhi::ITexture*>(&dummy);
+        // Empty local_bounds: Frustum::intersects is conservative for an
+        // invalid box, so every instance is visible and `drawn` is exact.
+        inst.model = engine::math::Mat4::translate(
+            {static_cast<engine::f32>(i) * 0.01f, 0.f, 0.f});
+        inst.id = i;
+        inst.index_count = 3;
+        inst.vertex_stride = 32;
+    }
+
+    const engine::math::Mat4 view = engine::math::Mat4::look_at(
+        {0.f, 0.f, -8.f}, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f});
+    const engine::math::Mat4 proj =
+        engine::math::Mat4::perspective(engine::math::radians(60.f), 16.f / 9.f, 0.1f, 500.f);
+
+    MotionHistory history{};
+    engine::renderer::ExtractDesc desc{};
+    desc.view = view;
+    desc.projection = proj;
+    desc.history = &history;
+    desc.instances = {instances.data(), instances.size()};
+
+    // DrawItem is 192 bytes; size the arena for the whole scene with headroom
+    // so an arena overflow cannot be mistaken for a cull.
+    engine::Arena arena(static_cast<engine::usize>(kCount) * 512 + 64 * 1024);
+    engine::renderer::RenderSnapshot first{};
+    const auto stats_first = engine::renderer::extract_visible(desc, arena, first);
+    const bool all_drawn = stats_first.drawn == kCount && first.draws.size() == kCount
+        && !arena.overflowed();
+
+    // Move every instance, extract again. Each one's prev_model must now be
+    // its *previous* transform. An instance past kHistorySlots gets
+    // prev_model == model instead, which is exactly the silent failure.
+    for (engine::u32 i = 0; i < kCount; ++i) {
+        instances[i].model = engine::math::Mat4::translate(
+            {static_cast<engine::f32>(i) * 0.01f, 1.f, 0.f});
+    }
+    engine::Arena arena2(static_cast<engine::usize>(kCount) * 512 + 64 * 1024);
+    engine::renderer::RenderSnapshot second{};
+    engine::renderer::extract_visible(desc, arena2, second);
+
+    engine::u32 tracked = 0;
+    if (second.draws.size() == kCount) {
+        for (engine::u32 i = 0; i < kCount; ++i) {
+            // prev_model.y differs from model.y only if history covered slot i.
+            if (second.draws[i].prev_model.cols[3].y != second.draws[i].model.cols[3].y) {
+                ++tracked;
+            }
+        }
+    }
+    const bool history_ok = tracked == kCount;
+
+    const bool passed = all_drawn && history_ok;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Instance capacity gate: cap=%u drawn=%u history_tracked=%u/%u slots=%u "
+        "arena_overflow=%s (%s)",
+        kCount, stats_first.drawn, tracked, kCount,
+        engine::renderer::motion::kHistorySlots, arena.overflowed() ? "yes" : "no",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_motion_gate(const ForwardDemo& demo) {
     using engine::renderer::motion::Constants;
     using engine::renderer::motion::kFormat;
@@ -4539,7 +4624,7 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
 
     const engine::f32 foot_y = husky_data.bounds.min.y;
     state.husky_foot_y = foot_y;
-    constexpr engine::u32 kHuskyCount = engine::scene::kMaxInstances - 1;
+    constexpr engine::u32 kHuskyCount = 63;
     engine::scene::MaterialHandle husky_mats[sandbox::kHuskyVariantCount]{};
     for (engine::u32 i = 0; i < sandbox::kHuskyVariantCount; ++i) {
         engine::scene::Material mat{};
@@ -4724,6 +4809,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         }
     }
     if (!run_aa_gate(*demo) && fail_on_gate) {
+        return false;
+    }
+    if (!run_instance_capacity_gate() && fail_on_gate) {
         return false;
     }
     if (!run_motion_gate(*demo) && fail_on_gate) {

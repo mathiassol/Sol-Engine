@@ -183,7 +183,7 @@ file. Not so an inspector can live in the engine.
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
-| 1 | `World`: instances, camera, sun, points, materials | **Done** | |
+| 1 | `World`: instances (512), camera, sun, points, materials | **Done** | |
 | 2 | Names on instances (string or interned id) | **Done** | |
 | 3 | Hierarchy / parenting (transforms compose) | **Done** | |
 | 4 | Save / load a scene file | **Done** | |

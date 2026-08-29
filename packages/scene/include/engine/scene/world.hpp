@@ -9,7 +9,7 @@
 
 namespace engine::scene {
 
-constexpr u32 kMaxInstances = 64;
+constexpr u32 kMaxInstances = 512;
 constexpr u32 kMaxMaterials = 16;
 constexpr u32 kMaxPointLights = 4;
 constexpr u32 kMaxNameChars = 31;

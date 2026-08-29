@@ -3,6 +3,7 @@
 #include <engine/assets/mesh.hpp>
 #include <engine/math/aabb.hpp>
 #include <engine/math/vec3.hpp>
+#include <engine/renderer/motion.hpp>
 
 namespace sandbox {
 
@@ -20,6 +21,14 @@ void extract_lighting(const engine::scene::World& world, engine::math::Vec3 came
     static_assert(engine::scene::kMaxPointLights == engine::renderer::kMaxPointLights,
         "scene::kMaxPointLights and renderer::kMaxPointLights must agree - "
         "the extract below writes scene lights into renderer-sized arrays");
+
+    // Same class of bug as the light counts above: extract indexes
+    // MotionHistory by scene instance id, so a scene that can hold more
+    // instances than there are history slots silently loses motion vectors
+    // for the overflow.
+    static_assert(engine::scene::kMaxInstances <= engine::renderer::motion::kHistorySlots,
+        "motion::kHistorySlots must cover scene::kMaxInstances - otherwise instances past "
+        "the slot count get prev_model == model and TAA reprojects them wrongly");
 
     for (engine::u32 i = 0; i < engine::scene::kMaxPointLights; ++i) {
         const auto& light = world.points[i];
@@ -46,7 +55,17 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
     engine::debug::DebugLines* debug_lines, engine::Arena& arena,
     engine::renderer::RenderSnapshot& snapshot,
     engine::renderer::motion::MotionHistory* history) {
-    engine::renderer::ExtractInstance storage[engine::scene::kMaxInstances]{};
+    // Arena, not the stack. This used to be
+    // `ExtractInstance storage[kMaxInstances]{}` - 168 bytes each, brace-
+    // initialized, on the stack of a function called every frame. At a 512
+    // instance cap that is 86 KiB memset per frame, and it grows linearly with
+    // the cap until it overflows the 1 MiB default stack with no log. The
+    // arena already fails soft.
+    engine::renderer::ExtractInstance* storage =
+        arena.push_n<engine::renderer::ExtractInstance>(world.instance_count);
+    if (!storage && world.instance_count > 0) {
+        return {};  // arena exhausted; it logged why
+    }
     engine::u32 count = 0;
     const engine::math::Vec3 kBoxColors[] = {
         {0.2f, 1.f, 0.35f},
@@ -56,7 +75,7 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
         {0.25f, 0.85f, 1.f},
     };
 
-    for (engine::u32 i = 0; i < world.instance_count && count < engine::scene::kMaxInstances; ++i) {
+    for (engine::u32 i = 0; i < world.instance_count; ++i) {
         const auto& instance = world.instances[i];
         if (instance.material >= world.material_count) {
             continue;

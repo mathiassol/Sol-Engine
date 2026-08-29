@@ -35,10 +35,14 @@ constexpr usize kBufferAlign = 256;
 constexpr usize kFrameRingBytes = 1024 * 1024;
 constexpr usize kFrameRingBytesPerDraw = 1280;
 
-// One shader-visible descriptor per SRV bind per frame. 4096 at 32 bytes is
-// 128 KiB per slot; the old 512 was reachable by a scene with a few hundred
-// textured draws.
-constexpr u32 kMaxShaderSrvsPerFrame = 4096;
+// One shader-visible descriptor per SRV bind per frame.
+//
+// The forward pass binds 7 SRVs per drawn instance, so this - not memory - is
+// what caps scene size: 4096 slots was 581 drawn instances, below the 512
+// instance cap once anything else in the frame takes descriptors. 8192 at 32
+// bytes is 256 KiB per slot (768 KiB across the three), and lifts the ceiling
+// to ~1,167 drawn.
+constexpr u32 kMaxShaderSrvsPerFrame = 8192;
 
 constexpr u32 kMaxMips = 16;
 

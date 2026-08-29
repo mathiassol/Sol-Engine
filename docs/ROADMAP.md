@@ -47,9 +47,9 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **22,019 lines** of C++/HLSL in **133 files**, **26
+Measured 29 Aug 2026: **22,135 lines** of C++/HLSL in **133 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
-of the engine (2,901 lines). `sandbox` is 6,280; `renderer` is 2,687.
+of the engine (2,901 lines). `sandbox` is 6,387; `renderer` is 2,687.
 `physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
 (install layout, no extra .cpp).
 
@@ -665,6 +665,53 @@ change callbacks (consumers poll), no saving cvars back to disk, no env vars
 (`ENGINE_GPU_DEBUG` is read inside the D3D12 and DXC backends before any
 registry exists), no `Vec3` cvars (`math` sits above `core`), no
 cheat/readonly flags, and no general command-line parser.
+
+---
+
+## Scene #1 — instance capacity 64 -> 512 (done)
+
+**Why:** `scene::kMaxInstances = 64` was the real ceiling on what this engine
+could render - not the renderer, which is considerably further along. The demo
+sat exactly on it (63 huskies + 1 floor), so `add_instance` was one call from
+`std::abort()`.
+
+**Choice:** 512, not 4096, and a fixed array rather than heap-backing. 512 is
+the largest value that clears every *other* ceiling with margin; 4096 crashes
+`--gates` on the stack before it reaches a GPU. Heap-backing `World` fixes only
+the stack problems, costs the trivially-copyable property, and removes the
+compile-time bound that currently protects the untrusted `read_world` /
+`instantiate_prefab` paths. It is the right move later, past ~4096.
+
+The cap was never one number. Four things moved with it:
+
+- `kHuskyCount` was literally `kMaxInstances - 1` - the demo scene size *was*
+  the cap, so raising one spawned 4095 huskies. Now a literal 63.
+- `motion::kHistorySlots` stayed at 64 and is indexed by scene instance id.
+  Past it, instances silently get `prev_model == model`: no crash, no warning,
+  just TAA reprojecting them wrongly. Now 512 and `static_assert`ed against
+  `kMaxInstances` in `world_extract.cpp`, beside the same guard the point-light
+  counts already had.
+- `ExtractInstance storage[kMaxInstances]{}` was a brace-initialized stack
+  array in a function called every frame - 86 KiB memset per frame at 512, and
+  a silent stack overflow somewhere past 3,000. Now arena-allocated, which
+  fails soft.
+- `kMaxShaderSrvsPerFrame` was 4096. The forward pass binds 7 SRVs per drawn
+  instance, so that was 581 drawn - *below* the new cap. Now 8192 (~1,167
+  drawn), costing 768 KiB of descriptor heap.
+
+**Gate (met):** `Instance capacity gate: cap=512 drawn=512 history_tracked=512/512
+slots=512 arena_overflow=no (pass)`. It fills the scene to capacity, extracts
+twice with movement in between, and checks every instance's `prev_model`
+actually tracked - which is what catches a stale `kHistorySlots`. Watched fail
+first at `history_tracked=64/512`.
+
+**Do not (still):** this is one increment, not a scaling programme. The next
+ceiling is the 1 MiB frame constant ring at ~816 drawn instances, and its
+failure mode is silently dropped draws. Going past that wants instanced draws
+(so per-draw constants become per-batch), and going past ~4096 additionally
+wants a heap-backed `World`, a name hash table, and cached world matrices - the
+name intern is O(n^2) and the parent walk is uncached. Both are invisible at
+512.
 
 ---
 
