@@ -64,7 +64,7 @@ Two facts the shape is load-bearing on:
 | `platform-win32` | 2 | lib | Win32 platform; XInput 1.4 gamepads (four slots, Xbox layout) |
 | `assets-filesystem` | 2 | lib | Filesystem `IAssetLoader` |
 | `assets-obj` | 2 | lib | Wavefront OBJ mesh loader |
-| `assets-gltf` | 2 | lib | glTF mesh loader (all triangle primitives; cgltf; metal/rough factors + MR/normal URIs) |
+| `assets-gltf` | 2 | lib | glTF mesh loader (all triangle primitives; cgltf; metal/rough factors + MR/normal URIs). Walks the **node graph**, not `meshes` — world transforms are composed through the parent chain and baked into vertices (normals via the cofactor matrix; mirrored nodes flip winding). `cgltf_validate` runs before any unpack. Falls back to a flat mesh walk for files with no nodes |
 | `assets-png` | 2 | lib | PNG albedo decode |
 | `assets-gpu` | 2 | lib | CPU mesh → GPU buffers |
 | `audio-xaudio2` | 2 | lib | XAudio2 backend (`create_audio()`); 16-bit PCM one-shots |

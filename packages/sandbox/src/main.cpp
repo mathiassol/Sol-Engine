@@ -3614,6 +3614,128 @@ bool run_gltf_validate_gate() {
     return passed;
 }
 
+// Same 108-byte buffer as the validate probes: one triangle at (0,0,0),
+// (1,0,0), (0,1,0) with every normal (0,0,1). Only the node graph varies.
+std::string gltf_with_nodes(const char* nodes_json, const char* roots) {
+    return std::string(
+        "{\n"
+        "  \"asset\": { \"version\": \"2.0\" },\n"
+        "  \"scene\": 0,\n"
+        "  \"scenes\": [ { \"nodes\": [")
+        + roots +
+        "] } ],\n"
+        "  \"nodes\": " + nodes_json + ",\n"
+        "  \"meshes\": [{ \"primitives\": [ { \"attributes\": "
+        "{ \"POSITION\": 0, \"NORMAL\": 1, \"TEXCOORD_0\": 2 }, \"indices\": 3 } ] }],\n"
+        "  \"buffers\": [ { \"uri\": \"probe.bin\", \"byteLength\": 108 } ],\n"
+        "  \"bufferViews\": [\n"
+        "    { \"buffer\": 0, \"byteOffset\": 0,  \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 36, \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 72, \"byteLength\": 24 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 96, \"byteLength\": 12 }\n"
+        "  ],\n"
+        "  \"accessors\": [\n"
+        "    { \"bufferView\": 0, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 1, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 2, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC2\" },\n"
+        "    { \"bufferView\": 3, \"componentType\": 5125, \"count\": 3, \"type\": \"SCALAR\" }\n"
+        "  ]\n"
+        "}\n";
+}
+
+bool load_node_probe(const char* name, const std::string& json,
+    engine::assets::gltf::GltfLoadResult& out) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "sol-engine-gltf-nodes" / name;
+    if (!write_gltf_probe_with_json(dir, json.c_str())) {
+        return false;
+    }
+    auto loader = engine::assets::gltf::create_mesh_loader();
+    return loader && loader->load((dir / "probe.gltf").string(), out);
+}
+
+bool near_eq(engine::f32 a, engine::f32 b) {
+    return std::abs(a - b) < 1.e-4f;
+}
+
+bool run_gltf_node_transform_gate() {
+    using engine::assets::gltf::GltfLoadResult;
+
+    // Translation on the node that owns the mesh. Before node transforms were
+    // read, every one of these cases collapsed to the origin.
+    GltfLoadResult translated{};
+    const bool translate_ok =
+        load_node_probe("translate",
+            gltf_with_nodes("[ { \"mesh\": 0, \"translation\": [10, 0, 0] } ]", "0"), translated)
+        && translated.mesh.vertices.size() == 3
+        && near_eq(translated.mesh.vertices[0].px, 10.f)
+        && near_eq(translated.mesh.vertices[1].px, 11.f)
+        && near_eq(translated.mesh.bounds.min.x, 10.f)
+        && near_eq(translated.mesh.bounds.max.x, 11.f);
+
+    // One mesh referenced by two nodes is two placements, not one. Node 0 is
+    // untransformed so this also exercises the identity fast path.
+    GltfLoadResult instanced{};
+    const bool instance_ok =
+        load_node_probe("instanced",
+            gltf_with_nodes("[ { \"mesh\": 0 }, { \"mesh\": 0, \"translation\": [5, 0, 0] } ]",
+                "0, 1"), instanced)
+        && instanced.mesh.vertices.size() == 6 && instanced.mesh.indices.size() == 6
+        && instanced.primitives.size() == 2
+        && near_eq(instanced.mesh.vertices[0].px, 0.f)
+        && near_eq(instanced.mesh.vertices[3].px, 5.f)
+        && instanced.mesh.indices[3] == 3;
+
+    // A child composes with its parent - the whole chain, not just one level.
+    GltfLoadResult nested{};
+    const bool nested_ok =
+        load_node_probe("nested",
+            gltf_with_nodes(
+                "[ { \"children\": [1], \"translation\": [1, 0, 0] },\n"
+                "   { \"mesh\": 0, \"translation\": [0, 2, 0] } ]", "0"), nested)
+        && nested.mesh.vertices.size() == 3
+        && near_eq(nested.mesh.vertices[0].px, 1.f)
+        && near_eq(nested.mesh.vertices[0].py, 2.f);
+
+    // Negative scale mirrors the geometry, which reverses triangle orientation.
+    // The engine rasterizes FrontCounterClockwise, so the winding must flip or
+    // the part renders inside-out.
+    GltfLoadResult mirrored{};
+    const bool mirror_ok =
+        load_node_probe("mirrored",
+            gltf_with_nodes("[ { \"mesh\": 0, \"scale\": [-1, 1, 1] } ]", "0"), mirrored)
+        && mirrored.mesh.vertices.size() == 3 && mirrored.mesh.indices.size() == 3
+        && near_eq(mirrored.mesh.vertices[1].px, -1.f)
+        && mirrored.mesh.indices[0] == 0 && mirrored.mesh.indices[1] == 2
+        && mirrored.mesh.indices[2] == 1;
+
+    // Column-major 90 degrees about X: position (0,1,0) -> (0,0,1), and the
+    // normal (0,0,1) -> (0,-1,0). Proves normals are transformed too, not just
+    // positions - a rotated part would otherwise be lit as if unrotated.
+    GltfLoadResult rotated{};
+    const bool rotate_ok =
+        load_node_probe("rotated",
+            gltf_with_nodes("[ { \"mesh\": 0, \"matrix\": "
+                "[1,0,0,0, 0,0,1,0, 0,-1,0,0, 0,0,0,1] } ]", "0"), rotated)
+        && rotated.mesh.vertices.size() == 3
+        && near_eq(rotated.mesh.vertices[2].pz, 1.f)
+        && near_eq(rotated.mesh.vertices[2].py, 0.f)
+        && near_eq(rotated.mesh.vertices[0].ny, -1.f)
+        && near_eq(rotated.mesh.vertices[0].nz, 0.f);
+
+    const bool passed = translate_ok && instance_ok && nested_ok && mirror_ok && rotate_ok;
+
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "glTF node transform gate: translate=%s two_nodes=%s nested=%s "
+        "mirror_winding=%s rotate_normals=%s (%s)",
+        translate_ok ? "yes" : "no", instance_ok ? "yes" : "no", nested_ok ? "yes" : "no",
+        mirror_ok ? "yes" : "no", rotate_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
+
 bool run_mip_gate(const engine::rhi::ITexture& texture, engine::u32 source_width) {
     engine::u32 expected = 1;
     engine::u32 dim = source_width;
@@ -4027,6 +4149,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         return false;
     }
     if (!run_gltf_validate_gate() && fail_on_gate) {
+        return false;
+    }
+    if (!run_gltf_node_transform_gate() && fail_on_gate) {
         return false;
     }
     const engine::f32 husky_metallic = husky_gltf.metallic;

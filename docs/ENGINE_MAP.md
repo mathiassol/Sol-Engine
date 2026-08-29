@@ -165,7 +165,7 @@ CPU data separate from GPU resources. Hot reload already matters.
 | 1 | Virtual mounts (`/content`, `/shaders`, `/debug`) | **Done** | |
 | 2 | OBJ, one-primitive glTF, PNG, mip generation | **Done** | |
 | 3 | glTF metal/rough **factors** | **Done** | |
-| 4 | glTF extras: more primitives, metal-rough **textures**, normal maps | **Done** | |
+| 4 | glTF extras: more primitives, metal-rough **textures**, normal maps, **node transforms** | **Done** | |
 | 5 | Texture cooker formats (BC7 etc.) | Later | PNG + generated mips work until GPU memory or pack size is the wall. Not blocked by UAV writes (RHI #9). |
 | 6 | Asset database / GUID / import settings | Later | More than a handful of files. Cooker (#7) is Done; path strings on mounts are still enough. |
 | 7 | Cooker: source → engine binary (meshes, textures, audio) | **Done** | |

@@ -2,6 +2,8 @@
 
 #include <engine/core/log.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -68,7 +70,89 @@ void fill_primitive_material(const cgltf_primitive& prim, const std::filesystem:
     out.normal_uri = image_uri(prim.material->normal_texture, gltf_dir);
 }
 
-bool append_primitive(const cgltf_primitive& prim, MeshData& mesh) {
+// A node's world transform, pre-decomposed for the two things a vertex needs.
+//
+// glTF matrices are column-major: m[0..2] is column 0, m[12..14] is the
+// translation. Normals use the cofactor matrix of the upper 3x3 rather than a
+// true inverse-transpose — they differ only by 1/det, which the renormalize
+// step removes, and the cofactor form has no division to guard against a
+// degenerate (zero-scale) node.
+struct NodeTransform {
+    f32 m[16]{};
+    f32 normal[9]{};        // row-major 3x3 cofactor matrix
+    bool identity = true;
+    bool flips_winding = false;
+};
+
+NodeTransform identity_transform() {
+    NodeTransform t{};
+    t.m[0] = t.m[5] = t.m[10] = t.m[15] = 1.f;
+    t.normal[0] = t.normal[4] = t.normal[8] = 1.f;
+    return t;
+}
+
+NodeTransform make_node_transform(const cgltf_float world[16]) {
+    NodeTransform t{};
+    for (int i = 0; i < 16; ++i) {
+        t.m[i] = static_cast<f32>(world[i]);
+    }
+
+    const f32 c0 = t.m[0], c1 = t.m[1], c2 = t.m[2];
+    const f32 c3 = t.m[4], c4 = t.m[5], c5 = t.m[6];
+    const f32 c6 = t.m[8], c7 = t.m[9], c8 = t.m[10];
+
+    t.normal[0] = c4 * c8 - c7 * c5;
+    t.normal[1] = -(c1 * c8 - c7 * c2);
+    t.normal[2] = c1 * c5 - c4 * c2;
+    t.normal[3] = -(c3 * c8 - c6 * c5);
+    t.normal[4] = c0 * c8 - c6 * c2;
+    t.normal[5] = -(c0 * c5 - c3 * c2);
+    t.normal[6] = c3 * c7 - c6 * c4;
+    t.normal[7] = -(c0 * c7 - c6 * c1);
+    t.normal[8] = c0 * c4 - c3 * c1;
+
+    const f32 det = c0 * t.normal[0] + c3 * t.normal[1] + c6 * t.normal[2];
+    t.flips_winding = det < 0.f;
+
+    // Exact compare on purpose: an untransformed node must take the fast path
+    // and leave its vertices bit-identical.
+    const f32 expected[16] = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+                              0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f};
+    t.identity = true;
+    for (int i = 0; i < 16; ++i) {
+        if (t.m[i] != expected[i]) {
+            t.identity = false;
+            break;
+        }
+    }
+    return t;
+}
+
+void transform_point(const NodeTransform& t, f32& x, f32& y, f32& z) {
+    const f32 px = x, py = y, pz = z;
+    x = t.m[0] * px + t.m[4] * py + t.m[8] * pz + t.m[12];
+    y = t.m[1] * px + t.m[5] * py + t.m[9] * pz + t.m[13];
+    z = t.m[2] * px + t.m[6] * py + t.m[10] * pz + t.m[14];
+}
+
+void transform_normal(const NodeTransform& t, f32& x, f32& y, f32& z) {
+    const f32 nx = x, ny = y, nz = z;
+    f32 rx = t.normal[0] * nx + t.normal[1] * ny + t.normal[2] * nz;
+    f32 ry = t.normal[3] * nx + t.normal[4] * ny + t.normal[5] * nz;
+    f32 rz = t.normal[6] * nx + t.normal[7] * ny + t.normal[8] * nz;
+    const f32 len_sq = rx * rx + ry * ry + rz * rz;
+    if (len_sq > 0.f) {
+        const f32 inv = 1.f / std::sqrt(len_sq);
+        rx *= inv;
+        ry *= inv;
+        rz *= inv;
+    }
+    x = rx;
+    y = ry;
+    z = rz;
+}
+
+bool append_primitive(const cgltf_primitive& prim, MeshData& mesh, const NodeTransform& xform) {
     if (prim.type != cgltf_primitive_type_triangles) {
         return false;
     }
@@ -114,8 +198,13 @@ bool append_primitive(const cgltf_primitive& prim, MeshData& mesh) {
             v.u = uv_f[i * 2 + 0];
             v.v = uv_f[i * 2 + 1];
         }
+        if (!xform.identity) {
+            transform_point(xform, v.px, v.py, v.pz);
+            transform_normal(xform, v.nx, v.ny, v.nz);
+        }
     }
 
+    const usize index_base = mesh.indices.size();
     if (prim.indices) {
         std::vector<u32> indices(static_cast<usize>(prim.indices->count));
         const cgltf_size written = cgltf_accessor_unpack_indices(
@@ -132,6 +221,18 @@ bool append_primitive(const cgltf_primitive& prim, MeshData& mesh) {
         mesh.indices.reserve(mesh.indices.size() + vertex_count);
         for (u32 i = 0; i < vertex_count; ++i) {
             mesh.indices.push_back(vertex_base + i);
+        }
+    }
+
+    // A mirroring node (negative determinant) reverses triangle orientation.
+    // The engine rasterizes with FrontCounterClockwise, so without this swap a
+    // mirrored part renders inside-out.
+    if (xform.flips_winding) {
+        const usize added = mesh.indices.size() - index_base;
+        if (added % 3 == 0) {
+            for (usize i = index_base; i + 2 < mesh.indices.size(); i += 3) {
+                std::swap(mesh.indices[i + 1], mesh.indices[i + 2]);
+            }
         }
     }
     return true;
@@ -172,16 +273,15 @@ public:
         }
 
         const std::filesystem::path gltf_dir = std::filesystem::path(file).parent_path();
-        for (cgltf_size m = 0; m < data->meshes_count; ++m) {
-            const cgltf_mesh& mesh = data->meshes[m];
+
+        auto emit_mesh = [&](const cgltf_mesh& mesh, const NodeTransform& xform) -> bool {
             for (cgltf_size p = 0; p < mesh.primitives_count; ++p) {
                 const cgltf_primitive& prim = mesh.primitives[p];
                 if (prim.type != cgltf_primitive_type_triangles) {
                     continue;
                 }
                 const u32 first_index = static_cast<u32>(out.mesh.indices.size());
-                if (!append_primitive(prim, out.mesh)) {
-                    cgltf_free(data);
+                if (!append_primitive(prim, out.mesh, xform)) {
                     return false;
                 }
                 GltfPrimitive loaded{};
@@ -189,6 +289,42 @@ public:
                 loaded.index_count = static_cast<u32>(out.mesh.indices.size()) - first_index;
                 fill_primitive_material(prim, gltf_dir, loaded);
                 out.primitives.push_back(std::move(loaded));
+            }
+            return true;
+        };
+
+        // Walk the node graph, not data->meshes. A mesh is positioned by the
+        // node that references it; reading meshes directly drops that transform
+        // and collapses every part to the origin. cgltf_node_transform_world
+        // composes the whole parent chain.
+        //
+        // The transform is baked into the vertices: this engine loads a .gltf
+        // as one mesh with one model matrix, so parts land in the right place
+        // but cannot be moved independently afterwards.
+        bool emitted_from_nodes = false;
+        for (cgltf_size n = 0; n < data->nodes_count; ++n) {
+            const cgltf_node& node = data->nodes[n];
+            if (!node.mesh) {
+                continue;
+            }
+            cgltf_float world[16];
+            cgltf_node_transform_world(&node, world);
+            if (!emit_mesh(*node.mesh, make_node_transform(world))) {
+                cgltf_free(data);
+                return false;
+            }
+            emitted_from_nodes = true;
+        }
+
+        // Some files carry meshes with no node referencing them. Fall back to
+        // the flat walk so those still load exactly as they did before.
+        if (!emitted_from_nodes) {
+            const NodeTransform identity = identity_transform();
+            for (cgltf_size m = 0; m < data->meshes_count; ++m) {
+                if (!emit_mesh(data->meshes[m], identity)) {
+                    cgltf_free(data);
+                    return false;
+                }
             }
         }
 
