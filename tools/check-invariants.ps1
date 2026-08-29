@@ -243,7 +243,7 @@ Add-Result 'doc-links' "$($mdFiles.Count) markdown files, all links resolve" $li
 # ── 9. ROADMAP's LOC audit matches a recount ─────────────────────────────────
 # These figures went stale twice before. Recount rather than trust.
 $auditViolations = @()
-$sourceFiles = Get-ChildItem -Path 'packages' -Recurse -File -Include '*.cpp', '*.hpp', '*.h', '*.hlsl' |
+$sourceFiles = Get-ChildItem -Path 'packages' -Recurse -File -Include '*.cpp', '*.hpp', '*.h', '*.hlsl', '*.hlsli' |
     Where-Object { $_.FullName -notmatch '[\\/]third_party[\\/]' }
 $actualFiles = $sourceFiles.Count
 $actualLines = ($sourceFiles | ForEach-Object { (Get-Content -LiteralPath $_.FullName).Count } | Measure-Object -Sum).Sum

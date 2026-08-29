@@ -1,3 +1,5 @@
+#include "common.hlsli"
+
 cbuffer SkyConstants : register(b0) {
     float4x4 inv_view;
     float4 ndc_scale;
@@ -22,8 +24,8 @@ struct PSInput {
 
 PSInput vs_main(uint id : SV_VertexID) {
     PSInput output;
-    float2 uv = float2((id << 1) & 2, id & 2);
-    float2 clip = uv * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    float2 uv = fullscreen_uv(id);
+    float2 clip = uv_to_ndc(uv);
     output.pos = float4(clip, 1.0, 1.0);
     output.ndc = clip;
     return output;

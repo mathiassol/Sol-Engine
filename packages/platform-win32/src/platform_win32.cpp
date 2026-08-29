@@ -258,12 +258,23 @@ private:
 
 class Win32FileSystem final : public IFileSystem {
 public:
+    // Both of these have throwing overloads and were using them. A malformed
+    // path, a disconnected network drive or a permission error would raise
+    // filesystem_error out of a routine query. Use the error_code forms and
+    // fail the query instead.
     std::string resolve(std::string_view path) const override {
-        return std::filesystem::weakly_canonical(std::filesystem::path(path)).string();
+        std::error_code ec;
+        const auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(path), ec);
+        if (ec) {
+            return std::string(path);  // best effort: hand back what we were given
+        }
+        return resolved.string();
     }
 
     bool exists(std::string_view path) const override {
-        return std::filesystem::exists(std::filesystem::path(path));
+        std::error_code ec;
+        const bool found = std::filesystem::exists(std::filesystem::path(path), ec);
+        return !ec && found;
     }
 
     bool read_file(std::string_view path, std::vector<u8>& out) override {

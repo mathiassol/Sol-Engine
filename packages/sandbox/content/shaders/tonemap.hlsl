@@ -1,3 +1,5 @@
+#include "common.hlsli"
+
 Texture2D scene_color : register(t0);
 Texture2D bloom_color : register(t1);
 SamplerState linear_sampler : register(s0);
@@ -11,8 +13,8 @@ struct PSInput {
 
 PSInput vs_main(uint id : SV_VertexID) {
     PSInput output;
-    output.uv = float2((id << 1) & 2, id & 2);
-    output.pos = float4(output.uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    output.uv = fullscreen_uv(id);
+    output.pos = fullscreen_position(output.uv);
     return output;
 }
 

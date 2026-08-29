@@ -1,3 +1,5 @@
+#include "common.hlsli"
+
 cbuffer MotionConstants : register(b0) {
     float4x4 view_proj;
     float4x4 model;
@@ -17,10 +19,6 @@ struct PSInput {
     float4 clip_curr : TEXCOORD0;
     float4 clip_prev : TEXCOORD1;
 };
-
-float2 ndc_to_uv(float2 ndc) {
-    return ndc * float2(0.5, -0.5) + 0.5;
-}
 
 PSInput vs_main(VSInput input) {
     PSInput output;

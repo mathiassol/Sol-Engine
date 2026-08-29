@@ -56,11 +56,11 @@ invariant.
   **Do not (still):** <what this deliberately does not add yet>
   ```
 
-- Recount lines under `packages/` for `*.cpp`, `*.hpp`, `*.h`, and `*.hlsl`,
+- Recount lines under `packages/` for `*.cpp`, `*.hpp`, `*.h`, `*.hlsl` and `*.hlsli`,
   excluding `build/` and `third_party/`. On this repo that's:
 
   ```bash
-  find packages -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.hlsl' \) -not -path '*/third_party/*' | xargs wc -l | tail -1
+  find packages -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.hlsl' -o -name '*.hlsli' \) -not -path '*/third_party/*' | xargs wc -l | tail -1
   ```
 
 - Update the Audit section's total line count, file count, and any

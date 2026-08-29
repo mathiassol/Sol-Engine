@@ -13,6 +13,14 @@ void extract_lighting(const engine::scene::World& world, engine::math::Vec3 came
     out.sun_color = world.sun.color;
     out.ambient = world.ambient;
     out.camera_pos = camera_pos;
+    // scene and renderer each declare their own kMaxPointLights. This loop is
+    // the one place both are visible, and it indexes renderer-sized arrays
+    // with the scene's bound - so if they ever diverge it is a buffer overrun
+    // with nothing to catch it. Couple them here.
+    static_assert(engine::scene::kMaxPointLights == engine::renderer::kMaxPointLights,
+        "scene::kMaxPointLights and renderer::kMaxPointLights must agree - "
+        "the extract below writes scene lights into renderer-sized arrays");
+
     for (engine::u32 i = 0; i < engine::scene::kMaxPointLights; ++i) {
         const auto& light = world.points[i];
         out.point_pos_radius[i] = {light.position.x, light.position.y, light.position.z, light.radius};

@@ -72,6 +72,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -80,6 +81,7 @@
 #include <system_error>
 #include <iterator>
 #include <memory>
+#include <new>
 #include <span>
 #include <string>
 #include <string_view>
@@ -568,6 +570,37 @@ bool compile_fullscreen_hlsl(engine::shaders::IShaderCompiler& compiler, const s
     std::string error;
     if (!compiler.compile(vs, vs_out, error) || !compiler.compile(ps, ps_out, error)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render, fail_label);
+        return false;
+    }
+    return true;
+}
+
+// Compile a vs/ps pair out of one .hlsl and build its pipeline.
+//
+// Every pass in the standard frame did this as the same sixteen lines with
+// three things changed: the shader path, the label, and the desc builder.
+// Six passes already used compile_fullscreen_hlsl for the first half; this
+// closes the other half so adding a pass is one call rather than a paragraph
+// that is easy to paste slightly wrong.
+using MakePipelineDesc = engine::rhi::GraphicsPipelineDesc (*)(
+    std::span<const engine::u8>, std::span<const engine::u8>);
+
+bool build_fullscreen_pipeline(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& path, const char* name,
+    MakePipelineDesc make_desc, std::unique_ptr<engine::rhi::IGraphicsPipeline>& out) {
+    char label[96];
+    std::snprintf(label, sizeof(label), "%s shader compile failed", name);
+
+    engine::shaders::ShaderBytecode vs_bytecode;
+    engine::shaders::ShaderBytecode ps_bytecode;
+    if (!compile_fullscreen_hlsl(compiler, path, label, vs_bytecode, ps_bytecode)) {
+        return false;
+    }
+
+    out = device.create_graphics_pipeline(make_desc(vs_bytecode.data, ps_bytecode.data));
+    if (!out) {
+        std::snprintf(label, sizeof(label), "%s pipeline creation failed", name);
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, label);
         return false;
     }
     return true;
@@ -4364,183 +4397,45 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         return false;
     }
 
-    engine::shaders::ShaderCompileDesc tonemap_vs = vs_desc;
-    tonemap_vs.file_path = tonemap_path;
-    engine::shaders::ShaderCompileDesc tonemap_ps = ps_desc;
-    tonemap_ps.file_path = tonemap_path;
-    engine::shaders::ShaderBytecode tonemap_vs_bytecode;
-    engine::shaders::ShaderBytecode tonemap_ps_bytecode;
-    if (!compiler.compile(tonemap_vs, tonemap_vs_bytecode, error)
-        || !compiler.compile(tonemap_ps, tonemap_ps_bytecode, error)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Tonemap shader compile failed");
-        return false;
-    }
-    demo->tonemap_pipeline = device->create_graphics_pipeline(
-        make_tonemap_pipeline_desc(tonemap_vs_bytecode.data, tonemap_ps_bytecode.data));
-    if (!demo->tonemap_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Tonemap pipeline creation failed");
-        return false;
-    }
+    // Eleven passes, one shape: compile vs_main/ps_main out of one .hlsl,
+    // build the pipeline, bail with a named message. This was eleven
+    // near-identical sixteen-line blocks - six of which already went through
+    // compile_fullscreen_hlsl while five hand-rolled the same thing.
+    const struct {
+        std::unique_ptr<engine::rhi::IGraphicsPipeline> ForwardDemo::*field;
+        const std::string& path;
+        const char* name;
+        MakePipelineDesc make_desc;
+    } pipelines[] = {
+        {&ForwardDemo::tonemap_pipeline, tonemap_path, "Tonemap",
+         make_tonemap_pipeline_desc},
+        {&ForwardDemo::sky_pipeline, sky_path, "Sky",
+         make_sky_pipeline_desc},
+        {&ForwardDemo::bloom_downsample_pipeline, bloom_down_path, "Bloom downsample",
+         make_bloom_downsample_pipeline_desc},
+        {&ForwardDemo::bloom_upsample_pipeline, bloom_up_path, "Bloom upsample",
+         make_bloom_upsample_pipeline_desc},
+        {&ForwardDemo::fxaa_pipeline, fxaa_path, "FXAA",
+         make_fxaa_pipeline_desc},
+        {&ForwardDemo::smaa_edge_pipeline, smaa_edge_path, "SMAA edge",
+         make_smaa_edge_pipeline_desc},
+        {&ForwardDemo::smaa_weights_pipeline, smaa_weights_path, "SMAA weights",
+         make_smaa_weights_pipeline_desc},
+        {&ForwardDemo::smaa_blend_pipeline, smaa_blend_path, "SMAA blend",
+         make_smaa_blend_pipeline_desc},
+        {&ForwardDemo::motion_pipeline, motion_path, "Motion vector",
+         make_motion_pipeline_desc},
+        {&ForwardDemo::taa_pipeline, taa_path, "TAA",
+         make_taa_pipeline_desc},
+        {&ForwardDemo::tonemap_aces_pipeline, tonemap_aces_path, "ACES tonemap",
+         make_tonemap_aces_pipeline_desc},
+    };
 
-    engine::shaders::ShaderCompileDesc sky_vs = vs_desc;
-    sky_vs.file_path = sky_path;
-    engine::shaders::ShaderCompileDesc sky_ps = ps_desc;
-    sky_ps.file_path = sky_path;
-    engine::shaders::ShaderBytecode sky_vs_bytecode;
-    engine::shaders::ShaderBytecode sky_ps_bytecode;
-    if (!compiler.compile(sky_vs, sky_vs_bytecode, error)
-        || !compiler.compile(sky_ps, sky_ps_bytecode, error)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Sky shader compile failed");
-        return false;
-    }
-    demo->sky_pipeline = device->create_graphics_pipeline(
-        make_sky_pipeline_desc(sky_vs_bytecode.data, sky_ps_bytecode.data));
-    if (!demo->sky_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Sky pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderCompileDesc bloom_down_vs = vs_desc;
-    bloom_down_vs.file_path = bloom_down_path;
-    engine::shaders::ShaderCompileDesc bloom_down_ps = ps_desc;
-    bloom_down_ps.file_path = bloom_down_path;
-    engine::shaders::ShaderBytecode bloom_down_vs_bytecode;
-    engine::shaders::ShaderBytecode bloom_down_ps_bytecode;
-    if (!compiler.compile(bloom_down_vs, bloom_down_vs_bytecode, error)
-        || !compiler.compile(bloom_down_ps, bloom_down_ps_bytecode, error)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Bloom downsample shader compile failed");
-        return false;
-    }
-    demo->bloom_downsample_pipeline = device->create_graphics_pipeline(
-        make_bloom_downsample_pipeline_desc(bloom_down_vs_bytecode.data, bloom_down_ps_bytecode.data));
-    if (!demo->bloom_downsample_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Bloom downsample pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderCompileDesc bloom_up_vs = vs_desc;
-    bloom_up_vs.file_path = bloom_up_path;
-    engine::shaders::ShaderCompileDesc bloom_up_ps = ps_desc;
-    bloom_up_ps.file_path = bloom_up_path;
-    engine::shaders::ShaderBytecode bloom_up_vs_bytecode;
-    engine::shaders::ShaderBytecode bloom_up_ps_bytecode;
-    if (!compiler.compile(bloom_up_vs, bloom_up_vs_bytecode, error)
-        || !compiler.compile(bloom_up_ps, bloom_up_ps_bytecode, error)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Bloom upsample shader compile failed");
-        return false;
-    }
-    demo->bloom_upsample_pipeline = device->create_graphics_pipeline(
-        make_bloom_upsample_pipeline_desc(bloom_up_vs_bytecode.data, bloom_up_ps_bytecode.data));
-    if (!demo->bloom_upsample_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Bloom upsample pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderBytecode fxaa_vs_bytecode;
-    engine::shaders::ShaderBytecode fxaa_ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, fxaa_path, "FXAA shader compile failed",
-            fxaa_vs_bytecode, fxaa_ps_bytecode)) {
-        return false;
-    }
-    demo->fxaa_pipeline = device->create_graphics_pipeline(
-        make_fxaa_pipeline_desc(fxaa_vs_bytecode.data, fxaa_ps_bytecode.data));
-    if (!demo->fxaa_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "FXAA pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderBytecode smaa_edge_vs_bytecode;
-    engine::shaders::ShaderBytecode smaa_edge_ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, smaa_edge_path, "SMAA edge shader compile failed",
-            smaa_edge_vs_bytecode, smaa_edge_ps_bytecode)) {
-        return false;
-    }
-    demo->smaa_edge_pipeline = device->create_graphics_pipeline(
-        make_smaa_edge_pipeline_desc(smaa_edge_vs_bytecode.data, smaa_edge_ps_bytecode.data));
-    if (!demo->smaa_edge_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "SMAA edge pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderBytecode smaa_weights_vs_bytecode;
-    engine::shaders::ShaderBytecode smaa_weights_ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, smaa_weights_path, "SMAA weights shader compile failed",
-            smaa_weights_vs_bytecode, smaa_weights_ps_bytecode)) {
-        return false;
-    }
-    demo->smaa_weights_pipeline = device->create_graphics_pipeline(
-        make_smaa_weights_pipeline_desc(smaa_weights_vs_bytecode.data, smaa_weights_ps_bytecode.data));
-    if (!demo->smaa_weights_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "SMAA weights pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderBytecode smaa_blend_vs_bytecode;
-    engine::shaders::ShaderBytecode smaa_blend_ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, smaa_blend_path, "SMAA blend shader compile failed",
-            smaa_blend_vs_bytecode, smaa_blend_ps_bytecode)) {
-        return false;
-    }
-    demo->smaa_blend_pipeline = device->create_graphics_pipeline(
-        make_smaa_blend_pipeline_desc(smaa_blend_vs_bytecode.data, smaa_blend_ps_bytecode.data));
-    if (!demo->smaa_blend_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "SMAA blend pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderCompileDesc motion_vs = vs_desc;
-    motion_vs.file_path = motion_path;
-    engine::shaders::ShaderCompileDesc motion_ps = ps_desc;
-    motion_ps.file_path = motion_path;
-    engine::shaders::ShaderBytecode motion_vs_bytecode;
-    engine::shaders::ShaderBytecode motion_ps_bytecode;
-    if (!compiler.compile(motion_vs, motion_vs_bytecode, error)
-        || !compiler.compile(motion_ps, motion_ps_bytecode, error)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Motion vector shader compile failed");
-        return false;
-    }
-    demo->motion_pipeline = device->create_graphics_pipeline(
-        make_motion_pipeline_desc(motion_vs_bytecode.data, motion_ps_bytecode.data));
-    if (!demo->motion_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Motion vector pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderBytecode taa_vs_bytecode;
-    engine::shaders::ShaderBytecode taa_ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, taa_path, "TAA shader compile failed",
-            taa_vs_bytecode, taa_ps_bytecode)) {
-        return false;
-    }
-    demo->taa_pipeline = device->create_graphics_pipeline(
-        make_taa_pipeline_desc(taa_vs_bytecode.data, taa_ps_bytecode.data));
-    if (!demo->taa_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "TAA pipeline creation failed");
-        return false;
-    }
-
-    engine::shaders::ShaderBytecode aces_vs_bytecode;
-    engine::shaders::ShaderBytecode aces_ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, tonemap_aces_path, "ACES tonemap shader compile failed",
-            aces_vs_bytecode, aces_ps_bytecode)) {
-        return false;
-    }
-    demo->tonemap_aces_pipeline = device->create_graphics_pipeline(
-        make_tonemap_aces_pipeline_desc(aces_vs_bytecode.data, aces_ps_bytecode.data));
-    if (!demo->tonemap_aces_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "ACES tonemap pipeline creation failed");
-        return false;
+    for (const auto& entry : pipelines) {
+        if (!build_fullscreen_pipeline(*device, compiler, entry.path, entry.name,
+                entry.make_desc, (*demo).*entry.field)) {
+            return false;
+        }
     }
 
     if (!run_handle_gate(demo->meshes, *device, cube_data)) {
@@ -4796,7 +4691,8 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
 
 } // namespace
 
-int main(int argc, char** argv) {
+// The engine body. main() below is only the exception boundary around it.
+int run_app(int argc, char** argv) {
     bool gates_mode = false;
     for (int i = 1; i < argc; ++i) {
         if (std::string_view(argv[i]) == "--gates") {
@@ -5159,4 +5055,31 @@ int main(int argc, char** argv) {
         device->wait_idle();
     }
     return exit_code;
+}
+
+// The one exception boundary in the process.
+//
+// This engine leans on the throwing standard library - vector::resize driven
+// by asset counts, make_unique, std::filesystem - and had no try/catch
+// anywhere, so any escaped exception went straight to std::terminate: no log,
+// no exit code, nothing for a player to send back. Catching here does not make
+// the failure recoverable; it makes it *reportable*, which is the difference
+// between a bug report and a shrug.
+int main(int argc, char** argv) {
+    try {
+        return run_app(argc, argv);
+    } catch (const std::bad_alloc&) {
+        engine::log(engine::LogLevel::Fatal, engine::LogChannel::General,
+            "Out of memory - shutting down");
+        return 2;
+    } catch (const std::exception& e) {
+        char message[256];
+        std::snprintf(message, sizeof(message), "Unhandled exception: %s", e.what());
+        engine::log(engine::LogLevel::Fatal, engine::LogChannel::General, message);
+        return 2;
+    } catch (...) {
+        engine::log(engine::LogLevel::Fatal, engine::LogChannel::General,
+            "Unhandled non-standard exception");
+        return 2;
+    }
 }
