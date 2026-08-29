@@ -228,4 +228,4 @@ Escape closes the window via engine default handling.
 
 Staging copies wait only for the previous copy list fence, not a full `wait_idle()`.
 
-Sampled textures: `TextureUsage::ShaderResource` plus pixel bytes. Offscreen color that is both a render target and an SRV uses `TextureUsage::ColorShaderResource` (HDR `scene_color`). Pipelines with `shader_resource_count > 0` get a root SRV table and a wrap linear sampler. Bind with `ICommandList::set_shader_resource`. PNG decode is `assets-png` (WIC).
+Sampled textures: `TextureUsage::ShaderResource` plus pixel bytes. Offscreen color that is both a render target and an SRV uses `TextureUsage::ColorShaderResource` (HDR `scene_color`). Pipelines with `shader_resource_count > 0` get a root SRV table and a wrap linear sampler. Bind with `ICommandList::set_shader_resource`. PNG decode is `assets-png-wic` (Windows WIC, so it also reads JPG/BMP/TIFF).

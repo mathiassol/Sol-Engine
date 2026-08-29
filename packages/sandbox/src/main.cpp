@@ -1176,6 +1176,37 @@ bool run_mount_gate(engine::assets::IAssetLoader& loader) {
     return loaded;
 }
 
+// A mount is a containment boundary, so it has to actually contain. `..` used
+// to be collapsed rather than rejected, and an absolute component silently
+// replaced the root outright, because std::filesystem::operator/= discards its
+// left side when the right has a root name.
+bool run_mount_containment_gate(engine::assets::IAssetLoader& loader) {
+    auto escapes = [&loader](const char* virtual_path) {
+        std::string physical;
+        return !loader.resolve_path(virtual_path, physical);
+    };
+
+    const bool dotdot = escapes("/content/../../../windows/win.ini");
+    const bool absolute = escapes("/content/C:/Windows/win.ini");
+    const bool unc = escapes("/content//server/share/secret");
+    const bool rooted = escapes("/content//etc/passwd");
+    // The legitimate path must still resolve, so this cannot pass by
+    // rejecting everything.
+    std::string ok_physical;
+    const bool normal_ok = loader.resolve_path(kTestFile, ok_physical) && !ok_physical.empty();
+
+    const bool passed = dotdot && absolute && unc && rooted && normal_ok;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Mount containment gate: dotdot=%s absolute=%s unc=%s rooted=%s normal_resolves=%s (%s)",
+        dotdot ? "blocked" : "ESCAPED", absolute ? "blocked" : "ESCAPED",
+        unc ? "blocked" : "ESCAPED", rooted ? "blocked" : "ESCAPED",
+        normal_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
+
 bool run_handle_gate(engine::assets::gpu::GpuMeshStore& store, engine::rhi::IDevice& device,
     const engine::assets::MeshData& mesh_data) {
     const auto first = store.store(device, kCubeMesh, mesh_data);
@@ -4946,7 +4977,11 @@ int run_app(int argc, char** argv) {
         return 1;
     }
 
-    bool gates_ok = run_mount_gate(*loader) && run_build_gate(app.content_layout());
+    // Deliberately not short-circuited: each gate must run and report even
+    // when an earlier one fails.
+    bool gates_ok = run_mount_gate(*loader);
+    gates_ok = run_mount_containment_gate(*loader) && gates_ok;
+    gates_ok = run_build_gate(app.content_layout()) && gates_ok;
     if (!run_arena_gate()) {
         gates_ok = false;
     }

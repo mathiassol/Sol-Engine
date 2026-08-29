@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 
 namespace engine::physics::cpu {
 namespace {
@@ -374,6 +375,24 @@ bool ray_shape_hit(const ShapeDesc& shape, math::Vec3 position, const math::Aabb
         return ray_capsule_hit(o, d, max_t, shape, position, t, normal);
     }
     return ray_aabb_hit(o, d, max_t, tight, t, normal);
+}
+
+// The BVH traversal stacks and the contact buffer are fixed size and drop work
+// when full rather than overflowing - which is the right choice, but it was
+// silent. A dropped subtree means a raycast or overlap query quietly misses
+// bodies, and the visible symptom is a character intermittently falling
+// through the floor with nothing in the log to explain it. Warn once.
+void warn_physics_capacity(const char* what) {
+    static bool warned = false;
+    if (warned) {
+        return;
+    }
+    warned = true;
+    char message[192];
+    std::snprintf(message, sizeof(message),
+        "Physics capacity reached (%s). Queries may miss bodies and contacts may be "
+        "dropped until the scene shrinks.", what);
+    log(LogLevel::Warn, LogChannel::Physics, message);
 }
 
 f32 inv_mass_of(MotionType motion, f32 mass) {
@@ -837,6 +856,8 @@ public:
             if (sp + 2 <= stack.size()) {
                 stack[sp++] = node.child1;
                 stack[sp++] = node.child2;
+            } else {
+                warn_physics_capacity("BVH traversal stack");
             }
         }
 
@@ -909,6 +930,8 @@ private:
             if (sp + 2 <= stack.size()) {
                 stack[sp++] = node.child1;
                 stack[sp++] = node.child2;
+            } else {
+                warn_physics_capacity("BVH traversal stack");
             }
         }
     }
@@ -935,6 +958,8 @@ private:
             if (sp + 2 <= stack.size()) {
                 stack[sp++] = node.child1;
                 stack[sp++] = node.child2;
+            } else {
+                warn_physics_capacity("BVH traversal stack");
             }
         }
     }
@@ -949,6 +974,9 @@ private:
             }
             u32 hit_count = 0;
             query_ids(a.fat, hits, hit_count);
+            if (hit_count > 0 && contact_count_ >= kMaxContacts) {
+                warn_physics_capacity("contact buffer");
+            }
             for (u32 h = 0; h < hit_count && contact_count_ < kMaxContacts; ++h) {
                 const u32 j = hits[h];
                 if (j == i) {

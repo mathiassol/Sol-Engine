@@ -7,7 +7,7 @@ target_link_libraries(cook PRIVATE
     engine::assets
     engine::assets-obj
     engine::assets-gltf
-    engine::assets-png
+    engine::assets-png-wic
 )
 
 set(ENGINE_COOKED_PAK "${CMAKE_BINARY_DIR}/cooked/content.pak")

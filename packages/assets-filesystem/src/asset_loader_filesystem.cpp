@@ -60,11 +60,39 @@ public:
                 return false;
             }
 
-            std::filesystem::path physical{it->second};
+            const std::filesystem::path root{it->second};
+            std::filesystem::path physical = root;
             if (slash != std::string_view::npos) {
-                physical /= std::string(rest.substr(slash + 1));
+                const std::string relative(rest.substr(slash + 1));
+
+                // operator/= *discards the left side* when the right has a
+                // root name, so "/content/C:/Windows/win.ini" resolved to
+                // C:/Windows/win.ini and "/content//server/share/x" opened a
+                // UNC connection. Reject anything that is not plainly relative.
+                const std::filesystem::path tail{relative};
+                if (tail.is_absolute() || tail.has_root_name() || tail.has_root_directory()) {
+                    log(LogLevel::Error, LogChannel::Assets,
+                        "Asset path rejected: absolute component after the mount name");
+                    return false;
+                }
+                physical /= tail;
             }
-            out_physical = physical.lexically_normal().string();
+
+            physical = physical.lexically_normal();
+
+            // `..` was previously collapsed rather than rejected, so a path
+            // could climb out of its mount. Confirm the normalised result is
+            // still inside the root - this is the containment check the mount
+            // is supposed to provide.
+            const std::filesystem::path normal_root = root.lexically_normal();
+            const auto relative_to_root = physical.lexically_relative(normal_root);
+            if (relative_to_root.empty() || *relative_to_root.begin() == "..") {
+                log(LogLevel::Error, LogChannel::Assets,
+                    "Asset path rejected: escapes its mount root");
+                return false;
+            }
+
+            out_physical = physical.string();
             return true;
         }
 

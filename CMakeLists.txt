@@ -46,7 +46,7 @@ add_subdirectory(packages/assets-obj)
 add_subdirectory(packages/assets-gltf)
 add_subdirectory(packages/assets-gpu)
 if(WIN32)
-    add_subdirectory(packages/assets-png)
+    add_subdirectory(packages/assets-png-wic)
 endif()
 
 option(ENGINE_RHI_D3D12 "Build D3D12 RHI backend" ON)

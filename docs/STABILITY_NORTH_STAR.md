@@ -256,7 +256,7 @@ Only when you have a texture, a second mesh, or a compile that hitchs.
 
 | Step | Trigger | Work | Still not |
 |------|---------|------|-----------|
-| C1 | You want albedo | ✅ Sampled texture + SRV + static sampler; PNG via mounts (`assets-png` WIC); GGX PBR on metal/rough | Material graph |
+| C1 | You want albedo | ✅ Sampled texture + SRV + static sampler; PNG via mounts (`assets-png-wic`); GGX PBR on metal/rough | Material graph |
 | C2 | Shader compile hitch visible | Not triggered | Fibers, job stealing |
 | C3 | OBJ load hitch visible | Not triggered | Async IO stack |
 | C4 | Extract function is a mess of cameras/lights | ✅ Flat `scene::World` arrays; Z/X moves instance 0 | ECS |

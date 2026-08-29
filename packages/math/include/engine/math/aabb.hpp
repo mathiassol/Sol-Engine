@@ -27,6 +27,14 @@ struct Aabb {
     }
 
     Aabb transformed(Mat4 m) const {
+        // An empty box carries +/-1e30 sentinels. Transforming those overflows
+        // to +/-inf, and the result then reports valid() == true - an
+        // "infinite" box that silently breaks frustum culling and, once it
+        // reaches sun-bounds fitting, produces a NaN shadow projection.
+        // Empty in, empty out.
+        if (!valid()) {
+            return empty();
+        }
         Aabb out = empty();
         const Vec3 corners[8] = {
             {min.x, min.y, min.z}, {max.x, min.y, min.z},

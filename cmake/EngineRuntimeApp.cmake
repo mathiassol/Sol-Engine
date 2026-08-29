@@ -27,7 +27,7 @@ function(engine_add_runtime_app TARGET)
         engine::assets-obj
         engine::assets-gltf
         engine::assets-gpu
-        engine::assets-png
+        engine::assets-png-wic
         engine::debug-draw
         engine::math
         engine::scene

@@ -276,6 +276,12 @@ bool read_world(std::string_view text, World& out) {
             if (out.instance_count >= kMaxInstances) {
                 return false;
             }
+            // The `point` and `material` cases below bound-check their index;
+            // this one did not, so a file could name a material that does not
+            // exist. Its only protection was a check in the sandbox's extract.
+            if (instance.material >= kMaxMaterials) {
+                return false;
+            }
             const u32 index = add_instance(out, instance);
             set_instance_name(out, index, name);
             if (parent != "-") {

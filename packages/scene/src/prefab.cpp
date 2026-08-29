@@ -153,6 +153,12 @@ u32 instantiate_prefab(World& dest, const World& prefab, const math::Mat4& world
         Instance instance = prefab.instances[i];
         if (instance.material < prefab.material_count) {
             instance.material = mat_remap[instance.material];
+        } else {
+            // Out of range for this prefab - which is reachable, since
+            // instantiate_prefab also parses untrusted text. Without the else
+            // the bogus handle was copied through into the destination world
+            // and indexed its material array. Fall back to material 0.
+            instance.material = 0;
         }
         const u32 prefab_parent = instance.parent;
         instance.parent = kInvalidInstance;

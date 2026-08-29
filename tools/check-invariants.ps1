@@ -47,7 +47,7 @@ $Layers = @{
     # Layer 2 - implementations
     'platform-win32' = 3; 'rhi-d3d12' = 3; 'shaders-dxc' = 3; 'audio-xaudio2' = 3
     'physics-cpu' = 3; 'assets-filesystem' = 3; 'assets-obj' = 3; 'assets-gltf' = 3
-    'assets-png' = 3; 'assets-gpu' = 3
+    'assets-png-wic' = 3; 'assets-gpu' = 3
     # Layer 3 - systems
     'renderer' = 4; 'debug-draw' = 4; 'scene' = 4; 'gameplay' = 4
     # Layer 4 - runtime
@@ -81,7 +81,7 @@ $apiRules = @(
     @{ Pattern = '#include\s*[<"](d3d12|dxgi|d3dcompiler|d3d12sdklayers)'; Allowed = @('rhi-d3d12'); What = 'D3D12/DXGI' }
     @{ Pattern = '#include\s*[<"]dxcapi';                                  Allowed = @('shaders-dxc'); What = 'DXC' }
     @{ Pattern = '#include\s*[<"](windows\.h|Windows\.h|wincodec|xaudio2|xinput|objbase|wrl/)'
-       Allowed = @('platform-win32', 'rhi-d3d12', 'shaders-dxc', 'audio-xaudio2', 'assets-png'); What = 'Win32' }
+       Allowed = @('platform-win32', 'rhi-d3d12', 'shaders-dxc', 'audio-xaudio2', 'assets-png-wic'); What = 'Win32' }
 )
 $apiViolations = @()
 $scanned = 0

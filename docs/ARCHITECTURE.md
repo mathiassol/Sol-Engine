@@ -20,7 +20,7 @@ Layer 2  platform-win32  → platform          rhi-d3d12  → rhi
          shaders-dxc     → shaders           audio-xaudio2 → audio
          physics-cpu     → physics           assets-gpu → assets, rhi
          assets-filesystem → assets, platform
-         assets-obj / assets-gltf / assets-png → assets
+         assets-obj / assets-gltf / assets-png-wic → assets
 
 Layer 3  renderer        → rhi, core, math
          debug-draw      → core, math, rhi, shaders
@@ -29,7 +29,7 @@ Layer 3  renderer        → rhi, core, math
 
 Layer 4  engine          → core, platform, rhi, renderer, assets, audio, physics
 
-Tool     cook            → core, math, assets, assets-obj, assets-gltf, assets-png
+Tool     cook            → core, math, assets, assets-obj, assets-gltf, assets-png-wic
 
 Apps     sandbox / game  → engine, scene, gameplay, debug-draw, math,
                            assets-*, and the Layer 2 backends (guarded by
@@ -65,7 +65,7 @@ Two facts the shape is load-bearing on:
 | `assets-filesystem` | 2 | lib | Filesystem `IAssetLoader` |
 | `assets-obj` | 2 | lib | Wavefront OBJ mesh loader |
 | `assets-gltf` | 2 | lib | glTF mesh loader (all triangle primitives; cgltf; metal/rough factors + MR/normal URIs). Walks the **node graph**, not `meshes` — world transforms are composed through the parent chain and baked into vertices (normals via the cofactor matrix; mirrored nodes flip winding). `cgltf_validate` runs before any unpack. Falls back to a flat mesh walk for files with no nodes |
-| `assets-png` | 2 | lib | PNG albedo decode |
+| `assets-png-wic` | 2 | lib | PNG/JPG/BMP decode via Windows WIC. Named for its backend, not its format: unlike `assets-obj` and `assets-gltf` it is Windows-only, and the name is the warning |
 | `assets-gpu` | 2 | lib | CPU mesh → GPU buffers |
 | `audio-xaudio2` | 2 | lib | XAudio2 backend (`create_audio()`); 16-bit PCM one-shots |
 | `physics-cpu` | 2 | lib | Dynamic AABB tree + sequential-impulse solver; AABB / sphere / Y-up capsule; sensor enter/exit; closest-hit raycasts (`create_physics()`) |
@@ -100,7 +100,7 @@ Applications link implementations. `engine` and `renderer` only see interfaces.
 Two `assets-*` packages sit outside that pattern and it is worth knowing which:
 `assets-gltf` exposes its own `IGltfLoader` (returns a glTF-specific result
 with texture URIs, so it is not substitutable for `IMeshLoader`), and
-`assets-png` has no interface at all — free functions over WIC. `assets-gpu` is
+`assets-png-wic` has no interface at all — free functions over WIC. `assets-gpu` is
 not a loader either; it uploads CPU meshes to GPU buffers.
 
 ## Swap test — where a new pass goes
