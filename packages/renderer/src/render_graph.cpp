@@ -121,6 +121,50 @@ bool has_pass_cycle(const std::vector<RenderPassDesc>& passes, std::string& cycl
     return true;
 }
 
+// One draw-recording skeleton for the three geometry passes. They differ only
+// in the constants type, which pipeline they bind, and what extra resources go
+// with each draw; everything else - the per-draw filter, the constant-slice
+// allocation, the uniqueness check, the vertex/index/draw calls - was
+// copy-pasted three times and is now here once.
+//
+// `pipeline` null means "use the pipeline on the DrawItem" (the forward pass);
+// otherwise every draw shares one pipeline (shadow, motion).
+template <typename Constants, typename FillFn, typename BindFn>
+void record_draws(PassContext& ctx, rhi::IGraphicsPipeline* pipeline, Constants& constants,
+    FillFn&& fill, BindFn&& bind) {
+    usize last_cbv_offset = ~static_cast<usize>(0);
+    rhi::IBuffer* last_cbv_buffer = nullptr;
+
+    for (const DrawItem& draw : ctx.snapshot.draws) {
+        rhi::IGraphicsPipeline* pso = pipeline ? pipeline : draw.pipeline;
+        if (!pso || !draw.vertex_buffer || !draw.index_buffer) {
+            continue;
+        }
+
+        fill(constants, draw);
+
+        const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(Constants));
+        if (!slice.buffer) {
+            // Per-frame constant ring is full; it logs once per frame. Drop
+            // this draw. A frame missing an object is recoverable; the assert
+            // that used to be here took the process with it.
+            continue;
+        }
+        ENGINE_ASSERT_MSG(slice.buffer != last_cbv_buffer || slice.offset != last_cbv_offset,
+            "DrawItems must not share a constant buffer slice");
+        last_cbv_buffer = slice.buffer;
+        last_cbv_offset = slice.offset;
+
+        ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(Constants));
+        ctx.cmd.set_pipeline(*pso);
+        ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
+        bind(ctx, draw);
+        ctx.cmd.set_vertex_buffer(0, *draw.vertex_buffer, draw.vertex_stride);
+        ctx.cmd.set_index_buffer(*draw.index_buffer);
+        ctx.cmd.draw_indexed(draw.index_count);
+    }
+}
+
 } // namespace
 
 void record_opaque_draws(PassContext& ctx) {
@@ -143,51 +187,34 @@ void record_opaque_draws(PassContext& ctx) {
     }
     rhi::ITexture* shadow = ctx.shader_read_count > 0 ? ctx.shader_reads[0] : nullptr;
 
-    usize last_cbv_offset = ~static_cast<usize>(0);
-    rhi::IBuffer* last_cbv_buffer = nullptr;
-
-    for (const DrawItem& draw : ctx.snapshot.draws) {
-        if (!draw.pipeline || !draw.vertex_buffer || !draw.index_buffer) {
-            continue;
-        }
-
-        constants.model = draw.model;
-        constants.material_params = {draw.metallic, draw.roughness, 0.f, 0.f};
-        const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-        ENGINE_ASSERT(slice.buffer != nullptr);
-        ENGINE_ASSERT_MSG(slice.buffer != last_cbv_buffer || slice.offset != last_cbv_offset,
-            "DrawItems must not share a constant buffer slice");
-        last_cbv_buffer = slice.buffer;
-        last_cbv_offset = slice.offset;
-
-        ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-        ctx.cmd.set_pipeline(*draw.pipeline);
-        ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
-        if (draw.texture) {
-            ctx.cmd.set_shader_resource(0, *draw.texture);
-        }
-        if (shadow) {
-            ctx.cmd.set_shader_resource(1, *shadow);
-        }
-        if (ctx.snapshot.ibl_irradiance) {
-            ctx.cmd.set_shader_resource(2, *ctx.snapshot.ibl_irradiance);
-        }
-        if (ctx.snapshot.ibl_prefilter) {
-            ctx.cmd.set_shader_resource(3, *ctx.snapshot.ibl_prefilter);
-        }
-        if (ctx.snapshot.ibl_brdf_lut) {
-            ctx.cmd.set_shader_resource(4, *ctx.snapshot.ibl_brdf_lut);
-        }
-        if (draw.metallic_roughness) {
-            ctx.cmd.set_shader_resource(5, *draw.metallic_roughness);
-        }
-        if (draw.normal_map) {
-            ctx.cmd.set_shader_resource(6, *draw.normal_map);
-        }
-        ctx.cmd.set_vertex_buffer(0, *draw.vertex_buffer, draw.vertex_stride);
-        ctx.cmd.set_index_buffer(*draw.index_buffer);
-        ctx.cmd.draw_indexed(draw.index_count);
-    }
+    record_draws(ctx, nullptr, constants,
+        [](FrameConstants& c, const DrawItem& draw) {
+            c.model = draw.model;
+            c.material_params = {draw.metallic, draw.roughness, 0.f, 0.f};
+        },
+        [shadow](PassContext& c, const DrawItem& draw) {
+            if (draw.texture) {
+                c.cmd.set_shader_resource(0, *draw.texture);
+            }
+            if (shadow) {
+                c.cmd.set_shader_resource(1, *shadow);
+            }
+            if (c.snapshot.ibl_irradiance) {
+                c.cmd.set_shader_resource(2, *c.snapshot.ibl_irradiance);
+            }
+            if (c.snapshot.ibl_prefilter) {
+                c.cmd.set_shader_resource(3, *c.snapshot.ibl_prefilter);
+            }
+            if (c.snapshot.ibl_brdf_lut) {
+                c.cmd.set_shader_resource(4, *c.snapshot.ibl_brdf_lut);
+            }
+            if (draw.metallic_roughness) {
+                c.cmd.set_shader_resource(5, *draw.metallic_roughness);
+            }
+            if (draw.normal_map) {
+                c.cmd.set_shader_resource(6, *draw.normal_map);
+            }
+        });
 }
 
 void record_shadow_draws(PassContext& ctx) {
@@ -198,29 +225,9 @@ void record_shadow_draws(PassContext& ctx) {
     ShadowConstants constants{};
     constants.view_proj = ctx.snapshot.sun_view_proj;
 
-    usize last_cbv_offset = ~static_cast<usize>(0);
-    rhi::IBuffer* last_cbv_buffer = nullptr;
-
-    for (const DrawItem& draw : ctx.snapshot.draws) {
-        if (!draw.vertex_buffer || !draw.index_buffer) {
-            continue;
-        }
-
-        constants.model = draw.model;
-        const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-        ENGINE_ASSERT(slice.buffer != nullptr);
-        ENGINE_ASSERT_MSG(slice.buffer != last_cbv_buffer || slice.offset != last_cbv_offset,
-            "DrawItems must not share a constant buffer slice");
-        last_cbv_buffer = slice.buffer;
-        last_cbv_offset = slice.offset;
-
-        ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-        ctx.cmd.set_pipeline(*ctx.snapshot.shadow_pipeline);
-        ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
-        ctx.cmd.set_vertex_buffer(0, *draw.vertex_buffer, draw.vertex_stride);
-        ctx.cmd.set_index_buffer(*draw.index_buffer);
-        ctx.cmd.draw_indexed(draw.index_count);
-    }
+    record_draws(ctx, ctx.snapshot.shadow_pipeline, constants,
+        [](ShadowConstants& c, const DrawItem& draw) { c.model = draw.model; },
+        [](PassContext&, const DrawItem&) {});
 }
 
 void record_motion_draws(PassContext& ctx) {
@@ -233,30 +240,12 @@ void record_motion_draws(PassContext& ctx) {
     constants.prev_view_proj = ctx.snapshot.prev_view_proj;
     constants.jitter = {ctx.snapshot.taa_jitter.x, ctx.snapshot.taa_jitter.y, 0.f, 0.f};
 
-    usize last_cbv_offset = ~static_cast<usize>(0);
-    rhi::IBuffer* last_cbv_buffer = nullptr;
-
-    for (const DrawItem& draw : ctx.snapshot.draws) {
-        if (!draw.vertex_buffer || !draw.index_buffer) {
-            continue;
-        }
-
-        constants.model = draw.model;
-        constants.prev_model = draw.prev_model;
-        const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-        ENGINE_ASSERT(slice.buffer != nullptr);
-        ENGINE_ASSERT_MSG(slice.buffer != last_cbv_buffer || slice.offset != last_cbv_offset,
-            "DrawItems must not share a constant buffer slice");
-        last_cbv_buffer = slice.buffer;
-        last_cbv_offset = slice.offset;
-
-        ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-        ctx.cmd.set_pipeline(*ctx.snapshot.motion_pipeline);
-        ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
-        ctx.cmd.set_vertex_buffer(0, *draw.vertex_buffer, draw.vertex_stride);
-        ctx.cmd.set_index_buffer(*draw.index_buffer);
-        ctx.cmd.draw_indexed(draw.index_count);
-    }
+    record_draws(ctx, ctx.snapshot.motion_pipeline, constants,
+        [](motion::Constants& c, const DrawItem& draw) {
+            c.model = draw.model;
+            c.prev_model = draw.prev_model;
+        },
+        [](PassContext&, const DrawItem&) {});
 }
 
 void record_sky(PassContext& ctx) {
@@ -268,7 +257,9 @@ void record_sky(PassContext& ctx) {
         ctx.snapshot.lighting.sun_direction, ctx.snapshot.lighting.sun_color,
         ctx.snapshot.taa_jitter);
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-    ENGINE_ASSERT(slice.buffer != nullptr);
+    if (!slice.buffer) {
+        return;  // constant ring exhausted this frame; skip the pass
+    }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_pipeline(*ctx.snapshot.sky_pipeline);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
@@ -284,7 +275,9 @@ void record_bloom_downsample(PassContext& ctx, bool first_mip) {
     const bloom::Constants constants = bloom::make_downsample_constants(
         ctx.shader_reads[0]->width(), ctx.shader_reads[0]->height(), first_mip);
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-    ENGINE_ASSERT(slice.buffer != nullptr);
+    if (!slice.buffer) {
+        return;  // constant ring exhausted this frame; skip the pass
+    }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_pipeline(*ctx.snapshot.bloom_downsample_pipeline);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
@@ -300,7 +293,9 @@ void record_bloom_upsample(PassContext& ctx) {
     const bloom::Constants constants = bloom::make_upsample_constants(
         ctx.shader_reads[0]->width(), ctx.shader_reads[0]->height());
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-    ENGINE_ASSERT(slice.buffer != nullptr);
+    if (!slice.buffer) {
+        return;  // constant ring exhausted this frame; skip the pass
+    }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_pipeline(*ctx.snapshot.bloom_upsample_pipeline);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
@@ -326,7 +321,9 @@ namespace {
 void bind_aa_constants(PassContext& ctx, const rhi::ITexture& src) {
     const aa::Constants constants = aa::make_constants(src.width(), src.height());
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-    ENGINE_ASSERT(slice.buffer != nullptr);
+    if (!slice.buffer) {
+        return;  // constant ring exhausted this frame; skip the pass
+    }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
 }
@@ -388,7 +385,9 @@ void record_taa(PassContext& ctx) {
     const taa::Constants constants = taa::make_constants(ctx.shader_reads[0]->width(),
         ctx.shader_reads[0]->height(), ctx.snapshot.taa_jitter, reset);
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
-    ENGINE_ASSERT(slice.buffer != nullptr);
+    if (!slice.buffer) {
+        return;  // constant ring exhausted this frame; skip the pass
+    }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_pipeline(*ctx.snapshot.taa_pipeline);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);

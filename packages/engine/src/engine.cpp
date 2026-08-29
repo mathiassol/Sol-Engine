@@ -303,6 +303,23 @@ void Engine::run() {
         update();
         apply_pending_resize();
         render();
+
+        // A driver reset, TDR or GPU hot-unplug takes the device out from
+        // under us. Every subsequent call fails silently, so without this the
+        // loop spins on a dead device and the window freezes on its last frame
+        // until the process is killed. Stop and let shutdown run normally.
+        if (device_ && device_->device_lost()) {
+            log(LogLevel::Fatal, LogChannel::Render,
+                "GPU device lost - shutting down. This is a driver reset, a TDR, or a "
+                "removed adapter, not a content error.");
+            running_ = false;
+        }
+    }
+
+    // The loop may have exited with work still in flight. Callers destroy
+    // their own GPU resources after this returns.
+    if (device_) {
+        device_->wait_idle();
     }
 }
 

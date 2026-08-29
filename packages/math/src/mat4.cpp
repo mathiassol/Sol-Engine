@@ -3,6 +3,7 @@
 #include <engine/math/constants.hpp>
 #include <engine/math/vec3.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 namespace engine::math {
@@ -44,24 +45,57 @@ Mat4 Mat4::look_at(Vec3 eye, Vec3 target, Vec3 up) {
 }
 
 Mat4 Mat4::perspective(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z) {
-    f32 tan_half = std::tan(fov_y_radians * 0.5f);
+    // Three unguarded denominators. A zero fov, a zero aspect (a minimised
+    // window), or near == far produced inf/NaN that flowed straight into a
+    // constant buffer and out to the GPU. Clamp to a degenerate-but-finite
+    // frustum instead: the frame looks wrong, which is visible and local,
+    // rather than poisoning culling and shadow fitting silently.
+    constexpr f32 kMinFov = 1.e-3f;
+    constexpr f32 kMinAspect = 1.e-3f;
+    constexpr f32 kMinDepthRange = 1.e-4f;
+
+    const f32 fov = std::clamp(fov_y_radians, kMinFov, kPi - kMinFov);
+    const f32 safe_aspect = (aspect > kMinAspect) ? aspect : kMinAspect;
+    f32 tan_half = std::tan(fov * 0.5f);
+    if (!(tan_half > kMinFov)) {
+        tan_half = kMinFov;
+    }
+    f32 depth_range = near_z - far_z;
+    if (std::abs(depth_range) < kMinDepthRange) {
+        depth_range = -kMinDepthRange;
+    }
+
     Mat4 m{};
-    m.cols[0].x = 1.0f / (aspect * tan_half);
+    m.cols[0].x = 1.0f / (safe_aspect * tan_half);
     m.cols[1].y = 1.0f / tan_half;
-    m.cols[2].z = far_z / (near_z - far_z);
+    m.cols[2].z = far_z / depth_range;
     m.cols[2].w = -1.0f;
-    m.cols[3].z = (near_z * far_z) / (near_z - far_z);
+    m.cols[3].z = (near_z * far_z) / depth_range;
     return m;
 }
 
 Mat4 Mat4::ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z) {
+    // Same reasoning as perspective(): a degenerate extent must not become a
+    // NaN sun view-projection. The shadow pass fits this to visible bounds
+    // every frame, so an empty scene reaches here with a zero extent.
+    constexpr f32 kMinExtent = 1.e-4f;
+    auto safe_range = [](f32 range) {
+        if (!(std::abs(range) > kMinExtent)) {
+            return range < 0.f ? -kMinExtent : kMinExtent;
+        }
+        return range;
+    };
+    const f32 width = safe_range(right - left);
+    const f32 height = safe_range(top - bottom);
+    const f32 depth = safe_range(near_z - far_z);
+
     Mat4 m = identity();
-    m.cols[0].x = 2.f / (right - left);
-    m.cols[1].y = 2.f / (top - bottom);
-    m.cols[2].z = 1.f / (near_z - far_z);
-    m.cols[3].x = -(right + left) / (right - left);
-    m.cols[3].y = -(top + bottom) / (top - bottom);
-    m.cols[3].z = near_z / (near_z - far_z);
+    m.cols[0].x = 2.f / width;
+    m.cols[1].y = 2.f / height;
+    m.cols[2].z = 1.f / depth;
+    m.cols[3].x = -(right + left) / width;
+    m.cols[3].y = -(top + bottom) / height;
+    m.cols[3].z = near_z / depth;
     return m;
 }
 

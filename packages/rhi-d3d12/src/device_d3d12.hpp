@@ -159,7 +159,6 @@ public:
     void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) override;
     void set_shader_resource(u32 slot, ITexture& texture) override;
     void set_unordered_access(u32 slot, IBuffer& buffer) override;
-    void set_sampler(u32 slot, ISampler& sampler) override;
     void draw(u32 vertex_count, u32 start_vertex) override;
     void draw_indexed(u32 index_count, u32 start_index, i32 base_vertex) override;
     void dispatch(u32 group_count_x, u32 group_count_y, u32 group_count_z) override;
@@ -215,7 +214,7 @@ public:
 
     u32 width() const override;
     u32 height() const override;
-    u32 frame_slot() const override;
+    bool device_lost() const override;
 
     std::unique_ptr<IBuffer> create_buffer(const BufferDesc& desc, const void* data) override;
     std::unique_ptr<ITexture> create_texture(const TextureDesc& desc, const void* data) override;
@@ -267,6 +266,8 @@ private:
     void cleanup_depth_buffer();
     bool release_command_list_resource_refs();
     bool device_removed() const;
+    u32  next_shader_descriptor();
+    void log_device_error(const char* what, HRESULT hr = E_FAIL);
     void log_resize_failure(const char* what, HRESULT hr, u32 width, u32 height) const;
     void wait_for_frame(u32 index);
     void wait_for_gpu();
@@ -329,6 +330,16 @@ private:
     std::vector<RetiredResource> retired_;
     bool shutting_down_ = false;
     bool logged_device_removed_ = false;
+    // Reset each begin_frame; keeps an exhausted frame from spamming the log.
+    bool frame_ring_exhausted_ = false;
+    bool shader_srv_exhausted_ = false;
+    // Latched once the device is gone. The frame loop reads this and stops
+    // rather than spinning on a dead device.
+    bool device_lost_ = false;
+    bool occluded_ = false;
+    // False when begin_frame could not open the command list, so submit()
+    // must not close or execute it.
+    bool frame_recording_ = false;
 
     u32 frame_index_ = 0;
     u32 width_ = 0;

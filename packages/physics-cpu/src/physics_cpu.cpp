@@ -377,8 +377,16 @@ bool ray_shape_hit(const ShapeDesc& shape, math::Vec3 position, const math::Aabb
 }
 
 f32 inv_mass_of(MotionType motion, f32 mass) {
-    if (motion != MotionType::Dynamic || mass <= 0.f) {
+    // `mass <= 0.f` alone is false for NaN, so a NaN mass produced 1/NaN = NaN
+    // inv_mass -> NaN velocity -> NaN position -> a NaN AABB, against which
+    // every overlap comparison is false. The body silently vanished from the
+    // broadphase and shipped a NaN model matrix to the GPU, with no
+    // diagnostic. Require a positive finite mass explicitly.
+    if (motion != MotionType::Dynamic) {
         return 0.f;
+    }
+    if (!(mass > 0.f) || !std::isfinite(mass)) {
+        return 0.f;  // treated as infinite mass, i.e. immovable
     }
     return 1.f / mass;
 }

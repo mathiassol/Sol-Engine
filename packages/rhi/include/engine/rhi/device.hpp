@@ -64,8 +64,11 @@ public:
 
     virtual u32 width() const = 0;
     virtual u32 height() const = 0;
-    // D3D12 backbuffer / allocator ring index. Distinct from FrameContext::cpu_frame_slot.
-    virtual u32 frame_slot() const = 0;
+
+    // True once the GPU device is gone (driver reset, TDR, hot-unplug) and
+    // this device can no longer render. Latched: it never clears. The frame
+    // loop must stop rather than keep submitting into a dead device.
+    virtual bool device_lost() const = 0;
 
     virtual std::unique_ptr<IBuffer> create_buffer(const BufferDesc& desc, const void* data = nullptr) = 0;
     virtual std::unique_ptr<ITexture> create_texture(const TextureDesc& desc, const void* data = nullptr) = 0;

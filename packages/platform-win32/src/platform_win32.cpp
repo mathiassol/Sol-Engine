@@ -297,6 +297,12 @@ class Win32Platform final : public IPlatform {
 public:
     Win32Platform() { enable_dpi_awareness(); }
 
+    // The OS window outlives the Win32Window wrapper - the wrapper only
+    // borrows window_state_, which this class owns. Without this the HWND
+    // stayed alive and registered after the engine shut down, and its wndproc
+    // kept writing into window_state_ as it was being freed.
+    ~Win32Platform() override { destroy_win32_window(window_state_); }
+
     std::unique_ptr<IWindow> create_window(const WindowDesc& desc) override {
         return create_win32_window(desc, window_state_);
     }

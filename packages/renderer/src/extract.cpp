@@ -101,6 +101,11 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
 
     const math::Frustum frustum = math::Frustum::from_view_proj(desc.projection * desc.view);
     DrawItem* draws = arena.push_n<DrawItem>(desc.instances.size());
+    if (!draws) {
+        // Arena exhausted (it logged why). Emitting nothing costs one frame;
+        // continuing would write through null.
+        return stats;
+    }
     u32 draw_count = 0;
     math::Aabb visible_bounds = math::Aabb::empty();
 

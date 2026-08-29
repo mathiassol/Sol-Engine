@@ -17,7 +17,13 @@ struct FrameContext {
 
 struct FrameTimerConfig {
     f32 fixed_timestep  = 1.0f / 60.0f;
-    f32 max_delta       = 0.25f;  // spiral-of-death clamp
+    f32 max_delta       = 0.25f;  // clamps one frame's input delta
+    // Hard cap on fixed steps drained per frame. max_delta alone does not stop
+    // a spiral: if a step costs more wall time than it simulates, the
+    // accumulator grows every frame and the loop takes longer every frame.
+    // Hitting this cap drops simulated time (the world runs slow) instead of
+    // freezing, which is recoverable.
+    u32 max_steps_per_frame = 16;
     u8  frames_in_flight = 3;
 };
 

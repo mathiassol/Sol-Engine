@@ -17,10 +17,37 @@ namespace engine::rhi::d3d12 {
 namespace {
 
 constexpr u32 kFrameCount = 3;
-constexpr u32 kMaxShaderSrvsPerFrame = 512;
 constexpr usize kBufferAlign = 256;
-constexpr usize kFrameRingBytes = 64 * 1024;
+
+// Per-frame-slot budgets. Both used to be tight enough that ordinary content
+// hit them, and both used to abort on exhaustion. They are now sized off the
+// actual per-draw cost and degrade instead of terminating.
+//
+// The standard frame spends, per drawn instance:
+//     shadow  ShadowConstants  128 ->  256 aligned
+//     forward FrameConstants   400 ->  512 aligned
+//     motion  motion::Constants 272 ->  512 aligned
+//                                     ---------------
+//                                      1280 bytes
+// plus a fixed ~3 KB for sky, bloom (5 down + 4 up), TAA, tonemap and overlay,
+// plus 576 bytes per debug AABB when F4 is on. 1 MiB covers roughly 800 drawn
+// instances with every pass active. Three slots costs 3 MiB of upload heap.
+constexpr usize kFrameRingBytes = 1024 * 1024;
+constexpr usize kFrameRingBytesPerDraw = 1280;
+
+// One shader-visible descriptor per SRV bind per frame. 4096 at 32 bytes is
+// 128 KiB per slot; the old 512 was reachable by a scene with a few hundred
+// textured draws.
+constexpr u32 kMaxShaderSrvsPerFrame = 4096;
+
 constexpr u32 kMaxMips = 16;
+
+// Root-signature budget, shared by the graphics and compute paths. Each
+// constant buffer takes one root parameter and each SRV/UAV takes one
+// single-range descriptor table, so the *sum* is what must fit - not each
+// count independently.
+constexpr u32 kMaxRootParams = 16;
+constexpr u32 kMaxRootRanges = 8;
 
 u32 full_mip_count(u32 width, u32 height) {
     u32 levels = 1;
@@ -718,14 +745,6 @@ void D3D12CommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
         bound_compute_->uav_table_root());
 }
 
-void D3D12CommandList::set_sampler(u32 slot, ISampler& sampler) {
-    (void)slot;
-    (void)static_cast<D3D12Sampler&>(sampler);
-    log(LogLevel::Error, LogChannel::Render,
-        "D3D12 set_sampler: bind sampler objects through GraphicsPipelineDesc.samplers "
-        "(static samplers); dynamic sampler tables are not wired yet");
-}
-
 void D3D12CommandList::draw(u32 vertex_count, u32 start_vertex) {
     device_.d3d12_cmd_list()->DrawInstanced(vertex_count, 1, start_vertex, 0);
 }
@@ -830,29 +849,44 @@ bool D3D12Device::init(const DeviceDesc& desc) {
         return false;
     }
 
+    // Stop on any failure, not just DXGI_ERROR_NOT_FOUND. On another error
+    // EnumAdapters1 leaves `adapter` untouched, which is null on the first
+    // iteration and the already-released pointer from the previous one after
+    // that - a null deref or a use-after-free.
     IDXGIAdapter1* adapter = nullptr;
-    for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+    for (UINT i = 0; SUCCEEDED(factory->EnumAdapters1(i, &adapter)) && adapter != nullptr; ++i) {
         DXGI_ADAPTER_DESC1 adapter_desc{};
         adapter->GetDesc1(&adapter_desc);
+        // Each Release is paired with a null, so `adapter` is either owned or
+        // null at every point - including when the loop exits early.
         if (adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
             adapter->Release();
+            adapter = nullptr;
             continue;
         }
         if (FAILED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device_.put())))) {
             adapter->Release();
+            adapter = nullptr;
             continue;
         }
         u32 shader_model = 0;
         if (!query_shader_model(device_.get(), shader_model)) {
             device_.reset();
             adapter->Release();
+            adapter = nullptr;
             continue;
         }
         baseline_.feature_level = kGpuFeatureLevel_11_0;
         baseline_.shader_model = shader_model;
+        // Optional: only used for gpu_memory_stats(). A null adapter3_ is
+        // handled there.
         adapter->QueryInterface(IID_PPV_ARGS(adapter3_.put()));
         adapter->Release();
+        adapter = nullptr;
         break;
+    }
+    if (adapter) {
+        adapter->Release();
     }
 
     if (!device_) {
@@ -897,8 +931,14 @@ bool D3D12Device::init(const DeviceDesc& desc) {
         return false;
     }
 
-    swapchain1->QueryInterface(IID_PPV_ARGS(swapchain_.put()));
+    // Everything below dereferences swapchain_ immediately, so an unchecked
+    // QueryInterface here is a null deref one line later.
+    const HRESULT swap_qi = swapchain1->QueryInterface(IID_PPV_ARGS(swapchain_.put()));
     swapchain1->Release();
+    if (FAILED(swap_qi) || !swapchain_) {
+        log_device_error("IDXGISwapChain3 not available", swap_qi);
+        return false;
+    }
 
     if (!create_render_targets() || !create_depth_buffer() || !create_frame_resources()) {
         return false;
@@ -1101,15 +1141,36 @@ bool D3D12Device::create_shader_heap() {
     return true;
 }
 
+// Next free shader-visible descriptor in this frame slot's window.
+//
+// On exhaustion the last slot in the window is reused rather than aborting: a
+// draw sampling the wrong texture is a bad frame, an unbound descriptor table
+// is a GPU fault, and a terminated process is neither recoverable nor
+// debuggable on a player's machine.
+u32 D3D12Device::next_shader_descriptor() {
+    const u32 frame_base = frame_index_ * kMaxShaderSrvsPerFrame;
+    const u32 frame_end = frame_base + kMaxShaderSrvsPerFrame;
+    if (shader_srv_cursor_ < frame_base || shader_srv_cursor_ >= frame_end) {
+        if (!shader_srv_exhausted_) {
+            shader_srv_exhausted_ = true;
+            char message[176];
+            std::snprintf(message, sizeof(message),
+                "Shader descriptor window exhausted: %u per frame. Reusing the last slot, "
+                "so some draws will sample the wrong resource - raise kMaxShaderSrvsPerFrame.",
+                kMaxShaderSrvsPerFrame);
+            log(LogLevel::Error, LogChannel::Render, message);
+        }
+        return frame_end - 1;
+    }
+    const u32 index = shader_srv_cursor_;
+    shader_srv_cursor_ += 1;
+    return index;
+}
+
 void D3D12Device::bind_shader_srv(u32 slot, D3D12_CPU_DESCRIPTOR_HANDLE src, u32 table_root) {
     ENGINE_ASSERT(shader_heap_.get() != nullptr);
     ENGINE_ASSERT(src.ptr != 0);
-    const u32 frame_base = frame_index_ * kMaxShaderSrvsPerFrame;
-    ENGINE_ASSERT_MSG(shader_srv_cursor_ >= frame_base
-            && shader_srv_cursor_ < frame_base + kMaxShaderSrvsPerFrame,
-        "shader SRV heap overflow");
-    const u32 index = shader_srv_cursor_;
-    shader_srv_cursor_ += 1;
+    const u32 index = next_shader_descriptor();
 
     D3D12_CPU_DESCRIPTOR_HANDLE dest = shader_cpu_;
     dest.ptr += static_cast<SIZE_T>(index) * shader_descriptor_size_;
@@ -1127,12 +1188,7 @@ void D3D12Device::bind_compute_uav(u32 slot, ID3D12Resource* resource, usize siz
     ENGINE_ASSERT(shader_heap_.get() != nullptr);
     ENGINE_ASSERT(resource != nullptr);
     ENGINE_ASSERT(size >= 4);
-    const u32 frame_base = frame_index_ * kMaxShaderSrvsPerFrame;
-    ENGINE_ASSERT_MSG(shader_srv_cursor_ >= frame_base
-            && shader_srv_cursor_ < frame_base + kMaxShaderSrvsPerFrame,
-        "shader SRV heap overflow");
-    const u32 index = shader_srv_cursor_;
-    shader_srv_cursor_ += 1;
+    const u32 index = next_shader_descriptor();
 
     D3D12_CPU_DESCRIPTOR_HANDLE dest = shader_cpu_;
     dest.ptr += static_cast<SIZE_T>(index) * shader_descriptor_size_;
@@ -1193,17 +1249,42 @@ void D3D12Device::begin_frame() {
     read_gpu_time(frame_index_);
     frame_ring_offset_ = 0;
     shader_srv_cursor_ = frame_index_ * kMaxShaderSrvsPerFrame;
+    frame_ring_exhausted_ = false;
+    shader_srv_exhausted_ = false;
 
-    frame_allocators_[frame_index_]->Reset();
-    cmd_list_->Reset(frame_allocators_[frame_index_].get(), nullptr);
+    if (FAILED(frame_allocators_[frame_index_]->Reset())) {
+        log_device_error("Command allocator reset failed");
+        return;
+    }
+    // Recording into a list that failed to open produces a list that cannot be
+    // closed, which then gets submitted anyway. Bail instead.
+    if (FAILED(cmd_list_->Reset(frame_allocators_[frame_index_].get(), nullptr))) {
+        log_device_error("Command list reset failed");
+        frame_recording_ = false;
+        return;
+    }
+    frame_recording_ = true;
     cmd_list_->EndQuery(timestamp_heap_.get(), D3D12_QUERY_TYPE_TIMESTAMP, frame_index_ * 2);
 }
 
 void D3D12Device::submit() {
+    if (!frame_recording_) {
+        return;
+    }
     cmd_list_->EndQuery(timestamp_heap_.get(), D3D12_QUERY_TYPE_TIMESTAMP, frame_index_ * 2 + 1);
     cmd_list_->ResolveQueryData(timestamp_heap_.get(), D3D12_QUERY_TYPE_TIMESTAMP,
         frame_index_ * 2, 2, timestamp_readback_[frame_index_].get(), 0);
-    cmd_list_->Close();
+
+    // Close() fails on an unbalanced barrier, an invalid recording, or a
+    // removed device. Executing a list that is not closed is undefined
+    // behaviour, so this check is the difference between a logged bad frame
+    // and a driver fault.
+    if (FAILED(cmd_list_->Close())) {
+        log_device_error("Command list close failed - frame not submitted");
+        frame_recording_ = false;
+        return;
+    }
+    frame_recording_ = false;
 
     ID3D12CommandList* lists[] = {cmd_list_.get()};
     queue_->ExecuteCommandLists(1, lists);
@@ -1245,6 +1326,29 @@ void D3D12Device::wait_idle() {
 
 bool D3D12Device::device_removed() const {
     return device_ && device_->GetDeviceRemovedReason() != S_OK;
+}
+
+// One place to record a device-level failure. Latches `device_lost_` when the
+// device is actually gone, so the frame loop can stop instead of spinning on a
+// dead device, and logs the removal reason once - after removal every call
+// fails and an unlatched log would flood.
+void D3D12Device::log_device_error(const char* what, HRESULT hr) {
+    const bool removed = device_removed();
+    if (removed) {
+        device_lost_ = true;
+    }
+    if (removed && logged_device_removed_) {
+        return;
+    }
+    if (removed) {
+        logged_device_removed_ = true;
+    }
+    const HRESULT reason = device_ ? device_->GetDeviceRemovedReason() : E_FAIL;
+    char msg[224];
+    std::snprintf(msg, sizeof(msg), "%s (hr=0x%08X, device_removed=0x%08X)",
+        what, static_cast<unsigned>(hr), static_cast<unsigned>(reason));
+    log(LogLevel::Error, LogChannel::Render, msg);
+    dump_info_queue_messages(device_.get());
 }
 
 void D3D12Device::log_resize_failure(const char* what, HRESULT hr, u32 width, u32 height) const {
@@ -1511,7 +1615,23 @@ FrameAllocation D3D12Device::alloc_frame_memory(usize size) {
     ENGINE_ASSERT(size > 0);
     ENGINE_ASSERT_MSG(frame_ring_[frame_index_] != nullptr, "frame constant ring is not initialized");
     const usize aligned = (size + (kBufferAlign - 1)) & ~(kBufferAlign - 1);
-    ENGINE_ASSERT_MSG(frame_ring_offset_ + aligned <= kFrameRingBytes, "frame constant ring overflow");
+
+    // How much a frame needs depends on how much is on screen, so running out
+    // is a content outcome, not a bug. Return an empty slice; the caller skips
+    // that draw and the frame is missing an object instead of the process
+    // being gone. Callers must check `buffer`.
+    if (aligned > kFrameRingBytes - frame_ring_offset_) {
+        if (!frame_ring_exhausted_) {
+            frame_ring_exhausted_ = true;
+            char message[192];
+            std::snprintf(message, sizeof(message),
+                "Frame constant ring exhausted: %zu of %zu bytes used (~%zu draws). "
+                "Dropping draws this frame - raise kFrameRingBytes.",
+                frame_ring_offset_, kFrameRingBytes, frame_ring_offset_ / kFrameRingBytesPerDraw);
+            log(LogLevel::Error, LogChannel::Render, message);
+        }
+        return {};
+    }
 
     FrameAllocation allocation{};
     allocation.buffer = frame_ring_[frame_index_].get();
@@ -1564,7 +1684,14 @@ void D3D12Device::retire_resource(ID3D12Resource* resource) {
 
 UINT64 D3D12Device::signal_queue() {
     const UINT64 value = ++fence_cursor_;
-    queue_->Signal(fence_.get(), value);
+    const HRESULT hr = queue_->Signal(fence_.get(), value);
+    if (FAILED(hr)) {
+        // Recording this value as the slot's fence would make wait_for_frame
+        // block forever on a signal that is never coming. Keep the old value:
+        // the slot's previous work is genuinely complete.
+        log_device_error("Queue signal failed - frame fence not advanced", hr);
+        return fence_values_[frame_index_];
+    }
     fence_values_[frame_index_] = value;
     return value;
 }
@@ -1972,18 +2099,28 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
     const GraphicsPipelineDesc& desc) {
     ENGINE_ASSERT(!desc.vertex_shader.empty());
     ENGINE_ASSERT(desc.attribute_count <= GraphicsPipelineDesc::kMaxAttributes);
-    ENGINE_ASSERT(desc.constant_buffer_count <= 8);
-    ENGINE_ASSERT(desc.shader_resource_count <= 8);
     ENGINE_ASSERT(desc.sampler_count <= GraphicsPipelineDesc::kMaxSamplers);
 
-    D3D12_ROOT_PARAMETER root_params[8]{};
+    // One root parameter per constant buffer plus one per SRV, all into the
+    // same array. Two independent `<= 8` checks let 2 + 7 through and wrote
+    // past the end; the forward pipeline already sits at exactly 1 + 7, so
+    // this was one texture away from a 16-byte stack overwrite carrying a
+    // pointer, immediately before a driver call.
+    ENGINE_ASSERT_MSG(
+        desc.constant_buffer_count + desc.shader_resource_count <= kMaxRootParams,
+        "graphics pipeline exceeds the root parameter budget "
+        "(constant_buffer_count + shader_resource_count)");
+    ENGINE_ASSERT_MSG(desc.shader_resource_count <= kMaxRootRanges,
+        "graphics pipeline exceeds the SRV descriptor-range budget");
+
+    D3D12_ROOT_PARAMETER root_params[kMaxRootParams]{};
     for (u32 i = 0; i < desc.constant_buffer_count; ++i) {
         root_params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         root_params[i].Descriptor.ShaderRegister = i;
         root_params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
-    D3D12_DESCRIPTOR_RANGE srv_ranges[8]{};
+    D3D12_DESCRIPTOR_RANGE srv_ranges[kMaxRootRanges]{};
     u32 root_count = desc.constant_buffer_count;
     u32 srv_table_root = ~0u;
     if (desc.shader_resource_count > 0) {
@@ -2146,13 +2283,17 @@ std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(const Com
         log(LogLevel::Error, LogChannel::Render, "D3D12 create_compute_pipeline: empty bytecode");
         return nullptr;
     }
-    ENGINE_ASSERT(desc.constant_buffer_count <= 8);
-    ENGINE_ASSERT(desc.shader_resource_count <= 8);
-    ENGINE_ASSERT(desc.unordered_access_count <= 8);
+    ENGINE_ASSERT_MSG(desc.constant_buffer_count + desc.shader_resource_count
+            + desc.unordered_access_count <= kMaxRootParams,
+        "compute pipeline exceeds the root parameter budget "
+        "(constant_buffer_count + shader_resource_count + unordered_access_count)");
+    ENGINE_ASSERT_MSG(desc.shader_resource_count <= kMaxRootRanges
+            && desc.unordered_access_count <= kMaxRootRanges,
+        "compute pipeline exceeds the descriptor-range budget");
 
-    D3D12_ROOT_PARAMETER root_params[16]{};
-    D3D12_DESCRIPTOR_RANGE uav_ranges[8]{};
-    D3D12_DESCRIPTOR_RANGE srv_ranges[8]{};
+    D3D12_ROOT_PARAMETER root_params[kMaxRootParams]{};
+    D3D12_DESCRIPTOR_RANGE uav_ranges[kMaxRootRanges]{};
+    D3D12_DESCRIPTOR_RANGE srv_ranges[kMaxRootRanges]{};
     u32 root_count = 0;
     for (u32 i = 0; i < desc.constant_buffer_count; ++i) {
         root_params[root_count].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -2264,7 +2405,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12Device::current_rtv() const { return rtv_handle
 D3D12_CPU_DESCRIPTOR_HANDLE D3D12Device::current_dsv() const { return dsv_handle_; }
 u32 D3D12Device::width() const { return width_; }
 u32 D3D12Device::height() const { return height_; }
-u32 D3D12Device::frame_slot() const { return frame_index_; }
+bool D3D12Device::device_lost() const { return device_lost_ || device_removed(); }
 u32 D3D12Device::frame_index() const { return frame_index_; }
 
 void D3D12Device::present_back_buffer() {
@@ -2275,7 +2416,27 @@ void D3D12Device::present_back_buffer() {
     if (present_interval_ == 0 && allow_tearing_) {
         flags = DXGI_PRESENT_ALLOW_TEARING;
     }
-    swapchain_->Present(present_interval_, flags);
+    const HRESULT hr = swapchain_->Present(present_interval_, flags);
+
+    // Present is where a TDR, a driver update or a GPU hang first shows up.
+    // Discarding this result meant the loop kept calling into a dead device
+    // forever: every call failed silently and the window froze on its last
+    // frame until the process was killed.
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+        device_lost_ = true;
+        log_device_error("Present failed - GPU device lost", hr);
+        return;
+    }
+    if (hr == DXGI_STATUS_OCCLUDED) {
+        // Fully covered or minimised: the swapchain stops throttling, so an
+        // unthrottled loop burns a core. Ask for vblank pacing next present.
+        occluded_ = true;
+        return;
+    }
+    occluded_ = false;
+    if (FAILED(hr)) {
+        log_device_error("Present failed", hr);
+    }
 }
 
 void D3D12Device::set_present_interval(u32 interval) {

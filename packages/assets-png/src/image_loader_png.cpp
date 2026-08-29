@@ -6,8 +6,10 @@
 #include <windows.h>
 #include <wincodec.h>
 
+#include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <new>
 #include <vector>
 
 #pragma comment(lib, "windowscodecs.lib")
@@ -58,12 +60,45 @@ bool decode_wic(IWICBitmapDecoder* decoder, ImageData& out) {
         return false;
     }
 
-    const UINT stride = width * 4;
-    const UINT bytes = stride * height;
+    // Both of these were UINT. A 65535x65535 image - a few KB on disk for a
+    // solid colour - wrapped stride*height to 475 KB while width and height
+    // stayed huge, and since create_texture takes initial data as a bare
+    // pointer with no length, the upload path then read ~17 GB out of a 475 KB
+    // buffer. Compute in 64-bit and cap the dimensions.
+    constexpr u64 kMaxDimension = 16384;   // beyond any D3D12 texture limit
+    constexpr u64 kMaxBytes = 512ull * 1024ull * 1024ull;
+    const u64 stride64 = static_cast<u64>(width) * 4ull;
+    const u64 bytes64 = stride64 * static_cast<u64>(height);
+    if (width > kMaxDimension || height > kMaxDimension || bytes64 > kMaxBytes) {
+        char message[176];
+        std::snprintf(message, sizeof(message),
+            "Image rejected: %ux%u needs %llu bytes (limit %ux%u, %llu bytes)",
+            width, height, static_cast<unsigned long long>(bytes64),
+            static_cast<unsigned>(kMaxDimension), static_cast<unsigned>(kMaxDimension),
+            static_cast<unsigned long long>(kMaxBytes));
+        engine::log(LogLevel::Error, LogChannel::Assets, message);
+        release(converter);
+        release(factory);
+        release(frame);
+        return false;
+    }
+
     out.width = width;
     out.height = height;
-    out.rgba.resize(bytes);
-    const HRESULT hr = converter->CopyPixels(nullptr, stride, bytes, out.rgba.data());
+    // resize() throws bad_alloc, which has no handler anywhere in this engine.
+    // The cap above keeps the request bounded; this keeps a genuine allocation
+    // failure from taking the process down.
+    try {
+        out.rgba.resize(static_cast<usize>(bytes64));
+    } catch (const std::bad_alloc&) {
+        engine::log(LogLevel::Error, LogChannel::Assets, "Out of memory decoding image");
+        release(converter);
+        release(factory);
+        release(frame);
+        return false;
+    }
+    const HRESULT hr = converter->CopyPixels(nullptr, static_cast<UINT>(stride64),
+        static_cast<UINT>(bytes64), out.rgba.data());
 
     release(converter);
     release(factory);

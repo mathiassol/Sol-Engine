@@ -240,4 +240,21 @@ std::unique_ptr<Win32Window> create_win32_window(const WindowDesc& desc, WindowS
     return window;
 }
 
+void destroy_win32_window(WindowState& state) {
+    if (!state.hwnd) {
+        return;
+    }
+    HWND hwnd = state.hwnd;
+    state.hwnd = nullptr;
+
+    // Clear the back-pointer *before* destroying. DestroyWindow dispatches
+    // WM_DESTROY / WM_NCDESTROY synchronously, and the message pump uses
+    // PeekMessage(hWnd = nullptr), which drains every window on the thread -
+    // so a wndproc that still found `state` here would push onto a deque that
+    // is about to be freed. With it null the wndproc falls through to
+    // DefWindowProc.
+    ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+    ::DestroyWindow(hwnd);
+}
+
 } // namespace engine::platform::win32

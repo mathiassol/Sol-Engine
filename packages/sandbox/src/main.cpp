@@ -3,6 +3,7 @@
 #include <engine/audio/audio.hpp>
 #include <engine/audio/wav.hpp>
 #include <engine/core/arena.hpp>
+#include <engine/core/frame.hpp>
 #include <engine/core/assert.hpp>
 #include <engine/core/clock.hpp>
 #include <engine/core/cvar.hpp>
@@ -570,6 +571,138 @@ bool compile_fullscreen_hlsl(engine::shaders::IShaderCompiler& compiler, const s
         return false;
     }
     return true;
+}
+
+// Capacity limits used to abort the process, which also made them untestable:
+// no gate can exercise a path that calls std::abort(). They now degrade, so
+// these gates can prove the degradation is what it claims to be.
+
+bool run_arena_gate() {
+    engine::Arena arena(1024);
+
+    engine::u8* first = arena.push_n<engine::u8>(512);
+    const bool first_ok = first != nullptr && arena.used() == 512 && !arena.overflowed();
+
+    // Past capacity: nullptr, flagged, and the arena stays usable.
+    engine::u8* too_big = arena.push_n<engine::u8>(4096);
+    const bool rejected = too_big == nullptr && arena.overflowed();
+    const engine::usize used_after_reject = arena.used();
+
+    // A rejected allocation must not consume the bump pointer.
+    engine::u8* second = arena.push_n<engine::u8>(256);
+    const bool still_usable = second != nullptr && used_after_reject == 512;
+
+    // sizeof(T) * count wrapping used to pass the capacity check and then
+    // overrun the buffer while constructing.
+    struct Big { engine::u8 bytes[64]; };
+    Big* overflowed = arena.push_n<Big>(~engine::usize{0} / 8);
+    const bool overflow_rejected = overflowed == nullptr;
+
+    arena.reset();
+    const bool reset_ok = arena.used() == 0 && !arena.overflowed()
+        && arena.push_n<engine::u8>(1024) != nullptr;
+
+    const bool passed = first_ok && rejected && still_usable && overflow_rejected && reset_ok;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Arena gate: alloc=%s over_capacity_rejected=%s offset_preserved=%s "
+        "size_overflow_rejected=%s reset=%s (%s)",
+        first_ok ? "yes" : "no", rejected ? "yes" : "no", still_usable ? "yes" : "no",
+        overflow_rejected ? "yes" : "no", reset_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
+}
+
+bool run_frame_timer_gate() {
+    // A tiny timestep makes any real frame delta demand far more steps than
+    // the cap allows, which is exactly the spiral condition: a step that costs
+    // more wall time than it simulates.
+    engine::FrameTimerConfig config{};
+    config.fixed_timestep = 1.e-5f;      // 10 us
+    config.max_steps_per_frame = 8;
+    engine::FrameTimer timer(config);
+
+    // Real elapsed time is what drives the accumulator, so the gate has to
+    // actually burn some. 20 ms against a 10 us step demands ~2000 steps -
+    // far past the cap. Without this the deltas are ~0, the loop runs zero
+    // times, and the gate asserts 0 <= 8, which proves nothing.
+    constexpr auto kBurn = std::chrono::milliseconds(20);
+
+    std::this_thread::sleep_for(kBurn);
+    timer.begin_frame();
+    engine::u32 first_steps = 0;
+    while (timer.consume_fixed_step()) {
+        ++first_steps;
+    }
+
+    std::this_thread::sleep_for(kBurn);
+    timer.begin_frame();
+    engine::u32 second_steps = 0;
+    while (timer.consume_fixed_step()) {
+        ++second_steps;
+    }
+
+    // Demand far exceeded the cap, so both frames must land exactly on it.
+    const bool capped = first_steps == config.max_steps_per_frame
+        && second_steps == config.max_steps_per_frame;
+    // The backlog is discarded at the cap, so frame two is no worse than frame
+    // one. That monotonic growth is what made the freeze unrecoverable.
+    const bool no_growth = second_steps <= first_steps;
+
+    // A zero timestep must terminate rather than loop forever.
+    engine::FrameTimerConfig degenerate{};
+    degenerate.fixed_timestep = 0.f;
+    engine::FrameTimer zero_timer(degenerate);
+    zero_timer.begin_frame();
+    const bool zero_safe = !zero_timer.consume_fixed_step();
+
+    const bool passed = capped && no_growth && zero_safe;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Frame timer gate: steps=%u,%u cap=%u capped=%s no_growth=%s zero_step_safe=%s (%s)",
+        first_steps, second_steps, config.max_steps_per_frame,
+        capped ? "yes" : "no", no_growth ? "yes" : "no", zero_safe ? "yes" : "no",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
+}
+
+bool run_math_guard_gate() {
+    auto finite = [](const engine::math::Mat4& m) {
+        for (int c = 0; c < 4; ++c) {
+            const engine::math::Vec4& col = m.cols[c];
+            if (!std::isfinite(col.x) || !std::isfinite(col.y) || !std::isfinite(col.z)
+                || !std::isfinite(col.w)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Zero fov, zero aspect (a minimised window), and near == far each used to
+    // divide by zero straight into a constant buffer.
+    const bool zero_fov = finite(engine::math::Mat4::perspective(0.f, 1.6f, 0.1f, 100.f));
+    const bool zero_aspect = finite(engine::math::Mat4::perspective(1.0f, 0.f, 0.1f, 100.f));
+    const bool equal_planes = finite(engine::math::Mat4::perspective(1.0f, 1.6f, 1.f, 1.f));
+    // An empty scene reaches ortho() with a zero extent via sun-bounds fitting.
+    const bool zero_extent = finite(engine::math::Mat4::ortho(0.f, 0.f, 0.f, 0.f, 0.f, 0.f));
+    // A normal projection must still be exactly what it was.
+    const engine::math::Mat4 normal = engine::math::Mat4::perspective(1.0f, 1.6f, 0.1f, 100.f);
+    const bool unchanged = finite(normal) && normal.cols[1].y > 1.7f && normal.cols[1].y < 1.9f;
+
+    const bool passed = zero_fov && zero_aspect && equal_planes && zero_extent && unchanged;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Math guard gate: zero_fov=%s zero_aspect=%s equal_planes=%s zero_extent=%s "
+        "normal_proj=%.3f (%s)",
+        zero_fov ? "finite" : "NaN", zero_aspect ? "finite" : "NaN",
+        equal_planes ? "finite" : "NaN", zero_extent ? "finite" : "NaN",
+        static_cast<double>(normal.cols[1].y), passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
 }
 
 bool run_cvar_gate(engine::platform::IFileSystem* fs, const std::string& scratch_dir) {
@@ -4918,6 +5051,15 @@ int main(int argc, char** argv) {
     }
 
     bool gates_ok = run_mount_gate(*loader) && run_build_gate(app.content_layout());
+    if (!run_arena_gate()) {
+        gates_ok = false;
+    }
+    if (!run_frame_timer_gate()) {
+        gates_ok = false;
+    }
+    if (!run_math_guard_gate()) {
+        gates_ok = false;
+    }
     if (!run_cvar_gate(app.filesystem(), app.executable_directory())) {
         gates_ok = false;
     }
@@ -4997,15 +5139,24 @@ int main(int argc, char** argv) {
         gates_ok = false;
     }
 
+    int exit_code = 0;
     if (gates_mode) {
         char done_message[64];
         std::snprintf(done_message, sizeof(done_message),
             gates_ok ? "%s gates passed" : "%s gates FAILED", kAppName);
         engine::log(gates_ok ? engine::LogLevel::Info : engine::LogLevel::Error,
             engine::LogChannel::General, done_message);
-        return gates_ok ? 0 : 1;
+        exit_code = gates_ok ? 0 : 1;
+    } else {
+        app.run();
     }
 
-    app.run();
-    return 0;
+    // Single exit so this always runs. `state` owns GPU resources and is
+    // destroyed before `app` (declaration order), so the device is still alive
+    // when they release - but the last submitted command list may still be
+    // executing. Wait for it, or those releases race the GPU.
+    if (auto* device = app.device()) {
+        device->wait_idle();
+    }
+    return exit_code;
 }

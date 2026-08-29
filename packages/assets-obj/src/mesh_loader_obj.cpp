@@ -2,6 +2,8 @@
 
 #include <engine/core/log.hpp>
 
+#include <charconv>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -44,26 +46,46 @@ struct FaceKeyHash {
     }
 };
 
-void parse_face_corner(std::string_view corner, i32& vi, i32& vti, i32& vni) {
+// std::from_chars, not std::stoi. stoi throws on a non-numeric or
+// out-of-range token, there is no try/catch anywhere in this engine, and this
+// runs on shipped content at startup - so `f a b c`, `f 1/ 2/ 3/`, or an index
+// wider than int turned a bad asset into an unhandled-exception abort.
+// Returns false for a malformed token so the caller can reject the file.
+bool parse_index(std::string_view text, i32& out) {
+    if (text.empty()) {
+        return false;
+    }
+    const char* begin = text.data();
+    const char* end = begin + text.size();
+    i32 value = 0;
+    const std::from_chars_result result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+bool parse_face_corner(std::string_view corner, i32& vi, i32& vti, i32& vni) {
     vi = vti = vni = 0;
     const usize slash1 = corner.find('/');
     if (slash1 == std::string_view::npos) {
-        vi = std::stoi(std::string(corner));
-        return;
+        return parse_index(corner, vi);
     }
 
-    vi = std::stoi(std::string(corner.substr(0, slash1)));
+    if (!parse_index(corner.substr(0, slash1), vi)) {
+        return false;
+    }
     const usize slash2 = corner.find('/', slash1 + 1);
     if (slash2 == slash1 + 1) {
-        vni = std::stoi(std::string(corner.substr(slash2 + 1)));
-        return;
+        // v//vn - texture coordinate deliberately omitted.
+        return parse_index(corner.substr(slash2 + 1), vni);
     }
     if (slash2 != std::string_view::npos) {
-        vti = std::stoi(std::string(corner.substr(slash1 + 1, slash2 - slash1 - 1)));
-        vni = std::stoi(std::string(corner.substr(slash2 + 1)));
-        return;
+        return parse_index(corner.substr(slash1 + 1, slash2 - slash1 - 1), vti)
+            && parse_index(corner.substr(slash2 + 1), vni);
     }
-    vti = std::stoi(std::string(corner.substr(slash1 + 1)));
+    return parse_index(corner.substr(slash1 + 1), vti);
 }
 
 VertexPN make_vertex(const std::vector<Position>& positions,
@@ -105,6 +127,8 @@ public:
 
         out.vertices.clear();
         out.indices.clear();
+        usize malformed_corners = 0;
+        usize malformed_values = 0;
 
         auto resolve_index = [](i32 index, usize count) -> i32 {
             if (index > 0) return index - 1;
@@ -114,7 +138,13 @@ public:
 
         auto add_corner = [&](std::string_view corner) {
             i32 vi = 0, vti = 0, vni = 0;
-            parse_face_corner(corner, vi, vti, vni);
+            if (!parse_face_corner(corner, vi, vti, vni)) {
+                // Malformed corner. make_vertex already clamps out-of-range
+                // indices to a zero vertex, so emitting a degenerate corner
+                // keeps the triangle list well-formed; the file is bad, not
+                // the process.
+                ++malformed_corners;
+            }
 
             const i32 vi0 = resolve_index(vi, positions.size());
             const i32 vti0 = resolve_index(vti, uvs.size());
@@ -136,18 +166,31 @@ public:
             std::string tag;
             ss >> tag;
 
+            // Extraction failure was ignored here, so `v 1e999` produced inf
+            // positions that then poisoned every AABB downstream. Drop the
+            // line instead - a missing vertex is visible and local; an
+            // infinite bound silently breaks culling and shadow fitting.
             if (tag == "v") {
                 Position p{};
-                ss >> p.x >> p.y >> p.z;
-                positions.push_back(p);
+                if (ss >> p.x >> p.y >> p.z) {
+                    positions.push_back(p);
+                } else {
+                    ++malformed_values;
+                }
             } else if (tag == "vt") {
                 TexCoord t{};
-                ss >> t.u >> t.v;
-                uvs.push_back(t);
+                if (ss >> t.u >> t.v) {
+                    uvs.push_back(t);
+                } else {
+                    ++malformed_values;
+                }
             } else if (tag == "vn") {
                 Position n{};
-                ss >> n.x >> n.y >> n.z;
-                normals.push_back(n);
+                if (ss >> n.x >> n.y >> n.z) {
+                    normals.push_back(n);
+                } else {
+                    ++malformed_values;
+                }
             } else if (tag == "f") {
                 std::vector<std::string> corners;
                 std::string corner;
@@ -162,6 +205,15 @@ public:
                     add_corner(corners[i + 1]);
                 }
             }
+        }
+
+        if (malformed_corners > 0 || malformed_values > 0) {
+            char message[192];
+            std::snprintf(message, sizeof(message),
+                "OBJ parsed with %zu malformed face corner(s) and %zu malformed value line(s). "
+                "Geometry is incomplete.",
+                malformed_corners, malformed_values);
+            engine::log(LogLevel::Warn, LogChannel::Assets, message);
         }
 
         if (out.vertices.empty() || out.indices.empty()) {

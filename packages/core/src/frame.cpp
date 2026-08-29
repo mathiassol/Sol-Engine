@@ -28,6 +28,21 @@ FrameContext FrameTimer::begin_frame() {
 }
 
 bool FrameTimer::consume_fixed_step() {
+    // A zero or negative timestep would make this loop forever and divide by
+    // zero below. FrameTimerConfig is public, so guard rather than assume.
+    if (!(config_.fixed_timestep > 0.f)) {
+        context_.alpha = 0.f;
+        return false;
+    }
+
+    if (context_.fixed_steps >= config_.max_steps_per_frame) {
+        // Give up on catching all the way up. Discard the backlog so the next
+        // frame starts clean instead of inheriting an ever-growing debt.
+        accumulator_ = 0.f;
+        context_.alpha = 0.f;
+        return false;
+    }
+
     if (accumulator_ < config_.fixed_timestep) {
         context_.alpha = accumulator_ / config_.fixed_timestep;
         return false;
