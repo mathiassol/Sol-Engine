@@ -2,6 +2,7 @@
 
 #include <engine/core/log.hpp>
 
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -151,6 +152,21 @@ public:
         result = cgltf_load_buffers(&options, data, file.c_str());
         if (result != cgltf_result_success) {
             engine::log(LogLevel::Error, LogChannel::Assets, "Failed to load glTF buffers");
+            cgltf_free(data);
+            return false;
+        }
+
+        // Not optional. cgltf's accessor unpack functions assume validated data
+        // — this is the only place accessor ranges, buffer-view bounds and
+        // sparse indices are checked against the actual buffer sizes. Without
+        // it, a file whose accessor count exceeds its buffer view reads past
+        // the allocation, and a sparse index writes past it.
+        result = cgltf_validate(data);
+        if (result != cgltf_result_success) {
+            char message[96];
+            std::snprintf(message, sizeof(message),
+                "glTF failed validation (cgltf_result %d) — refusing to load", static_cast<int>(result));
+            engine::log(LogLevel::Error, LogChannel::Assets, message);
             cgltf_free(data);
             return false;
         }

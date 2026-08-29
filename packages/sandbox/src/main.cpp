@@ -3439,6 +3439,181 @@ bool run_gltf_extras_gate() {
     return passed;
 }
 
+// One valid triangle: 3 positions, 3 normals, 3 UVs, 3 u32 indices = 108 bytes.
+// Callers pass a JSON body describing the same buffer, malformed in one way.
+bool write_gltf_probe_with_json(const std::filesystem::path& dir, const char* json) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        return false;
+    }
+
+    std::vector<engine::u8> bin;
+    append_vec3(bin, 0.f, 0.f, 0.f);
+    append_vec3(bin, 1.f, 0.f, 0.f);
+    append_vec3(bin, 0.f, 1.f, 0.f);
+    append_vec3(bin, 0.f, 0.f, 1.f);
+    append_vec3(bin, 0.f, 0.f, 1.f);
+    append_vec3(bin, 0.f, 0.f, 1.f);
+    append_vec2(bin, 0.f, 0.f);
+    append_vec2(bin, 1.f, 0.f);
+    append_vec2(bin, 0.f, 1.f);
+    append_le_u32(bin, 0);
+    append_le_u32(bin, 1);
+    append_le_u32(bin, 2);
+
+    std::ofstream bin_file(dir / "probe.bin", std::ios::binary | std::ios::trunc);
+    if (!bin_file) {
+        return false;
+    }
+    bin_file.write(reinterpret_cast<const char*>(bin.data()),
+        static_cast<std::streamsize>(bin.size()));
+    if (!bin_file) {
+        return false;
+    }
+    bin_file.close();
+
+    std::ofstream gltf_file(dir / "probe.gltf", std::ios::binary | std::ios::trunc);
+    if (!gltf_file) {
+        return false;
+    }
+    gltf_file << json;
+    return static_cast<bool>(gltf_file);
+}
+
+// Returns true when the loader REFUSES the file. A malformed glTF must be
+// rejected, not parsed into an out-of-bounds read.
+bool gltf_probe_rejected(const char* name, const char* json) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "sol-engine-gltf-validate" / name;
+    if (!write_gltf_probe_with_json(dir, json)) {
+        return false;
+    }
+    auto loader = engine::assets::gltf::create_mesh_loader();
+    if (!loader) {
+        return false;
+    }
+    engine::assets::gltf::GltfLoadResult loaded{};
+    return !loader->load((dir / "probe.gltf").string(), loaded);
+}
+
+bool run_gltf_validate_gate() {
+    // Baseline: the well-formed version of the same buffer must still load, so
+    // this gate cannot pass by rejecting everything.
+    const char* good =
+        "{\n"
+        "  \"asset\": { \"version\": \"2.0\" },\n"
+        "  \"meshes\": [{ \"primitives\": [ { \"attributes\": "
+        "{ \"POSITION\": 0, \"NORMAL\": 1, \"TEXCOORD_0\": 2 }, \"indices\": 3 } ] }],\n"
+        "  \"buffers\": [ { \"uri\": \"probe.bin\", \"byteLength\": 108 } ],\n"
+        "  \"bufferViews\": [\n"
+        "    { \"buffer\": 0, \"byteOffset\": 0,  \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 36, \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 72, \"byteLength\": 24 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 96, \"byteLength\": 12 }\n"
+        "  ],\n"
+        "  \"accessors\": [\n"
+        "    { \"bufferView\": 0, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 1, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 2, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC2\" },\n"
+        "    { \"bufferView\": 3, \"componentType\": 5125, \"count\": 3, \"type\": \"SCALAR\" }\n"
+        "  ]\n"
+        "}\n";
+
+    // POSITION claims 1000 VEC3 (12000 bytes) inside a 36-byte view. Unpacking
+    // this without validation memcpy's ~12 KB out of a 108-byte allocation.
+    const char* overrun_accessor =
+        "{\n"
+        "  \"asset\": { \"version\": \"2.0\" },\n"
+        "  \"meshes\": [{ \"primitives\": [ { \"attributes\": "
+        "{ \"POSITION\": 0, \"NORMAL\": 1, \"TEXCOORD_0\": 2 }, \"indices\": 3 } ] }],\n"
+        "  \"buffers\": [ { \"uri\": \"probe.bin\", \"byteLength\": 108 } ],\n"
+        "  \"bufferViews\": [\n"
+        "    { \"buffer\": 0, \"byteOffset\": 0,  \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 36, \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 72, \"byteLength\": 24 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 96, \"byteLength\": 12 }\n"
+        "  ],\n"
+        "  \"accessors\": [\n"
+        "    { \"bufferView\": 0, \"componentType\": 5126, \"count\": 1000, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 1, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 2, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC2\" },\n"
+        "    { \"bufferView\": 3, \"componentType\": 5125, \"count\": 3, \"type\": \"SCALAR\" }\n"
+        "  ]\n"
+        "}\n";
+
+    // bufferView 0 starts ~1 GB past the end of a 108-byte buffer. Reading it
+    // without validation dereferences a wild displaced pointer.
+    const char* overrun_view =
+        "{\n"
+        "  \"asset\": { \"version\": \"2.0\" },\n"
+        "  \"meshes\": [{ \"primitives\": [ { \"attributes\": "
+        "{ \"POSITION\": 0, \"NORMAL\": 1, \"TEXCOORD_0\": 2 }, \"indices\": 3 } ] }],\n"
+        "  \"buffers\": [ { \"uri\": \"probe.bin\", \"byteLength\": 108 } ],\n"
+        "  \"bufferViews\": [\n"
+        "    { \"buffer\": 0, \"byteOffset\": 1000000000, \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 36, \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 72, \"byteLength\": 24 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 96, \"byteLength\": 12 }\n"
+        "  ],\n"
+        "  \"accessors\": [\n"
+        "    { \"bufferView\": 0, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 1, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 2, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC2\" },\n"
+        "    { \"bufferView\": 3, \"componentType\": 5125, \"count\": 3, \"type\": \"SCALAR\" }\n"
+        "  ]\n"
+        "}\n";
+
+    // Indices read from the NORMAL view as u32, so they carry the bit patterns
+    // of 1.0f — index ~1.07e9 against 3 vertices. Unvalidated, this reaches a
+    // D3D12 index buffer and the draw reads outside the bound resource: device
+    // removal or silent garbage geometry.
+    const char* overrun_indices =
+        "{\n"
+        "  \"asset\": { \"version\": \"2.0\" },\n"
+        "  \"meshes\": [{ \"primitives\": [ { \"attributes\": "
+        "{ \"POSITION\": 0, \"NORMAL\": 1, \"TEXCOORD_0\": 2 }, \"indices\": 3 } ] }],\n"
+        "  \"buffers\": [ { \"uri\": \"probe.bin\", \"byteLength\": 108 } ],\n"
+        "  \"bufferViews\": [\n"
+        "    { \"buffer\": 0, \"byteOffset\": 0,  \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 36, \"byteLength\": 36 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 72, \"byteLength\": 24 },\n"
+        "    { \"buffer\": 0, \"byteOffset\": 96, \"byteLength\": 12 }\n"
+        "  ],\n"
+        "  \"accessors\": [\n"
+        "    { \"bufferView\": 0, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 1, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" },\n"
+        "    { \"bufferView\": 2, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC2\" },\n"
+        "    { \"bufferView\": 1, \"componentType\": 5125, \"count\": 3, \"type\": \"SCALAR\" }\n"
+        "  ]\n"
+        "}\n";
+
+    const std::filesystem::path good_dir =
+        std::filesystem::temp_directory_path() / "sol-engine-gltf-validate" / "good";
+    bool good_ok = false;
+    if (write_gltf_probe_with_json(good_dir, good)) {
+        auto loader = engine::assets::gltf::create_mesh_loader();
+        engine::assets::gltf::GltfLoadResult loaded{};
+        good_ok = loader && loader->load((good_dir / "probe.gltf").string(), loaded)
+            && loaded.mesh.vertices.size() == 3 && loaded.mesh.indices.size() == 3;
+    }
+
+    const bool accessor_ok = gltf_probe_rejected("overrun_accessor", overrun_accessor);
+    const bool view_ok = gltf_probe_rejected("overrun_view", overrun_view);
+    const bool indices_ok = gltf_probe_rejected("overrun_indices", overrun_indices);
+    const bool passed = good_ok && accessor_ok && view_ok && indices_ok;
+
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "glTF validate gate: valid_loads=%s accessor_overrun_rejected=%s "
+        "view_overrun_rejected=%s index_overrun_rejected=%s (%s)",
+        good_ok ? "yes" : "no", accessor_ok ? "yes" : "no", view_ok ? "yes" : "no",
+        indices_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
+
 bool run_mip_gate(const engine::rhi::ITexture& texture, engine::u32 source_width) {
     engine::u32 expected = 1;
     engine::u32 dim = source_width;
@@ -3849,6 +4024,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         return false;
     }
     if (!run_gltf_extras_gate() && fail_on_gate) {
+        return false;
+    }
+    if (!run_gltf_validate_gate() && fail_on_gate) {
         return false;
     }
     const engine::f32 husky_metallic = husky_gltf.metallic;
