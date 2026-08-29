@@ -26,6 +26,11 @@ file doesn't cover.
 5. Run `/ship-feature` to close it out (updates the map/roadmap, commits,
    pushes).
 
+Separately, `/analizeMax` audits the whole engine — code and non-code — and
+grades six dimensions against an absolute standard. It is expensive and
+deliberate: run it to get the real picture, not during feature work. Output
+lands in [docs/analysis/](docs/analysis/README.md).
+
 ## Non-negotiables
 
 These outrank convenience every time, regardless of what a session's context
@@ -43,6 +48,9 @@ window still holds:
 - One feature, one gate, one package. Don't scaffold an empty package with no
   implementation (see [docs/packageRules.md](docs/packageRules.md)).
 - Don't skip a Ready row to add an unrelated graphics-paper feature.
+
+Language-level conventions (namespaces, ownership, header layout):
+[.claude/rules/cpp-conventions.md](.claude/rules/cpp-conventions.md).
 
 Full lists: [docs/packageRules.md](docs/packageRules.md),
 [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md)'s "Cross-cutting rules" section.
@@ -64,7 +72,8 @@ any debug-layer message as a build-breaking bug, not a warning to skip.
 pwsh -NoProfile -File tools/check-invariants.ps1
 ```
 
-Machine-checks the non-negotiables above plus doc-level drift: graphics-API
+Machine-checks the non-negotiables above plus doc-level drift. Ten checks:
+every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
 the ROADMAP LOC audit, and spec statuses. No compiler or GPU needed — this is

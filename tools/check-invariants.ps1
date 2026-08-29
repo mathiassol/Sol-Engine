@@ -199,9 +199,13 @@ Add-Result 'header-layout' 'public headers under include/engine/<domain>/' $head
 # Catches the class of bug where a doc points at a file that was deleted or
 # renamed.
 #
-# Two exclusions, both deliberate:
+# Three exclusions, all deliberate:
 #   docs/superpowers/  - specs and plans are dated archives. A link that was
 #                        valid when written is allowed to age.
+#   docs/analysis/     - generated audit reports from /analizeMax. Same reason
+#                        as superpowers/: dated snapshots, and a report five
+#                        runs old may reference a file that has since moved. A
+#                        generated file must never be able to turn CI red.
 #   reasarch/          - a personal research library. Its PDFs and figures are
 #                        gitignored (paper extracts, public MIT repo), so its
 #                        image embeds resolve on the author's disk and not in a
@@ -211,6 +215,7 @@ $mdFiles = Get-ChildItem -Recurse -File -Include '*.md' |
     Where-Object {
         $_.FullName -notmatch '[\\/](build|node_modules|\.git)[\\/]' -and
         $_.FullName -notmatch '[\\/]docs[\\/]superpowers[\\/]' -and
+        $_.FullName -notmatch '[\\/]docs[\\/]analysis[\\/]' -and
         $_.FullName -notmatch '[\\/]reasarch[\\/]'
     }
 foreach ($md in $mdFiles) {
