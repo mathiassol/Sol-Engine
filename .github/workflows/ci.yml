@@ -1,0 +1,99 @@
+name: CI
+
+# Trunk-based: commits land directly on main, so push is the real trigger.
+# pull_request is here for the day that changes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes an in-flight run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Source-only checks. No compiler, no GPU, no build directory. ──────────
+  # This is the job that would have caught the drift the 28 Aug audit found:
+  # a fabricated dependency edge, a doc pointing at a deleted file, LOC audit
+  # figures gone stale, a spec never marked implemented.
+  invariants:
+    name: Invariants
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check architectural invariants
+        shell: pwsh
+        run: pwsh -NoProfile -File tools/check-invariants.ps1
+
+  # ── Configure and compile both shipping configurations. ──────────────────
+  build:
+    name: Build (Debug + Release game)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          cmake --version
+          Write-Host "Default generator on this image:"
+          cmake --system-information 2>$null | Select-String -Pattern '^CMAKE_GENERATOR ' | Select-Object -First 1
+
+      # No -G on purpose. The dev box pins "Visual Studio 18 2026"; the runner
+      # image ships whatever it ships. Letting CMake pick its default Visual
+      # Studio generator keeps CI working across image updates instead of
+      # breaking the day the image moves.
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build Debug
+        run: cmake --build build --config Debug
+
+      - name: Build Release game
+        run: cmake --build build --config Release --target game
+
+      # If the runner image ever lacks the Windows SDK's dxcompiler.dll,
+      # packages/game/CMakeLists.txt fails configure with a FATAL_ERROR. The
+      # fallback is to add -DENGINE_BUILD_GAME=OFF to the Configure step above
+      # and drop this one; the engine and sandbox do not need DXC at configure
+      # time.
+
+      # NOTE: `--gates` is deliberately NOT run here, and adding it will not
+      # work. The D3D12 backend skips any adapter flagged
+      # DXGI_ADAPTER_FLAG_SOFTWARE (packages/rhi-d3d12/src/device_d3d12.cpp),
+      # and a hosted runner has no hardware D3D12 adapter, so device creation
+      # fails for environmental reasons rather than because anything is broken.
+      # Run the gates locally before pushing, or on a self-hosted runner with
+      # a real GPU.
+
+  # ── The modularity claim, kept honest. ───────────────────────────────────
+  # Every one of these switches is documented in README.md's CMake options
+  # table. Before this job existed, -DENGINE_RHI_D3D12=OFF failed at generate
+  # time and had done for some time, because packages/shaders was gated behind
+  # the D3D12 option while debug-draw linked it unconditionally.
+  #
+  # Configure only: with a backend switched off the sandbox does not compile
+  # (its DXC and PNG includes are unguarded). That is a real gap, but a
+  # separate one — this job checks that the CMake graph stays coherent.
+  configure-options:
+    name: Configure (${{ matrix.option }}=OFF)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        option:
+          - ENGINE_RHI_D3D12
+          - ENGINE_PLATFORM_WIN32
+          - ENGINE_BUILD_SANDBOX
+          - ENGINE_BUILD_GAME
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure with ${{ matrix.option }}=OFF
+        run: cmake -B build-off -A x64 -D${{ matrix.option }}=OFF

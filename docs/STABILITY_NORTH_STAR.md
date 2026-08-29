@@ -178,7 +178,7 @@ observability stack we need for years.
 | ~~Profiler no-op~~ | **Done** (Horizon A2) — real RAII scopes, F3 shows `P`/`X`/`E` ms. |
 | ~~Upload `wait_idle`~~ | **Done** (Horizon B2) — fenced upload ring. |
 | ~~No GPU timestamps~~ | **Done** (Horizon A3) — F3 shows `G` GPU ms. |
-| Gates only inside `sandbox.exe` / `game.exe` | Nothing runs them automatically — no CI, no git hook. Easy to ship a broken compile check. |
+| Gates only inside `sandbox.exe` / `game.exe` | CI compiles both configs and runs `tools/check-invariants.ps1`, but **nothing runs `--gates` automatically** — a hosted runner has no hardware D3D12 adapter and the backend skips software ones. Run them locally, or add a self-hosted runner with a GPU. |
 | `DrawItem` raw GPU pointers | Fine for one frame; dangling if owners reset mid-frame. Document + assert, don’t invent an ID indirection yet. |
 | FXC (`D3DCompile`) in a package named dxc | Done in Phase 9 (`IDxcCompiler3`, SM 6.0). Bindless SM 6.6 still waits on material count. |
 

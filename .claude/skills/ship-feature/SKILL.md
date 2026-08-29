@@ -22,7 +22,14 @@ confirm the D3D12 debug layer stayed silent — any debug-layer message is
 build-breaking, not a warning to skip. If build/install-layout code changed,
 also run `.\build\bin\Release\game.exe --gates`.
 
-Do not continue past this step on a red gate.
+Then run the invariant checks, which need no compiler and no GPU:
+
+```bash
+pwsh -NoProfile -File tools/check-invariants.ps1
+```
+
+Both must be green. Do not continue past this step on a red gate or a failed
+invariant.
 
 ## 2. Update docs/ENGINE_MAP.md
 

@@ -21,6 +21,10 @@ add_subdirectory(packages/math)
 # ── Layer 1: Abstractions (interfaces) ───────────────────────────────────────
 add_subdirectory(packages/platform)
 add_subdirectory(packages/rhi)
+# Backend-agnostic shader-compiler contract. Belongs here with the other
+# interfaces, not behind ENGINE_RHI_D3D12 — debug-draw links it unconditionally,
+# so gating it made -DENGINE_RHI_D3D12=OFF fail at generate time.
+add_subdirectory(packages/shaders)
 add_subdirectory(packages/assets)
 add_subdirectory(packages/audio)
 add_subdirectory(packages/physics)
@@ -47,7 +51,6 @@ endif()
 
 option(ENGINE_RHI_D3D12 "Build D3D12 RHI backend" ON)
 if(ENGINE_RHI_D3D12 AND WIN32)
-    add_subdirectory(packages/shaders)
     add_subdirectory(packages/shaders-dxc)
     add_subdirectory(packages/rhi-d3d12)
 endif()

@@ -1,5 +1,7 @@
 # Engine
 
+[![CI](https://github.com/mathiassol/Sol-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/mathiassol/Sol-Engine/actions/workflows/ci.yml)
+
 General-purpose C++ game engine (Unity / Godot / Unreal category) — interface
 and implementation packages, dependencies only downward, stability as the
 method so systems stay swappable.
@@ -91,6 +93,17 @@ full mip chain, sampling `/content/textures/husky/Cartoon_Husky_Albedo1.png` …
 ```
 
 Exits `0` on pass, `1` on fail.
+
+**Invariant checks** — no compiler or GPU needed, and what CI runs:
+
+```powershell
+pwsh -NoProfile -File tools/check-invariants.ps1
+```
+
+CI compiles Debug and Release `game`, configures with each `ENGINE_*` option
+off, and runs the invariant checks. It does **not** run `--gates`: the D3D12
+backend skips software adapters, and hosted runners have no hardware one.
+Run the gates locally before pushing.
 
 **Optional:** in **Debug**, `ENGINE_GPU_DEBUG=1` enables the D3D12 debug layer and shader debug flags. Release `game.exe` ignores it.
 
