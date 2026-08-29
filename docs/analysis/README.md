@@ -7,6 +7,13 @@ overwritten or rotated on the next run.
 |------|-----------|
 | `LATEST.md` | The one-page summary. **Overwritten every run.** |
 | `YYYY-MM-DD-HHMM-full.md` | The full report. The **five newest are kept**; older ones are deleted automatically. |
+| `PLAN.md` | The phased remediation plan. **Overwritten every run.** Applied by `/analizeMax-execute`. |
+
+Every task in `PLAN.md` passed an admission test before it was written:
+reversible by one `git revert`, verifiable by a named command, no behaviour
+change, no judgement call, and a file list known up front. Anything that
+failed the test is listed under **Needs a decision** and is never
+auto-executed.
 
 `LATEST.md` carries the published artifact URL in its frontmatter so reruns
 update the same artifact instead of creating a new one. Do not remove that line.

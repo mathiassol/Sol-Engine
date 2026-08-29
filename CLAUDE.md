@@ -29,7 +29,10 @@ file doesn't cover.
 Separately, `/analizeMax` audits the whole engine — code and non-code — and
 grades six dimensions against an absolute standard. It is expensive and
 deliberate: run it to get the real picture, not during feature work. Output
-lands in [docs/analysis/](docs/analysis/README.md).
+lands in [docs/analysis/](docs/analysis/README.md), including a phased plan
+that `/analizeMax-execute` applies — normally, across subagents, or as a
+workflow. Only fixes that need no approval reach that plan; judgement calls
+stay on a separate list.
 
 ## Non-negotiables
 
