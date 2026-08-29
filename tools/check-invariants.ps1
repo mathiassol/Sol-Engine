@@ -197,13 +197,21 @@ Add-Result 'header-layout' 'public headers under include/engine/<domain>/' $head
 
 # ── 8. Markdown links resolve ────────────────────────────────────────────────
 # Catches the class of bug where a doc points at a file that was deleted or
-# renamed. docs/superpowers/ is excluded: specs and plans are dated archives,
-# and a link that was valid when written is allowed to age.
+# renamed.
+#
+# Two exclusions, both deliberate:
+#   docs/superpowers/  - specs and plans are dated archives. A link that was
+#                        valid when written is allowed to age.
+#   reasarch/          - a personal research library. Its PDFs and figures are
+#                        gitignored (paper extracts, public MIT repo), so its
+#                        image embeds resolve on the author's disk and not in a
+#                        clean checkout. Known and accepted, not silently.
 $linkViolations = @()
 $mdFiles = Get-ChildItem -Recurse -File -Include '*.md' |
     Where-Object {
         $_.FullName -notmatch '[\\/](build|node_modules|\.git)[\\/]' -and
-        $_.FullName -notmatch '[\\/]docs[\\/]superpowers[\\/]'
+        $_.FullName -notmatch '[\\/]docs[\\/]superpowers[\\/]' -and
+        $_.FullName -notmatch '[\\/]reasarch[\\/]'
     }
 foreach ($md in $mdFiles) {
     $dir = Split-Path -Parent $md.FullName

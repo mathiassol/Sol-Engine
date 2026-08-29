@@ -25,7 +25,7 @@ jobs:
     name: Invariants
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check architectural invariants
         shell: pwsh
@@ -36,7 +36,7 @@ jobs:
     name: Build (Debug + Release game)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Show toolchain
         shell: pwsh
@@ -93,7 +93,7 @@ jobs:
           - ENGINE_BUILD_SANDBOX
           - ENGINE_BUILD_GAME
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Configure with ${{ matrix.option }}=OFF
         run: cmake -B build-off -A x64 -D${{ matrix.option }}=OFF
