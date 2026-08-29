@@ -117,10 +117,38 @@ function pointers on `StandardFrameDesc`.
 
 ## Swap cost today
 
-Phase 14 put samplers and compute on the RHI contract. D3D12 now implements
-compute (PSO + dispatch + buffer UAV readback) and cube / array textures.
-Remaining gaps for a second backend: SPIR-V. Do not implement `rhi-vulkan`
-until you need a second daily driver; D3D12 stays the production backend.
+Samplers and compute are on the RHI contract, and D3D12 implements compute (PSO
++ dispatch + buffer UAV readback) and cube / array textures. Do not implement
+`rhi-vulkan` until you need a second daily driver; D3D12 stays the production
+backend.
+
+What a second backend would still have to deal with, in rough order of cost:
+
+- **SPIR-V.** `ShaderTarget` already rejects it; the DXC path needs `-spirv`
+  plus the `-fvk-*-shift` binding shifts, since D3D's separate `b`/`t`/`s`
+  register spaces all collide at binding 0 in Vulkan. No shader edits.
+- **NDC Y.** The one clip-space convention that is not already portable. Depth
+  range, matrix order and texture origin agree across D3D12, Vulkan and Metal.
+  All the Y-dependent helpers live in
+  `packages/sandbox/content/shaders/common.hlsli`, so the flip is one edit —
+  but read the note there about varyings before choosing where to apply it.
+- **Descriptor sets.** `set_constant_buffer` / `set_shader_resource` are a flat
+  per-slot model with no set concept, so a Vulkan backend must synthesize one
+  (push descriptors, or per-frame pools with a dirty-slot cache). Metal's
+  argument tables map to it almost directly.
+- **Barriers.** `transition()` takes the old state explicitly, D3D12-style.
+  That works because `RenderGraph` centralizes the tracking — exactly one
+  `transition()` call escapes it, in a compute gate. The gap is that
+  `ResourceState::ShaderRead` does not say *which* stage reads, so a Vulkan
+  backend must over-synchronize until a stage scope is added.
+- **Present.** `ISwapchain::present()` returns `void`, so there is no channel
+  for `VK_ERROR_OUT_OF_DATE_KHR`. Resize is driven only by window events today,
+  which is not sufficient on Wayland.
+
+Two D3D12-isms have already been removed rather than left for that author to
+trip over: `IDevice::frame_slot()` (the backbuffer index is not a
+frame-in-flight slot on Vulkan) and `ICommandList::set_sampler` (a dead virtual
+whose only implementation logged an error).
 
 ## Build
 

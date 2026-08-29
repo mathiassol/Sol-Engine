@@ -8,19 +8,40 @@ What the foundation layer provides and how to use it. Foundation gates in [ROADM
 
 - `Clock` — monotonic seconds, `tick()` returns delta.
 - `FrameTimer` — per-frame `begin_frame()`, fixed-step accumulator via `consume_fixed_step()`.
-- `FrameContext` — passed to engine callbacks; carries `frame_index`, `delta`, `fixed_delta`, `alpha`, `cpu_frame_slot` (CPU timer ring). GPU in-flight index is `IDevice::frame_slot()`, filled after the device begins a frame.
+- `FrameContext` — passed to engine callbacks; carries `frame_index`, `delta`, `fixed_delta`, `alpha`, `fixed_steps`, `cpu_frame_slot` (CPU timer ring). There is no longer an `IDevice::frame_slot()`: it conflated the backbuffer index with the frame-in-flight slot, which is false on Vulkan, and nothing outside the D3D12 backend used it.
 
-Delta is clamped (`max_delta` default 0.25s) to avoid spiral-of-death.
+Two separate guards, and both are needed:
+
+- `max_delta` (default 0.25 s) clamps **one frame's** input delta.
+- `max_steps_per_frame` (default 16) caps how many fixed steps a single frame
+  will drain, discarding the backlog at the cap.
+
+`max_delta` alone does not prevent a spiral. If a fixed step costs more wall
+time than it simulates, the accumulator grows every frame and the loop takes
+longer every frame — an unrecoverable freeze. Hitting the step cap drops
+simulated time (the world runs slow) which is recoverable. A non-positive
+`fixed_timestep` is also guarded rather than looping forever.
 
 ### Memory — `engine::Arena`
 
-Linear bump allocator. Reset once per frame via `Engine::frame_arena()`. No individual free — for per-frame temporaries only. `Arena::push<T>()` placement-news a `T` from the current bump pointer.
+Linear bump allocator. Reset once per frame via `Engine::frame_arena()`. No
+individual free — for per-frame temporaries only. `Arena::push<T>()`
+placement-news a `T` from the current bump pointer.
+
+**Exhaustion returns `nullptr`; it does not abort.** How much a frame needs
+depends on the scene, so running out is a content outcome, not a programmer
+error. `alloc`, `push<T>` and `push_n<T>` are all `[[nodiscard]]` and every
+caller must check — the caller drops its work for the frame instead of taking
+the process down. `overflowed()` reports it (cleared by `reset()`), and the
+arena logs once per reset. `push_n<T>` also rejects a `sizeof(T) * count` that
+would wrap, which previously passed the capacity check and then overran the
+buffer during construction.
 
 ### Diagnostics
 
 - `log(level, channel, message)` — channels: `General`, `Platform`, `Render`, `Assets`, `Audio`, `Physics`. Default logger is mutex-serialized stderr. There is no file logger yet (Foundation #6).
 - `fnv1a64(bytes)` (`core/hash.hpp`) — 64-bit FNV-1a, with `kFnvOffset64` / `kFnvPrime64` exposed for incremental hashing. Used for asset handle ids and shader cache keys.
-- `ENGINE_ASSERT` / `ENGINE_ASSERT_MSG` — Debug and Release abort on programmer error (arena OOM, buffer write bounds)
+- `ENGINE_ASSERT` / `ENGINE_ASSERT_MSG` — live in **both** Debug and Release (there is no `NDEBUG` guard), and abort. Reserve them for genuine programmer error — a violated precondition inside the engine. Capacity that depends on content (arena, frame ring, descriptor window) returns a failure instead, because aborting there is unrecoverable *and* untestable: no gate can exercise a path that calls `std::abort()`.
 - `ENGINE_PROFILE_SCOPE("name")` — RAII CPU scope. Default `FrameProfiler` keeps 8 named slots and reports the previous frame via `profiler_scope_ms()`. `profiler_begin_frame()` runs at the start of `Engine::run`. Overlay: F3 `P`/`X`/`E`/`G`.
 
 ### Config / cvars — `engine::Cvar`
@@ -224,7 +245,24 @@ Escape closes the window via engine default handling.
 
 ## GPU frame memory
 
-`IDevice::alloc_frame_memory(size)` bump-allocates 256-byte-aligned slices from a 64 KiB upload ring **per** `frame_slot()`. `begin_frame` waits that slot, then resets the bump pointer, so the GPU is done with the region before CPU reuse. Opaque draws, the F3 overlay, and F4 debug lines write constants / vertices here — not a persistent CBV that can race with in-flight frames.
+`IDevice::alloc_frame_memory(size)` bump-allocates 256-byte-aligned slices from
+a **1 MiB** upload ring per frame-in-flight slot (3 MiB total). `begin_frame`
+waits that slot, then resets the bump pointer, so the GPU is done with the
+region before CPU reuse. Opaque draws, the F3 overlay, and F4 debug lines write
+constants / vertices here — not a persistent CBV that can race with in-flight
+frames.
+
+Budget: the standard frame spends **1280 bytes per drawn instance** (shadow 256
++ forward 512 + motion 512, each 256-aligned), plus ~3 KB fixed for sky, bloom,
+TAA, tonemap and overlay, plus 576 bytes per debug AABB with F4 on. 1 MiB
+covers roughly 800 drawn instances with every pass active.
+
+**Exhaustion returns an empty `FrameAllocation`** (`buffer == nullptr`) and logs
+once per frame; it does not abort. Callers must check: the geometry passes drop
+that draw, the fullscreen passes skip. A frame missing an object is
+recoverable. The shader descriptor window (4096 per slot) degrades differently
+— it reuses its last slot, because an unbound descriptor table is a GPU fault
+while a wrong texture is only a bad frame.
 
 Staging copies wait only for the previous copy list fence, not a full `wait_idle()`.
 

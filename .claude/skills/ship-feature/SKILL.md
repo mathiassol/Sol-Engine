@@ -86,6 +86,20 @@ Run `git status`. Stage only the files that belong to this feature — the
 implementation plus the docs touched above. Name paths explicitly; never
 `git add -A` or `git add .`.
 
+## 5b. Re-run the invariants, last, on what you are about to commit
+
+```bash
+pwsh -NoProfile -File tools/check-invariants.ps1
+```
+
+Not a duplicate of step 1. The LOC audit in step 3 is a snapshot, and any edit
+after it — including the doc edits in step 4 — makes it stale. Running the
+checks *immediately before* the commit is the only way the number in ROADMAP.md
+describes the tree being committed.
+
+This is not hypothetical: it is exactly how commit `979c840` went out claiming
+21,877 lines against a tree holding 21,881, and CI caught it on the next push.
+
 ## 6. Commit
 
 Use `type(package): summary (Category #N)` — `feat` for a shipped Ready row,

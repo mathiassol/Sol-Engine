@@ -2096,10 +2096,30 @@ bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher) {
     engine::Clock clock;
     watcher.request_compile();
 
+    // The claim under test is that poll() never blocks the caller waiting on
+    // the compiler - it hands back Busy and returns.
+    //
+    // Asserting that on max poll time alone made this gate load-sensitive: the
+    // measurement is wall-clock around a call, so one OS deschedule under a
+    // loaded machine reads as a 30 ms "block" from a call that did no such
+    // thing. Observed 0.36-0.55 ms idle and 33.60 ms while two full builds ran
+    // beside it, which is a 60x outlier against a 16 ms bar.
+    //
+    // So judge the *proportion* of slow polls, not a count of them. If poll
+    // really blocked on the compile then every poll before it finishes is
+    // slow; a scheduling artifact is a minority of samples.
+    //
+    // A fixed allowance does not work here, and the negative control proves
+    // it: simulating a blocking poll produced slow=2/2 - literally every poll
+    // - yet an "allow 2" bar passed it, because a blocking poll also makes the
+    // loop run few iterations. Majority-slow is the test that separates the
+    // two.
     constexpr engine::f32 kMaxPollMs = 16.f;
     constexpr engine::f64 kTimeoutS = 30.0;
     engine::f32 first_poll_ms = 0.f;
     engine::f32 max_poll_ms = 0.f;
+    engine::u32 poll_count = 0;
+    engine::u32 slow_polls = 0;
     bool have_first = false;
     bool saw_busy = false;
     bool reloaded = false;
@@ -2116,8 +2136,12 @@ bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher) {
             first_poll_ms = poll_ms;
             have_first = true;
         }
+        ++poll_count;
         if (poll_ms > max_poll_ms) {
             max_poll_ms = poll_ms;
+        }
+        if (poll_ms > kMaxPollMs) {
+            ++slow_polls;
         }
         if (status == engine::shaders::ShaderReloadStatus::Busy) {
             saw_busy = true;
@@ -2133,13 +2157,16 @@ bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    const bool fast = have_first && max_poll_ms < kMaxPollMs;
+    // Majority-slow means blocking. Needs at least two samples to judge.
+    const bool fast = have_first && poll_count >= 2 && slow_polls * 2 <= poll_count;
     const bool passed = reloaded && fast;
-    char message[224];
+    char message[256];
     std::snprintf(message, sizeof(message),
-        "Async compile gate: first_poll=%.2fms max_poll=%.2fms busy=%s reloaded=%s (%s)",
-        first_poll_ms, max_poll_ms, saw_busy ? "yes" : "no",
-        reloaded ? "yes" : "no", passed ? "pass" : "FAIL");
+        "Async compile gate: first_poll=%.2fms max_poll=%.2fms slow=%u/%u (>%.0fms, fail if majority) "
+        "busy=%s reloaded=%s (%s)",
+        first_poll_ms, max_poll_ms, slow_polls, poll_count,
+        static_cast<double>(kMaxPollMs),
+        saw_busy ? "yes" : "no", reloaded ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
     return passed;

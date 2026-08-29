@@ -6,7 +6,7 @@ is not the work list. The backlog is [ENGINE_MAP.md](ENGINE_MAP.md): pick one
 **Ready** row. There is no dashboard or canvas; these two files are read
 directly.
 
-Last updated: 28 Aug 2026.
+Last updated: 29 Aug 2026.
 
 ---
 
@@ -47,9 +47,9 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **21,992 lines** of C++/HLSL in **133 files**, **26
+Measured 29 Aug 2026: **22,019 lines** of C++/HLSL in **133 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
-of the engine (2,901 lines). `sandbox` is 6,253; `renderer` is 2,687.
+of the engine (2,901 lines). `sandbox` is 6,280; `renderer` is 2,687.
 `physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
 (install layout, no extra .cpp).
 
@@ -91,7 +91,7 @@ picked from the map.
    `ENGINE_GPU_DEBUG=1`).
 3. Add its Why / Choice / Gate (met) / Do-not entry here, flip the row to
    **Done** in ENGINE_MAP.md, and recount **line counts**
-   (`packages/**/*.{cpp,hpp,h,hlsl}`, exclude `build/` and `third_party/`).
+   (`packages/**/*.{cpp,hpp,h,hlsl,hlsli}`, exclude `build/` and `third_party/`).
    `/ship-feature` does all of this.
 4. Do not start the next row in the same session unless the gate is green.
 
