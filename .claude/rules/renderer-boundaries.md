@@ -37,7 +37,9 @@ swap test this engine is built to pass.
 ## Adding a render pass — the whole checklist
 
 `add_pass` is where the pass is *registered*, but a working pass touches two
-packages and four files. Missing a step fails **silently**: every
+packages and eight files — the four structs in step 3 live in four different
+files, and the shader, registration and recorder add four more. Missing a step
+fails **silently**: every
 `should_execute` predicate treats a null pipeline as "feature disabled", so a
 forgotten copy line produces a pass that never runs and never complains.
 

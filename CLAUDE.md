@@ -42,8 +42,10 @@ window still holds:
 - Renderer never includes a graphics-API header (`d3d12.h` or equivalent) —
   only `rhi`. A new pass is registered with `add_pass` in
   `packages/renderer/src/standard_frame.cpp`, never from the sandbox — but the
-  pass's shader and pipeline *are* app-owned, so a working pass spans four
-  files. Full checklist: [.claude/rules/renderer-boundaries.md](.claude/rules/renderer-boundaries.md).
+  pass's shader and pipeline *are* app-owned, so a working pass spans eight
+  files — four structs to plumb through, plus the shader, the pass
+  registration, the recorder, and the gate. Full checklist:
+  [.claude/rules/renderer-boundaries.md](.claude/rules/renderer-boundaries.md).
 - Dependencies only point downward. No circular dependencies.
 - Engine ≠ editor. No inspector, hierarchy, or content-browser UI inside any
   engine package or the sandbox. An editor, if it ever exists, is a separate

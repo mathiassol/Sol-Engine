@@ -32,7 +32,10 @@ cmake -B build -G "Visual Studio 18 2026" -A x64
 cmake --build build --config Debug
 ```
 
-**Run sandbox** — content mounts are resolved from the repo root (works from any CWD):
+**Run sandbox** — content mounts are resolved next to the executable
+(`build/bin/Debug`, layout `install`), which CMake refreshes on every build;
+works from any CWD. Shader edits under `packages/sandbox/content/` therefore
+need a rebuild to be picked up.
 
 ```powershell
 .\build\bin\Debug\sandbox.exe
