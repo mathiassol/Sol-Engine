@@ -4957,7 +4957,7 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
 
     state.forward = std::move(demo);
     engine::log(engine::LogLevel::Info, engine::LogChannel::Render,
-        "Forward pass ready (AA default Off / F5 FXAA+SMAA+TAA, F11 windowed/borderless, Tab/Start walk, Enter/Y follow/orbit/FPS, Space/A jump, pad sticks, motion vectors, Karis bloom, source cubemap sky, split-sum IBL, PBR GGX, 16-tap Vogel PCF, materials, renderer-owned frame, 64 instances, frustum skip, async DXC, glTF husky + mips, HDR, F4 AABBs, Space beep, Z/X, WASD look)");
+        "Forward pass ready (AA default Off / F5 FXAA+SMAA+TAA, F11 windowed/borderless, Tab/Start walk, Enter/Y follow/orbit/FPS, Space/A jump, pad sticks, motion vectors, Karis bloom, source cubemap sky, split-sum IBL, PBR GGX, 16-tap Vogel PCF, materials, renderer-owned frame, 512 instances, frustum skip, async DXC, glTF husky + mips, HDR, F4 AABBs, Space beep, Z/X, WASD look)");
     return true;
 }
 

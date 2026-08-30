@@ -1044,6 +1044,10 @@ private:
 
     void add_event(TriggerEventType type, const TriggerPair& pair) {
         if (event_count_ >= kMaxTriggerEvents) {
+            // Dropping these silently meant a trigger that never fired and
+            // nothing in the log to explain it. Every other capacity in this
+            // file reports itself; this one did not.
+            warn_physics_capacity("trigger event buffer");
             return;
         }
         events_[event_count_++] = {pair.a, pair.b, type};
