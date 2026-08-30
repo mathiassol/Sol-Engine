@@ -3792,13 +3792,21 @@ bool run_pcf_gate() {
     return passed;
 }
 
-bool run_albedo_gate(const engine::assets::ImageData& image) {
-    const bool passed = image.width > 0 && image.height > 0
+bool run_albedo_gate(const engine::assets::ImageData& image,
+    const engine::rhi::ITexture& texture) {
+    const bool size_ok = image.width > 0 && image.height > 0
         && image.rgba.size() == static_cast<engine::usize>(image.width) * image.height * 4;
+    // Albedo is colour, so it has to be created sRGB or the forward pass runs its
+    // lighting maths on encoded values. Nothing else covers this: the colour
+    // space gate proves the curve and the mip averaging, but it runs before any
+    // albedo exists, so a revert to RGBA8_UNORM here would leave every gate green.
+    const bool srgb_ok = texture.format() == engine::rhi::Format::RGBA8_UNORM_SRGB;
+    const bool passed = size_ok && srgb_ok;
     char message[160];
     std::snprintf(message, sizeof(message),
-        "Albedo PNG gate: %ux%u rgba=%zu (%s)",
+        "Albedo PNG gate: %ux%u rgba=%zu srgb=%s (%s)",
         image.width, image.height, image.rgba.size(),
+        srgb_ok ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
@@ -4869,7 +4877,7 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         if (!load_albedo_texture(loader, *device, kHuskyAlbedos[i], demo->albedos[i], image)) {
             return false;
         }
-        if (i == 0 && !run_albedo_gate(image) && fail_on_gate) {
+        if (i == 0 && !run_albedo_gate(image, *demo->albedos[i]) && fail_on_gate) {
             return false;
         }
         if (i == 0 && !run_mip_gate(*demo->albedos[i], image.width) && fail_on_gate) {

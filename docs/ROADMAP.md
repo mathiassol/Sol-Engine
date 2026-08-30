@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **22,992 lines** of C++/HLSL in **139 files**, **26
+Measured 29 Aug 2026: **23,000 lines** of C++/HLSL in **139 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
 of the engine (3,014 lines). `sandbox` is 6,555; `renderer` is 2,867.
 `physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
@@ -779,6 +779,12 @@ averaging bytes gives 127, averaging light gives 188, and alpha stays 127), and
 compute dispatch and compared against the C++ one. That last assertion is the
 load-bearing one: the curve necessarily exists twice, in `engine::math` and in
 `common.hlsli`, and nothing else would stop them drifting apart.
+
+The `Albedo PNG gate` additionally asserts `srgb=yes` — that the albedo texture
+really is created `RGBA8_UNORM_SRGB`. The colour space gate cannot cover this:
+it runs before any albedo exists, so without this assertion a revert of the
+input half would have left every gate green. Verified by reverting the format
+and watching it report `srgb=no (FAIL)`.
 
 68 gates pass in Debug and in Release `game`, exit 0. D3D12 debug layer reports
 0 messages, 0 errors, 0 warnings. The pre-existing `Mip gate: mips=12
