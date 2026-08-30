@@ -2,6 +2,7 @@
 
 #include <engine/core/assert.hpp>
 #include <engine/core/log.hpp>
+#include <engine/math/mip.hpp>
 
 #include <d3d12shader.h>
 #include <d3d12sdklayers.h>
@@ -95,68 +96,6 @@ u32 resolve_mip_count(const TextureDesc& desc) {
     return desc.mip_levels;
 }
 
-void append_box_mip(std::vector<u8>& packed, usize src_off, u32 src_w, u32 src_h,
-    u32 dst_w, u32 dst_h) {
-    const usize dst_off = packed.size();
-    packed.resize(dst_off + static_cast<usize>(dst_w) * dst_h * 4);
-    const u8* src = packed.data() + src_off;
-    u8* dst = packed.data() + dst_off;
-    for (u32 y = 0; y < dst_h; ++y) {
-        for (u32 x = 0; x < dst_w; ++x) {
-            const u32 x0 = (x * 2 < src_w) ? x * 2 : src_w - 1;
-            const u32 x1 = (x * 2 + 1 < src_w) ? x * 2 + 1 : src_w - 1;
-            const u32 y0 = (y * 2 < src_h) ? y * 2 : src_h - 1;
-            const u32 y1 = (y * 2 + 1 < src_h) ? y * 2 + 1 : src_h - 1;
-            u32 acc[4]{};
-            const u32 samples[4] = {
-                (y0 * src_w + x0) * 4,
-                (y0 * src_w + x1) * 4,
-                (y1 * src_w + x0) * 4,
-                (y1 * src_w + x1) * 4,
-            };
-            for (u32 s = 0; s < 4; ++s) {
-                acc[0] += src[samples[s] + 0];
-                acc[1] += src[samples[s] + 1];
-                acc[2] += src[samples[s] + 2];
-                acc[3] += src[samples[s] + 3];
-            }
-            const usize i = (static_cast<usize>(y) * dst_w + x) * 4;
-            dst[i + 0] = static_cast<u8>(acc[0] / 4);
-            dst[i + 1] = static_cast<u8>(acc[1] / 4);
-            dst[i + 2] = static_cast<u8>(acc[2] / 4);
-            dst[i + 3] = static_cast<u8>(acc[3] / 4);
-        }
-    }
-}
-
-std::vector<u8> build_rgba8_mips(const void* top, u32 width, u32 height, u32 mip_count) {
-    usize total = 0;
-    u32 w = width;
-    u32 h = height;
-    for (u32 mip = 0; mip < mip_count; ++mip) {
-        total += static_cast<usize>(w) * h * 4;
-        w = w > 1 ? w / 2 : 1;
-        h = h > 1 ? h / 2 : 1;
-    }
-
-    std::vector<u8> packed;
-    packed.reserve(total);
-    const usize top_bytes = static_cast<usize>(width) * height * 4;
-    packed.assign(static_cast<const u8*>(top), static_cast<const u8*>(top) + top_bytes);
-    u32 src_w = width;
-    u32 src_h = height;
-    usize src_off = 0;
-    for (u32 mip = 1; mip < mip_count; ++mip) {
-        const u32 dst_w = src_w > 1 ? src_w / 2 : 1;
-        const u32 dst_h = src_h > 1 ? src_h / 2 : 1;
-        append_box_mip(packed, src_off, src_w, src_h, dst_w, dst_h);
-        src_off += static_cast<usize>(src_w) * src_h * 4;
-        src_w = dst_w;
-        src_h = dst_h;
-    }
-    return packed;
-}
-
 void d3d_barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* resource,
     D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     D3D12_RESOURCE_BARRIER barrier{};
@@ -247,6 +186,7 @@ void fill_runtime_sampler(D3D12_SAMPLER_DESC& out, const SamplerDesc& desc) {
 DXGI_FORMAT to_dxgi(Format format) {
     switch (format) {
     case Format::RGBA8_UNORM:  return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case Format::RGBA8_UNORM_SRGB: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     case Format::RGBA16_FLOAT: return DXGI_FORMAT_R16G16B16A16_FLOAT;
     case Format::D32_FLOAT:    return DXGI_FORMAT_D32_FLOAT;
     case Format::Unknown:      return DXGI_FORMAT_UNKNOWN;
@@ -2112,12 +2052,16 @@ std::unique_ptr<ITexture> D3D12Device::create_sampled_texture(const TextureDesc&
         return nullptr;
     }
 
-    const bool can_mips = data && desc.format == Format::RGBA8_UNORM && array_size == 1;
+    // Both 8-bit colour formats are four bytes per texel, so the same box filter
+    // serves them; `srgb` only decides whether it averages light or bytes.
+    const bool is_srgb = desc.format == Format::RGBA8_UNORM_SRGB;
+    const bool rgba8 = desc.format == Format::RGBA8_UNORM || is_srgb;
+    const bool can_mips = data && rgba8 && array_size == 1;
     const u32 mips = can_mips ? resolve_mip_count(desc) : (desc.mip_levels == 0 ? 1 : desc.mip_levels);
     std::vector<u8> mip_bytes;
     const void* upload_data = data;
     if (can_mips && mips > 1) {
-        mip_bytes = build_rgba8_mips(data, desc.width, desc.height, mips);
+        mip_bytes = math::build_rgba8_mip_chain(data, desc.width, desc.height, mips, is_srgb);
         upload_data = mip_bytes.data();
     }
 

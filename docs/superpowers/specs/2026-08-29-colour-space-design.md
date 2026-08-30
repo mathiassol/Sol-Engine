@@ -1,7 +1,7 @@
 # Colour-space correctness — sRGB decode on input, sRGB encode on output
 
 Date: 29 Aug 2026
-Status: approved
+Status: implemented
 
 Closes audit finding **S1** from
 [docs/analysis/2026-08-29-1149-full.md](../../analysis/2026-08-29-1149-full.md),
@@ -132,15 +132,28 @@ This is why a one-line enum addition spans three packages.
 variant too — otherwise the albedo silently loses its 12-mip chain. The
 existing `Mip gate: mips=12 expected=12` catches that regression.
 
-`build_rgba8_mips` and `append_box_mip` take an `srgb` flag. When set, RGB
-channels are decoded to linear, averaged, and re-encoded; **alpha is averaged
-directly**, because the format does not transform it.
+The mip builder **moves out of `rhi-d3d12` into `math`** as
+`math::build_rgba8_mip_chain(top, w, h, mip_count, srgb)`, replacing the private
+`build_rgba8_mips` / `append_box_mip` pair. This was not in the first draft of
+this spec: the gate below asserts the mip behaviour, and a gate cannot reach a
+static function inside a backend translation unit, so leaving it there would
+have made the central claim of this change untestable. It is pure pixel
+arithmetic with no graphics dependency, so `math` is where it belongs anyway.
+
+When `srgb` is set, RGB channels are decoded to linear, averaged, and
+re-encoded; **alpha is averaged directly**, because the format does not
+transform it.
 
 ### Shaders
 
 `common.hlsli` gains `srgb_encode()` and `srgb_decode()`, using the same
-piecewise curve as the C++ side. The file already documents the four
-conventions that decide shader portability; colour space joins them.
+piecewise curve as the C++ side, in both scalar and `float3` overloads. The file
+already documents four conventions that decide shader *portability*; colour
+space is filed alongside them as a *correctness* convention rather than added to
+that list, since all three target APIs handle sRGB the same way.
+
+One implementation trap: `linear` is an HLSL interpolation modifier and cannot
+name a parameter.
 
 `tonemap.hlsl` and `tonemap_aces.hlsl` apply `srgb_encode` to the tonemapped
 result as their final operation. Nothing else in the frame changes: not the

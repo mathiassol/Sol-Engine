@@ -33,6 +33,8 @@
 #include <engine/math/aabb.hpp>
 #include <engine/math/constants.hpp>
 #include <engine/math/mat4.hpp>
+#include <engine/math/mip.hpp>
+#include <engine/math/srgb.hpp>
 #include <engine/math/vec2.hpp>
 #include <engine/math/vec3.hpp>
 #include <engine/scene/world.hpp>
@@ -108,6 +110,7 @@ constexpr const char* kMotionShader = "/shaders/motion.hlsl";
 constexpr const char* kTaaShader = "/shaders/taa.hlsl";
 constexpr const char* kTonemapAcesShader = "/shaders/tonemap_aces.hlsl";
 constexpr const char* kComputeGateShader = "/shaders/compute_gate.hlsl";
+constexpr const char* kSrgbGateShader = "/shaders/srgb_gate.hlsl";
 constexpr engine::u32 kComputeGateMagic = 0xC0DE0001u;
 constexpr const char* kCubeMesh = "/content/meshes/cube.obj";
 constexpr const char* kHuskyMesh = "/content/meshes/cartoon_husky.gltf";
@@ -1335,6 +1338,121 @@ void fill_rgba8(std::vector<engine::u8>& pixels, engine::u32 pixel_count, engine
         pixels[static_cast<size_t>(i) * 4 + 2] = b;
         pixels[static_cast<size_t>(i) * 4 + 3] = 255;
     }
+}
+
+// Colour space: sRGB decode on the way in, sRGB encode on the way out.
+//
+// Four independent assertions, all against numbers derived from IEC 61966-2-1
+// rather than from this code:
+//
+//   1. srgb_to_linear(0.5) == 0.214041. The midpoint anchor.
+//   2. linear_to_srgb(0.001) == 0.01292 (12.92 * 0.001). A pow(1/2.2)
+//      approximation gives 0.0195, so only the piecewise curve passes. This is
+//      the assertion that discriminates.
+//   3. A 2x2 half-black half-white image, mipped. Averaging encoded bytes
+//      gives 127; averaging light gives 0.5 linear, which encodes to 188.
+//      Alpha must still average to 127 - sRGB formats leave alpha alone, and
+//      gamma-correcting it would corrupt it.
+//   4. The HLSL curve matches the C++ one, read back from a compute dispatch.
+//      The curve exists twice by necessity; this is what keeps them in step.
+bool run_color_space_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path) {
+    // 1 + 2: the curve itself.
+    const engine::f32 mid_linear = engine::math::srgb_to_linear(0.5f);
+    const bool mid_ok = std::fabs(mid_linear - 0.2140411f) < 1.e-5f;
+
+    const engine::f32 toe = engine::math::linear_to_srgb(0.001f);
+    const bool toe_ok = std::fabs(toe - 0.01292f) < 1.e-6f;
+
+    bool round_trip_ok = true;
+    for (const engine::f32 v : {0.f, 0.02f, 0.2f, 0.5f, 0.8f, 1.f}) {
+        const engine::f32 back = engine::math::srgb_to_linear(engine::math::linear_to_srgb(v));
+        round_trip_ok = round_trip_ok && std::fabs(back - v) < 1.e-4f;
+    }
+
+    // 3: mip averaging. Two black texels, two white; alpha split the same way.
+    const engine::u8 top[16] = {
+        0, 0, 0, 0,        255, 255, 255, 255,
+        0, 0, 0, 0,        255, 255, 255, 255,
+    };
+    const std::vector<engine::u8> srgb_chain =
+        engine::math::build_rgba8_mip_chain(top, 2, 2, 2, true);
+    const std::vector<engine::u8> linear_chain =
+        engine::math::build_rgba8_mip_chain(top, 2, 2, 2, false);
+    const bool chain_size_ok = srgb_chain.size() == 20 && linear_chain.size() == 20;
+    // mip 1 is the single texel after the 16-byte top level.
+    const engine::u32 srgb_rgb = chain_size_ok ? srgb_chain[16] : 0;
+    const engine::u32 srgb_alpha = chain_size_ok ? srgb_chain[19] : 0;
+    const engine::u32 linear_rgb = chain_size_ok ? linear_chain[16] : 0;
+    const bool mip_ok = chain_size_ok && srgb_rgb == 188 && srgb_alpha == 127
+        && linear_rgb == 127;
+
+    // 4: the HLSL curve, through a UAV readback.
+    engine::shaders::ShaderCompileDesc cs_desc{};
+    cs_desc.file_path = srgb_gate_path;
+    cs_desc.entry_point = "cs_main";
+    cs_desc.target_profile = "cs_6_0";
+    engine::shaders::ShaderBytecode cs_bytecode;
+    std::string error;
+    const bool compiled =
+        compiler.compile(cs_desc, cs_bytecode, error) && !cs_bytecode.data.empty();
+    if (!compiled && !error.empty()) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+    }
+
+    engine::rhi::ComputePipelineDesc compute{};
+    compute.compute_shader = compiled ? std::span<const engine::u8>(cs_bytecode.data)
+                                      : std::span<const engine::u8>{};
+    compute.unordered_access_count = 1;
+    compute.debug_name = "srgb_gate";
+    auto pso = compiled ? device.create_compute_pipeline(compute) : nullptr;
+
+    constexpr engine::usize kProbeBytes = 4 * sizeof(engine::u32);
+    engine::rhi::BufferDesc storage{};
+    storage.size = kProbeBytes;
+    storage.usage = engine::rhi::BufferUsage::Storage;
+    auto rw = device.create_buffer(storage);
+
+    engine::rhi::BufferDesc readback{};
+    readback.size = kProbeBytes;
+    readback.usage = engine::rhi::BufferUsage::Readback;
+    auto rb = device.create_buffer(readback);
+
+    engine::f32 probes[4]{};
+    bool hlsl_ok = false;
+    if (pso && rw && rb) {
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.set_compute_pipeline(*pso);
+        cmd.set_unordered_access(0, *rw);
+        cmd.dispatch(1, 1, 1);
+        cmd.transition(*rw, engine::rhi::ResourceState::UnorderedAccess,
+            engine::rhi::ResourceState::CopySrc);
+        cmd.copy_buffer(*rw, *rb, kProbeBytes);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        device.read_buffer(*rb, 0, probes, kProbeBytes);
+        hlsl_ok = std::fabs(probes[0] - 0.5f) < 2.e-3f
+            && std::fabs(probes[1] - 0.01292f) < 1.e-4f
+            && std::fabs(probes[2] - 0.2140411f) < 2.e-3f
+            && std::fabs(probes[3] - 0.7f) < 2.e-3f;
+    }
+
+    const bool passed = mid_ok && toe_ok && round_trip_ok && mip_ok && hlsl_ok;
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Colour space gate: mid=%.6f toe=%.5f round_trip=%s mip_srgb=%u mip_linear=%u "
+        "mip_alpha=%u hlsl=(%.4f,%.5f,%.4f,%.4f) (%s)",
+        static_cast<double>(mid_linear), static_cast<double>(toe),
+        round_trip_ok ? "yes" : "no", srgb_rgb, linear_rgb, srgb_alpha,
+        static_cast<double>(probes[0]), static_cast<double>(probes[1]),
+        static_cast<double>(probes[2]), static_cast<double>(probes[3]),
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
 }
 
 bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
@@ -4298,7 +4416,10 @@ bool load_albedo_texture(engine::assets::IAssetLoader& loader, engine::rhi::IDev
     engine::rhi::TextureDesc albedo_desc{};
     albedo_desc.width = image.width;
     albedo_desc.height = image.height;
-    albedo_desc.format = engine::rhi::Format::RGBA8_UNORM;
+    // Albedo is colour, so it is sRGB-encoded on disk and the hardware must
+    // decode it before the forward pass does any lighting maths with it. Data
+    // maps — metallic-roughness, normals — stay plain RGBA8_UNORM.
+    albedo_desc.format = engine::rhi::Format::RGBA8_UNORM_SRGB;
     albedo_desc.usage = engine::rhi::TextureUsage::ShaderResource;
     albedo_desc.mip_levels = 0;
     out = device.create_texture(albedo_desc, image.rgba.data());
@@ -4637,6 +4758,17 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
             return false;
         }
     } else if (!run_rhi_impl_gate(*device, compiler, compute_path) && fail_on_gate) {
+        return false;
+    }
+
+    std::string srgb_gate_path;
+    if (!resolve_content(loader, kSrgbGateShader, srgb_gate_path)) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "srgb_gate.hlsl missing");
+        if (fail_on_gate) {
+            return false;
+        }
+    } else if (!run_color_space_gate(*device, compiler, srgb_gate_path) && fail_on_gate) {
         return false;
     }
 

@@ -7,7 +7,16 @@
 
 namespace engine::rhi {
 
-enum class Format : u8 { Unknown, RGBA8_UNORM, RGBA16_FLOAT, D32_FLOAT };
+// RGBA8_UNORM_SRGB is the same bytes as RGBA8_UNORM; the difference is that the
+// hardware applies the sRGB transfer function on sample, *before* filtering, so
+// bilinear and trilinear interpolation happen in linear space. Use it for colour
+// (albedo, emissive) and plain RGBA8_UNORM for data (metallic-roughness, normal
+// maps, masks, LUTs). Alpha is never transformed either way.
+//
+// Note for a second backend: flip-model swapchains do not accept _SRGB formats,
+// so a presented surface stays UNORM and the encode is applied in-shader. See
+// packages/sandbox/content/shaders/common.hlsli.
+enum class Format : u8 { Unknown, RGBA8_UNORM, RGBA8_UNORM_SRGB, RGBA16_FLOAT, D32_FLOAT };
 enum class BufferUsage : u8 { Vertex, Index, Uniform, Storage, Readback };
 enum class TextureDimension : u8 { Tex2D, Tex2DArray, Cube };
 enum class TextureUsage : u8 {

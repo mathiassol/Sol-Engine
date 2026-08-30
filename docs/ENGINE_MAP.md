@@ -153,6 +153,7 @@ features, not a school pile.
 | 25 | Volumetric fog / SSGI / full GI | Far | |
 | 26 | Virtual shadow maps, nanite-like vis, hardware RT | Far | |
 | 27 | Instanced draws: batch the extract by material/mesh key, one `draw_indexed` per batch | **Done** | |
+| 28 | Colour space: sRGB decode on colour textures, sRGB encode after tonemap | **Done** | |
 
 Do not skip PBR to start deferred. Do not add SSAO because a paper has it.
 

@@ -26,5 +26,8 @@ float3 aces_fitted(float3 x) {
 
 float4 ps_main(PSInput input) : SV_TARGET {
     float3 hdr = hdr_color.Sample(linear_sampler, input.uv).rgb;
-    return float4(aces_fitted(hdr), 1.0);
+    // Same as tonemap.hlsl: the fit returns linear, so the display encode is
+    // applied here. This is the TAA path's tonemap; both must agree or toggling
+    // AA would change image brightness.
+    return float4(srgb_encode(aces_fitted(hdr)), 1.0);
 }

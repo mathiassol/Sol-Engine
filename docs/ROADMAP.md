@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **22,623 lines** of C++/HLSL in **134 files**, **26
+Measured 29 Aug 2026: **22,992 lines** of C++/HLSL in **139 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
 of the engine (3,014 lines). `sandbox` is 6,555; `renderer` is 2,867.
 `physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
@@ -712,6 +712,98 @@ failure mode is silently dropped draws. Going past that wants instanced draws
 wants a heap-backed `World`, a name hash table, and cached world matrices - the
 name intern is O(n^2) and the parent walk is uncached. Both are invisible at
 512.
+
+---
+
+## Renderer #28 — colour space: sRGB in, sRGB out (done)
+
+**Why:** The engine ran a physically-based lighting model in the wrong colour
+space at both ends, and nothing detected it. Albedo was created as
+`RGBA8_UNORM` and sampled straight into linear PBR maths, so every diffuse and
+Fresnel term was computed on sRGB-encoded values — sRGB 0.5 is linear 0.214, so
+midtones were inflated by more than a factor of two. Nothing applied a transfer
+function on output either: `ldr_color` and the swapchain are `UNORM`, no shader
+encoded, and the tonemap curve in use is Narkowicz's ACES fit, which is
+linear-in/linear-out — its author states the gamma correction must be applied
+afterwards. A third defect sat between them: the CPU mip chain box-filtered raw
+encoded bytes, which is not averaging light.
+
+The two large errors partially cancelled, which is exactly why this shipped
+unnoticed from the first commit. The split-sum IBL, GGX specular, Smith
+visibility and energy-conservation terms all had gates asserting the *formulas*
+while being fed and consumed in the wrong space. Of 67 gates, none mentioned
+colour space, and no doc in the tree mentioned sRGB or gamma at all — this was
+never a decision, it was an omission. Found as finding S1 of the 29 Aug
+`/analizeMax` audit, the only Critical finding in it.
+
+**Choice:** hardware sRGB on input, explicit encode in the tonemap shaders on
+output. The full reasoning is in
+[the design spec](superpowers/specs/2026-08-29-colour-space-design.md); the two
+rejected alternatives matter most.
+
+- *Hardware sRGB texture format for the decode, not a shader `pow`.* The
+  hardware applies the transfer function on sample **before** filtering, so
+  bilinear and trilinear interpolation happen in linear space. A shader decode
+  filters encoded values and then decodes the blend, which is wrong at every
+  magnification and every mip transition, and costs ALU for the privilege.
+- *Encode in-shader, not via an sRGB render target.* This was the close call.
+  Flip-model swapchains do not accept `_SRGB` formats, so the hardware route
+  means an `_SRGB` RTV over the `UNORM` buffer — and all three
+  `CreateRenderTargetView` calls pass `nullptr` for the desc, so it would mean
+  new RHI surface for format-aliased views. The deciding factor was not cost:
+  FXAA and SMAA read `ldr_color` through an SRV, and an sRGB view would decode
+  it back to linear, putting their luma edge-detection heuristics in the wrong
+  space. Avoiding that needs typeless resources with two views per resource. It
+  would also have silently changed how the debug lines and stats overlay look.
+- *Piecewise curve, not `pow(x, 1/2.2)`.* At linear 0.001 the standard gives
+  `12.92 × 0.001 = 0.01292`; a pow approximation gives 0.0195, over 50% too
+  bright in exactly the range shadow detail lives. Since the input decode is
+  hardware sRGB, which is piecewise, an approximate encode would leave the two
+  ends of the pipeline disagreeing in the darks.
+- *Mip builder moved from `rhi-d3d12` to `math`.* Not tidying: a gate cannot
+  assert a static function inside a backend translation unit, so leaving it
+  there would have made the central claim of this change — that mips average
+  light, not bytes — untestable. It is pure pixel arithmetic with no graphics
+  dependency. `rhi-d3d12` gained one `engine::math` edge, rank 3 → 1, downward.
+
+Alpha is averaged directly in both paths. sRGB formats transform RGB only, so
+gamma-correcting alpha would corrupt it, and the gate asserts that separately.
+
+**Gate (met):** `Colour space gate` asserts four things against numbers derived
+from IEC 61966-2-1 rather than from this code:
+`mid=0.214041` (`srgb_to_linear(0.5)`), `toe=0.01292` (the linear segment — a
+`pow` approximation gives 0.0195, so only the piecewise curve passes),
+`mip_srgb=188 mip_linear=127 mip_alpha=127` (a 2×2 half-black half-white image:
+averaging bytes gives 127, averaging light gives 188, and alpha stays 127), and
+`hlsl=(0.5000,0.01292,0.2140,0.7000)` — the HLSL curve read back through a
+compute dispatch and compared against the C++ one. That last assertion is the
+load-bearing one: the curve necessarily exists twice, in `engine::math` and in
+`common.hlsli`, and nothing else would stop them drifting apart.
+
+68 gates pass in Debug and in Release `game`, exit 0. D3D12 debug layer reports
+0 messages, 0 errors, 0 warnings. The pre-existing `Mip gate: mips=12
+expected=12` covers the trap that `can_mips` tested `format == RGBA8_UNORM`
+exactly, which would have silently dropped the albedo's whole chain.
+
+**Do-not:** Do not add exposure control as part of this. Narkowicz's note calls
+for an exposure multiply as well as the gamma correction, but exposure is a
+separate feature and colour-space correctness does not need it.
+
+Do not retune `sun` or `ambient` to chase the old look. The image changed — that
+is the point — and those constants are sandbox scene authoring, not engine
+behaviour. Retuning is art direction, and doing it inside this change would have
+made neither half verifiable: if the result looks wrong, the pipeline and the
+tuning must stay separately attributable.
+
+Do not create a data texture as `RGBA8_UNORM_SRGB`. The rule is colour gets
+`_SRGB`, data gets `UNORM` — metallic-roughness, normal maps, masks and LUTs are
+data. No such texture is uploaded today (the glTF loader parses their URIs but
+the sandbox never uploads them), so nothing enforces this yet; the next person
+to add one has to get it right by reading.
+
+The remaining known gap: the gate asserts the mip builder's output, not the
+bytes actually uploaded to the GPU. Closing that needs a texture → buffer
+readback path in the RHI, which does not exist. Separate work.
 
 ---
 

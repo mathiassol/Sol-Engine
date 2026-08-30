@@ -35,6 +35,7 @@ const char* format_name(rhi::Format format) {
     switch (format) {
     case rhi::Format::Unknown:     return "Unknown";
     case rhi::Format::RGBA8_UNORM: return "RGBA8_UNORM";
+    case rhi::Format::RGBA8_UNORM_SRGB: return "RGBA8_UNORM_SRGB";
     case rhi::Format::RGBA16_FLOAT: return "RGBA16_FLOAT";
     case rhi::Format::D32_FLOAT:   return "D32_FLOAT";
     }

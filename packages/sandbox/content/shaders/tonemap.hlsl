@@ -30,5 +30,8 @@ float3 aces_fitted(float3 x) {
 float4 ps_main(PSInput input) : SV_TARGET {
     float3 hdr = scene_color.Sample(linear_sampler, input.uv).rgb;
     hdr += bloom_color.Sample(linear_sampler, input.uv).rgb * kBloomIntensity;
-    return float4(aces_fitted(hdr), 1.0);
+    // Narkowicz's fit is linear-in, linear-out — he fitted it after removing the
+    // 2.4 gamma from the Rec.709 ODT — so the display encode is ours to apply.
+    // ldr_color and the swapchain are UNORM, so it happens here, once.
+    return float4(srgb_encode(aces_fitted(hdr)), 1.0);
 }
