@@ -330,14 +330,18 @@ void record_tonemap(PassContext& ctx) {
 
 namespace {
 
-void bind_aa_constants(PassContext& ctx, const rhi::ITexture& src) {
+// False means the constant ring is exhausted and nothing was bound. Returning
+// void here was a bug: the comment claimed it skipped the pass, but only the
+// caller can do that, and all four drew anyway with root CBV slot 0 unset.
+[[nodiscard]] bool bind_aa_constants(PassContext& ctx, const rhi::ITexture& src) {
     const aa::Constants constants = aa::make_constants(src.width(), src.height());
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
     if (!slice.buffer) {
-        return;  // constant ring exhausted this frame; skip the pass
+        return false;  // caller must skip the pass
     }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
+    return true;
 }
 
 } // namespace
@@ -347,7 +351,9 @@ void record_fxaa(PassContext& ctx) {
         return;
     }
     ctx.cmd.set_pipeline(*ctx.snapshot.fxaa_pipeline);
-    bind_aa_constants(ctx, *ctx.shader_reads[0]);
+    if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
+        return;
+    }
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.draw(3);
 }
@@ -357,7 +363,9 @@ void record_smaa_edge(PassContext& ctx) {
         return;
     }
     ctx.cmd.set_pipeline(*ctx.snapshot.smaa_edge_pipeline);
-    bind_aa_constants(ctx, *ctx.shader_reads[0]);
+    if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
+        return;
+    }
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.draw(3);
 }
@@ -367,7 +375,9 @@ void record_smaa_weights(PassContext& ctx) {
         return;
     }
     ctx.cmd.set_pipeline(*ctx.snapshot.smaa_weights_pipeline);
-    bind_aa_constants(ctx, *ctx.shader_reads[0]);
+    if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
+        return;
+    }
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.draw(3);
 }
@@ -378,7 +388,9 @@ void record_smaa_blend(PassContext& ctx) {
         return;
     }
     ctx.cmd.set_pipeline(*ctx.snapshot.smaa_blend_pipeline);
-    bind_aa_constants(ctx, *ctx.shader_reads[0]);
+    if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
+        return;
+    }
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.set_shader_resource(1, *ctx.shader_reads[1]);
     ctx.cmd.draw(3);
