@@ -99,9 +99,10 @@ Machine-checks the non-negotiables above plus doc-level drift. Thirteen checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
-the ROADMAP LOC audit, spec statuses, the analizeMax analysis set, and that a
+the ROADMAP LOC audit, spec statuses, the ENGINE_MAP dependency graph, the
+analizeMax analysis set, and that a
 package added under an `if()` is never linked unconditionally (which would fail
-`cmake` at generate time wherever that condition is false). The last one reads
+`cmake` at generate time wherever that condition is false). That map check reads
 ENGINE_MAP.md as a graph: every `Category #N` in a **Finish first** must
 resolve, a Later row whose named blockers are all Done must be flipped to
 Ready, and no two rows may block each other — a loop means neither ever

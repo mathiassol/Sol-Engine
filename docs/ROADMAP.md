@@ -1102,7 +1102,7 @@ keys and would want a hash the moment either grows an order of magnitude.
 was never called anywhere — the seam existed with zero consumers. Three facts
 compounded into a shipped game that recorded nothing: `game.exe` is a
 console-subsystem binary whose window closes with the process; `assert_fail`
-logged only when handed a message, so the ~40 bare `ENGINE_ASSERT` sites of 77
+logged only when handed a message, so the 56 bare `ENGINE_ASSERT` sites of 76
 wrote nothing at all; and `std::abort()` discards a buffered stream. The most
 common hard failure left no evidence. Found as S4 and S5 in the 31 Aug audit.
 

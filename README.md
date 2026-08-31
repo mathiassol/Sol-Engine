@@ -21,6 +21,12 @@ The sandbox is the proving ground, not the product.
   `Visual Studio 18 2026` generator was added in CMake 4.2
 - C++20 (`/std:c++20`, no compiler extensions) — set by the build
 - Git
+- [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)
+  (`pwsh`) — not part of a base Windows install, and what the documented
+  invariant command below uses. The script also runs unchanged under the
+  built-in Windows PowerShell 5.1, so
+  `powershell -NoProfile -File tools/check-invariants.ps1` works if you would
+  rather not install it.
 
 **Clone and build**
 

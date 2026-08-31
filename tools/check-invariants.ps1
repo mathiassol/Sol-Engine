@@ -290,7 +290,7 @@ if (Test-Path $specDir) {
 }
 Add-Result 'spec-status' 'every design spec has a recognised Status' $specViolations
 
-# ── 13. ENGINE_MAP dependency graph is sound ─────────────────────────────────
+# ── 11. ENGINE_MAP dependency graph is sound ─────────────────────────────────
 # The backlog is only usable if every Later row has a path to Ready. Two
 # failures make that untrue and neither is visible by reading:
 #
@@ -414,7 +414,7 @@ if (Test-Path $mapPath) {
 }
 Add-Result 'map-dependencies' $mapSummary $mapViolations
 
-# ── 11. The analizeMax analysis set is internally consistent ─────────────────
+# ── 12. The analizeMax analysis set is internally consistent ─────────────────
 # The publishing contract (.claude/skills/analizeMax/publishing.md) is ~200
 # lines of prose that three skills are asked to obey. The half of it that is
 # machine-checkable should not be prose: a duplicate artifact URL means one
@@ -566,7 +566,7 @@ if (Test-Path $registryPath) {
 }
 Add-Result 'analysis-set' $analysisSummary $analysisViolations
 
-# ── 12. Conditionally-added packages are only ever linked conditionally ──────
+# ── 13. Conditionally-added packages are only ever linked conditionally ──────
 # `target_link_libraries(app PRIVATE engine::foo)` where foo's add_subdirectory
 # sits inside an `if()` is a CMake **generate-time** error wherever that
 # condition is false - not a warning, and not something a build ever reaches.

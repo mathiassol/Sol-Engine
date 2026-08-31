@@ -21,11 +21,15 @@ every package.
 - Prefer composition over inheritance; prefer data over objects.
 - Ownership is explicit: `std::unique_ptr` for modules, injected at startup.
   No hidden global state; pass context explicitly instead of reaching for a
-  singleton. Three deliberate exceptions: the logger (`g_logger` in
-  `core/src/log.cpp`, set once at startup via `set_logger()`), the cvar
+  singleton. Five deliberate exceptions: the logger (`g_logger` in
+  `core/src/log.cpp`, set once at startup via `set_logger()`), the profiler
+  (`g_profiler` and `g_frame_profiler` in `core/src/profile.cpp`, set once at
+  startup via `set_profiler()` — the same shape as the logger), the cvar
   registry (a function-local static, so static-initialisation order cannot
-  bite), and `warn_physics_capacity`'s per-kind latch array (one `bool` per
-  `CapacityKind`, each firing once per process).
+  bite), `install_file_logger`'s install-once statics (`core/src/log_file.cpp`,
+  so the sink outlives every caller), and the warn-once latches — a `bool` per
+  `CapacityKind` in `warn_physics_capacity`, and one for the profiler's full
+  scope table — each firing once per process.
 - Minimize dynamic allocation; favor immutable data when practical.
 - Headers live at `include/engine/<package>/<header>.hpp`. Implementation
   details live only in `src/`, never in a public header.

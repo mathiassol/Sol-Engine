@@ -16,7 +16,7 @@ namespace engine {
     }
 
     // Always, not only when a message was given. The bare ENGINE_ASSERT form is
-    // the majority of the 77 assert sites, and it used to abort leaving nothing
+    // the majority of the 76 assert sites, and it used to abort leaving nothing
     // on disk and nothing in any log sink.
     char message[512];
     if (msg) {

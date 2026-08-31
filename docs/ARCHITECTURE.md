@@ -16,7 +16,7 @@ Layer 1  platform        → core          rhi       → core
          shaders         → core          assets    → core, math
          audio           → core, math    physics   → core, math
 
-Layer 2  platform-win32  → platform          rhi-d3d12  → rhi
+Layer 2  platform-win32  → platform          rhi-d3d12  → rhi, math
          shaders-dxc     → shaders           audio-xaudio2 → audio
          physics-cpu     → physics           assets-gpu → assets, rhi
          assets-filesystem → assets, platform
@@ -46,8 +46,8 @@ Two facts the shape is load-bearing on:
   **apps** link those. That is *why* the renderer never sees the scene: the
   `scene → RenderSnapshot` bridge lives in the app
   (`packages/sandbox/src/world_extract.cpp`).
-- `rhi` depends on `core` only — **not** `math`. `rhi-d3d12` links `rhi`, and
-  nothing else.
+- `rhi` depends on `core` only — **not** `math`. `rhi-d3d12` links `rhi` and
+  `math` — the latter only for `build_rgba8_mip_chain`.
 
 ## Packages
 
