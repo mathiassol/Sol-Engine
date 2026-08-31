@@ -316,7 +316,7 @@ if (Test-Path $registryPath) {
     }
 
     if ($registry) {
-        foreach ($key in @('hub', 'full')) {
+        foreach ($key in @('hub', 'full', 'roadmap')) {
             if (-not $registry.PSObject.Properties.Name.Contains($key)) {
                 $analysisViolations += "$analysisDir/artifacts.json: missing '$key' entry"
             }
@@ -339,7 +339,7 @@ if (Test-Path $registryPath) {
         # Every entry needs a favicon and title (both fixed at creation), and a
         # url field even when empty. A duplicate url is the serious one.
         $entries = @()
-        foreach ($key in @('hub', 'full')) {
+        foreach ($key in @('hub', 'full', 'roadmap')) {
             if ($registry.PSObject.Properties.Name.Contains($key)) {
                 $entries += [pscustomobject]@{ Name = $key; Entry = $registry.$key }
             }
@@ -416,7 +416,7 @@ if (Test-Path $registryPath) {
 
     $published = @($urls).Count
     $metricFiles = @(Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue).Count
-    $analysisSummary = "registry valid, $published/8 published, $metricFiles/6 metric pages"
+    $analysisSummary = "registry valid, $published/9 published, $metricFiles/6 metric pages"
 }
 Add-Result 'analysis-set' $analysisSummary $analysisViolations
 

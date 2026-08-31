@@ -1,8 +1,8 @@
 ---
 name: ship-feature
-description: Close out a finished Ready-row engine feature — update ENGINE_MAP.md and ROADMAP.md, recount the LOC audit, commit, and push. Use once a feature's gate passes and it's ready to mark Done.
+description: Close out a finished Ready-row engine feature — update ENGINE_MAP.md and ROADMAP.md, recount the LOC audit, commit, push, and refresh the published roadmap page. Use once a feature's gate passes and it's ready to mark Done.
 disable-model-invocation: true
-allowed-tools: Bash(git add *) Bash(git commit *) Bash(git push *) Bash(git status *) Bash(git diff *) Bash(cmake *) Bash(.\build\bin\Debug\sandbox.exe *) Bash(.\build\bin\Release\game.exe *) Bash(find *) Bash(wc *) Read Edit Grep Glob
+allowed-tools: Bash(git add *) Bash(git commit *) Bash(git push *) Bash(git status *) Bash(git diff *) Bash(cmake *) Bash(.\build\bin\Debug\sandbox.exe *) Bash(.\build\bin\Release\game.exe *) Bash(find *) Bash(wc *) Bash(ls *) PowerShell Read Write Edit Grep Glob Artifact
 ---
 
 Close out one finished ENGINE_MAP.md Ready row. Run these steps in order.
@@ -115,10 +115,40 @@ git commit -m "feat(ui): screen-space quads (UI #2)"
 git push
 ```
 
+## 7b. Refresh the published roadmap page
+
+You just flipped a row in `docs/ENGINE_MAP.md` and added an entry to
+`docs/ROADMAP.md`. The published roadmap artifact is *generated from those two
+files*, so it is now wrong — it still shows the row as Ready and has no
+decision-log entry for it.
+
+This step belongs here, not in whatever called this skill: step 2 is the only
+place a row's status changes, so this is the only place that can reliably know
+the page went stale. A `/ship-feature` run invoked directly from CLAUDE.md's
+loop must refresh it just as much as one invoked by `/roadmap`.
+
+Regenerate and re-publish per `.claude/skills/analizeMax/publishing.md` (see
+**The roadmap page**). The essentials:
+
+- Its permanent URL is `roadmap` in `docs/analysis/artifacts.json`. Pass it as
+  `url`, with the registry's `favicon` and `title` unchanged, so the page anyone
+  already has updates in place instead of a second one appearing.
+- If that entry's `url` is empty the page has never been published: publish it,
+  then **write the returned URL back into the registry immediately**. A URL that
+  exists on claude.ai but not in the registry can never be updated again.
+- Check the scorecard hub's nav still carries its **Roadmap** item with the new
+  Ready count. If the count moved, re-publish the hub too.
+
+Then confirm `analysis-set` still passes — it validates the registry, and this
+step is the one that writes to it.
+
+Skip only if `artifacts.json` does not exist at all, which means nothing has
+ever been published; say so rather than silently doing nothing.
+
 ## 8. Report
 
 Tell the user: what shipped, which Later rows just became Ready as a result,
-and the new total LOC from step 3.
+the new total LOC from step 3, and the roadmap page URL.
 
 ## If this goes wrong
 
@@ -132,5 +162,15 @@ and the new total LOC from step 3.
 - **The row turns out not to be Done** — flip it back to **Ready** in
   ENGINE_MAP.md and stop. Do not write a ROADMAP entry for it.
 - **You changed the frame ring, an instance cap, or a descriptor limit** — say
-  so explicitly in the report. Those ceilings are coupled across packages and
-  overflow is a hard abort, not a dropped frame.
+  so explicitly in the report. Those ceilings are coupled across packages, and
+  they no longer fail the same way as each other, so name which one moved:
+  - **scene instance cap** — still a hard abort. `add_instance` asserts, and
+    `ENGINE_ASSERT` is not compiled out in Release, so overflow kills the
+    player build.
+  - **frame constant ring** — recoverable. It logs once and drops draws, so
+    overflow is a *silently missing object*, not a crash. That is the more
+    dangerous of the two, because nothing reports it.
+  - **shader descriptor heap** — recoverable. It clamps and logs.
+- **The roadmap page did not refresh** (step 7b) — the published page now
+  disagrees with `ENGINE_MAP.md`. Say so; not worth reverting a good commit
+  over, but it must not go unmentioned.

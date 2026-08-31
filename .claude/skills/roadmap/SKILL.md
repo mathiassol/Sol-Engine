@@ -1,6 +1,6 @@
 ---
 name: roadmap
-description: Take one ENGINE_MAP.md row from research to shipped, in a single unbroken run — deep research (codebase and web), one mandatory question round ending in how to execute, then build it, gate it, ship it, and refresh the published roadmap page. Invoke as /roadmap foundation #5. Use when the user names a roadmap row to build, or asks to do the next feature.
+description: Take one ENGINE_MAP.md row from research to shipped, in a single unbroken run — deep research (codebase and web), one mandatory question round ending in how to execute, then build it, gate it, and ship it (which refreshes the published roadmap page). Invoke as /roadmap foundation #5. Use when the user names a roadmap row to build, or asks to do the next feature.
 when_to_use: The user names a category and row number to implement — "/roadmap renderer #16", "do foundation 5", "build the transparency row". Not for auditing (that is /analizeMax) and not for closing out work already written (that is /ship-feature, which this invokes at the end).
 argument-hint: <category> #<row>   e.g. foundation #5, renderer #16
 effort: max
@@ -165,25 +165,24 @@ invariants immediately before committing, because any edit after the recount
 makes the figure stale), the commit form and the push. One owner for that
 procedure; this skill is its caller, not its copy.
 
-## Phase 6 — Refresh the published roadmap
+## Phase 6 — Confirm the roadmap page refreshed
 
-The roadmap page is generated from `docs/ENGINE_MAP.md` and `docs/ROADMAP.md`,
-so it goes stale the moment a row flips. Regenerate and re-publish it now.
+`/ship-feature` step 7b owns this, because step 2 is the only place a row's
+status changes and so the only place that can reliably know the generated page
+went stale. Do not do it again here — a second publish of the same document is
+how two commands start disagreeing about its layout.
 
-Publishing follows `.claude/skills/analizeMax/publishing.md` — the same registry
-and the same permanence rules. Read the contract's **The roadmap page** section
-for the layout. In short:
+Confirm it happened:
 
-- One artifact, all 21 categories as **tabs inside it**. Not 21 artifacts: that
-  would be 21 URLs to mint and keep in sync for a page that is one table.
-- Its URL lives in `docs/analysis/artifacts.json` under `roadmap` and is
-  permanent. Pass it as `url` so the page anyone already has updates in place.
-- The scorecard hub carries a **Roadmap** item in its nav strip, and the roadmap
-  page links back to the hub. If the hub's nav is missing it, re-publish the hub
-  too.
+- `docs/analysis/artifacts.json` has a non-empty `roadmap` url.
+- The published page shows this row as **Done**, with its decision-log entry.
+- The hub's nav still carries **Roadmap** with the updated Ready count.
+- `pwsh -NoProfile -File tools/check-invariants.ps1` is green — `analysis-set`
+  validates the registry that step just wrote to.
 
-This is the self-maintaining part: every `/roadmap` run leaves the published page
-matching the two source files. No separate step to remember.
+If step 7b was skipped or failed, do it now per the publishing contract and say
+that ship-feature missed it. That is worth knowing: it means the wiring broke,
+not just this run.
 
 ## Phase 7 — Report
 
