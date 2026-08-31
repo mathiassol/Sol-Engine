@@ -1,7 +1,7 @@
 ---
 name: analizeMax-repair
-description: Repair and complete the analizeMax analysis set — create any missing metric file as a navigable empty placeholder, validate every file's format, mint artifact URLs for anything unpublished, and re-publish all eight pages with correct cross-links so the shared scorecard navigates properly. Use after a first audit, when a link is broken or a page is missing, when the artifact registry is out of sync, or when the user asks to fix or set up the analysis pages.
-when_to_use: Trigger phrases include "analizeMax repair", "fix the analysis pages", "the scorecard link is broken", "set up the hub", "rebuild the analysis artifacts", "the metric page is missing". Run it once after the first /analizeMax to materialise the hub and all six metric pages. Does not audit and does not re-grade.
+description: Repair and complete the analizeMax analysis set — create any missing metric file as a navigable empty placeholder, validate every file's format, mint artifact URLs for anything unpublished, and re-publish all eight pages with correct cross-links so the shared scorecard navigates properly. Use when a link is broken, a page is missing, the registry is out of sync, or the user asks to fix the analysis pages. Not a required step after an audit — /analizeMax materialises the whole set itself.
+when_to_use: Trigger phrases include "analizeMax repair", "fix the analysis pages", "the scorecard link is broken", "set up the hub", "rebuild the analysis artifacts", "the metric page is missing". Does not audit and does not re-grade. /analizeMax already materialises the full set, so this is for repairing drift afterwards.
 argument-hint: [optional: --check to report without changing anything]
 allowed-tools: Bash(git *) Bash(ls *) Bash(cat *) Read Grep Glob Write Edit Artifact
 ---
@@ -70,32 +70,14 @@ Report it; do not delete it.
 
 ## Step 3 — Create missing metric files
 
-For each of the six with no file, write a placeholder. It is a real page, not a
-stub: the grade is known from `LATEST.md` even though no detailed report exists.
+For each of the six with no file, write the placeholder defined in the
+publishing contract (`### The placeholder file`). It is a real page, not a stub:
+the grade is known from `LATEST.md` even though no detailed report exists, so it
+shows the grade and links back to the hub.
 
-```markdown
----
-run: <now>
-derived_from: <newest full report filename>
-commit: <the audit's commit>
-state: empty
----
-
-# <Metric name>
-
-**Grade: <grade from LATEST.md>** — <the one-sentence summary from LATEST.md>
-
-No detailed report has been generated for this metric yet.
-
-Run `/analizeMax-metric <key>` to produce the 1–2 page report and the full
-ordered action list. It derives from the audit of <date> and takes seconds — no
-build, no research.
-
-<- Back to the scorecard
-```
-
-Set `state: empty` so every other command can tell a placeholder from a real
-report without parsing the body. A real report sets `state: report`.
+One definition, used by both this command and `/analizeMax`. Do not restate or
+vary it here — a second copy is how the two commands start producing different
+placeholders.
 
 ## Step 4 — Publish
 

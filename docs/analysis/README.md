@@ -8,7 +8,7 @@ here is overwritten or rotated on the next run.
 | `/analizeMax` | The audit. Measures the tree, researches externally, grades six dimensions. Expensive. |
 | `/analizeMax-metric <name>` | Expands one dimension into a working document. Pure derivation from the newest full report — no build, no research, no re-grading. Cheap. |
 | `/analizeMax-execute` | Applies `PLAN.md`, normally or fanned out across subagents or a workflow. |
-| `/analizeMax-repair` | Creates anything missing, validates every format, and re-publishes all eight pages with correct cross-links. Run it once after the first audit. |
+| `/analizeMax-repair` | Repairs drift: creates anything missing, validates every format, re-publishes all eight pages with correct cross-links. Not needed after a normal audit — `/analizeMax` materialises the full set itself. |
 
 ## Files
 

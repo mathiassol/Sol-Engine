@@ -153,6 +153,38 @@ Content from `metric-<key>.md`:
    ordering inside each group.
 4. Back to the scorecard.
 
+### The placeholder file
+
+A metric with no report yet still needs a file on disk, because the hub links to
+a page and that page has to come from somewhere. Write it exactly like this —
+both `/analizeMax` and `/analizeMax-repair` use this one definition:
+
+```markdown
+---
+run: <now>
+derived_from: <newest full report filename>
+commit: <the audit's commit>
+state: empty
+---
+
+# <Metric name>
+
+**Grade: <grade from LATEST.md>** — <the one-sentence summary from LATEST.md>
+
+No detailed report has been generated for this metric yet.
+
+Run `/analizeMax-metric <key>` to produce the 1–2 page report and the full
+ordered action list. It derives from the audit of <date> and takes seconds — no
+build, no research.
+```
+
+`state: empty` is what lets every other command tell a placeholder from a real
+report without parsing the body. A real report sets `state: report`, and
+overwriting a placeholder with one is normal — that is the file becoming real.
+
+Never write a placeholder when no audit has run: without a grade there is
+nothing to put on it, and six blank pages are worse than none.
+
 ### An empty metric page
 
 Never a blank page. It still knows the grade — the hub has it. So:

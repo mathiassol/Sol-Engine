@@ -418,9 +418,18 @@ before publishing anything.** In short, for this command:
 - Publish three things: the **full report**, the **hub**, and **all six metric
   pages** — every metric's grade and staleness just changed, so a metric page
   left alone now contradicts the hub that links to it.
-- A metric with no report yet still has a page. If one is missing, or the
-  registry has an empty URL, that is `/analizeMax-repair`'s job — say so rather
-  than improvising a layout.
+- **Materialise the whole set yourself.** Any of the six metrics with no file
+  gets a placeholder, written to the contract's `state: empty` template — you
+  now have the grade it needs. Do not defer this to `/analizeMax-repair`; one
+  audit must produce a complete, navigable set, because a hub whose links
+  dead-end is not shareable and the user should not have to know to run a second
+  command.
+- If any registry URL is empty, run the contract's **two-phase publish**: mint
+  with the nav disabled, write each returned URL to `artifacts.json`
+  immediately, then re-publish everything with real links. After the first audit
+  the registry is complete and this collapses to one publish per document.
+- `/analizeMax-repair` exists for drift and breakage afterwards, not as a
+  required second step.
 
 A grade on the hub that disagrees with the page it links to is the one failure
 mode here that a reader cannot detect, so check it before finishing.
