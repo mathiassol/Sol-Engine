@@ -8,6 +8,25 @@ namespace engine {
 
 namespace {
 
+// Bounds two independent things, and both overrun silently. Audit finding S6.
+//
+// 1. **Nesting depth.** Past kMaxScopes, begin_scope drops the push but
+//    end_scope still decrements, so the pop consumes a *different* scope's
+//    start_ entry: the time lands on a scope that is still open, and the
+//    imbalance cascades through the rest of the frame. Deepest actual nesting
+//    is 3 - frame -> render -> extract - so this is not reachable today. If a
+//    future scope tree gets near 8, fix the imbalance (count dropped pushes and
+//    skip the matching pops) rather than just raising the cap.
+//
+// 2. **Distinct scope names per frame.** accumulate() keys slots by name and
+//    falls off its loop when all kMaxScopes are taken, so the next new name is
+//    dropped and scope_ms() returns 0.0 for it - which the F3 overlay renders
+//    as "0.0", indistinguishable from a scope that genuinely took no time.
+//
+//    This is the near limit: **7 of the 8 slots are in use** (frame,
+//    poll_events, fixed_update, update, render, extract, execute). One more
+//    ENGINE_PROFILE_SCOPE with a new name fills it; the one after that reads
+//    zero forever. Raise kMaxScopes when adding a scope.
 constexpr u32 kMaxScopes = 8;
 
 class FrameProfiler final : public IProfiler {
