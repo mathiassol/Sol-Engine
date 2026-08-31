@@ -5749,7 +5749,15 @@ int run_app(int argc, char** argv) {
         gates_ok = false;
     }
 
-    gates_ok = run_graph_gate() && run_swap_gate() && gates_ok;
+    // Two statements, not `a() && b() && gates_ok`: && short-circuits, so a
+    // failing graph gate used to skip the swap gate entirely and a red run
+    // under-reported. Every other gate in this sequence uses this form.
+    if (!run_graph_gate()) {
+        gates_ok = false;
+    }
+    if (!run_swap_gate()) {
+        gates_ok = false;
+    }
     if (auto* ring_device = app.device()) {
         gates_ok = run_frame_ring_budget_gate(*ring_device) && gates_ok;
     }

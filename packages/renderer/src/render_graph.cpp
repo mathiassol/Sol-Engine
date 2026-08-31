@@ -540,6 +540,23 @@ ResourceHandle RenderGraph::find_resource(std::string_view name) const {
 
 void RenderGraph::add_pass(RenderPassDesc desc) {
     ensure_imported();
+
+    // `writes` and `reads` are fixed kMaxRefs arrays and the counts are set by
+    // the caller, so a desc claiming more than it has would make compile() and
+    // execute() read past the end. Clamp rather than drop the pass: the frame
+    // still renders, minus the refs that do not exist, and the message names
+    // the pass so it is not a silent truncation. Nothing in the tree exceeds 3.
+    const u32 kMax = RenderPassDesc::kMaxRefs;
+    if (desc.write_count > kMax || desc.read_count > kMax) {
+        char message[192];
+        std::snprintf(message, sizeof(message),
+            "Graph: pass '%s' declares %u writes and %u reads, capped at %u each",
+            desc.name.c_str(), desc.write_count, desc.read_count, kMax);
+        log(LogLevel::Error, LogChannel::Render, message);
+        desc.write_count = desc.write_count > kMax ? kMax : desc.write_count;
+        desc.read_count = desc.read_count > kMax ? kMax : desc.read_count;
+    }
+
     passes_.push_back(std::move(desc));
     dirty_ = true;
     compiled_ = false;
