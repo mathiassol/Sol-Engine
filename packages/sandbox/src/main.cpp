@@ -2199,8 +2199,14 @@ bool run_shadow_gate(const engine::scene::World& world,
 
 bool run_hdr_gate(const engine::scene::World& world,
     const engine::rhi::IGraphicsPipeline* tonemap_pipeline) {
-    const bool sun_hot = world.sun.color.x >= 3.5f && world.sun.color.y >= 3.f
-        && world.sun.color.z >= 2.5f;
+    // What this needs to prove is that scene radiance genuinely leaves LDR range,
+    // so RGBA16 scene_color and the tonemap are doing real work rather than
+    // dressing up values that would have fit in 8 bits anyway. Any channel above
+    // 1 does that. The previous 3.5/3.0/2.5 floors were not derived from that -
+    // they were the pre-sRGB tuning written down as a threshold, and they would
+    // now reject any correctly exposed scene.
+    const bool sun_hot = world.sun.color.x > 1.f && world.sun.color.y > 1.f
+        && world.sun.color.z > 1.f;
     const bool pipeline_ok = tonemap_pipeline != nullptr;
     const bool format_ok = static_cast<engine::u8>(engine::rhi::Format::RGBA16_FLOAT)
         != static_cast<engine::u8>(engine::rhi::Format::RGBA8_UNORM);
@@ -5006,8 +5012,12 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     engine::scene::set_instance_name(demo->world, ground, "ground");
 
     demo->world.sun.direction = {0.12f, 0.42f, 0.90f};
-    demo->world.sun.color = {4.8f, 4.4f, 3.8f};
-    demo->world.ambient = {0.16f, 0.17f, 0.21f};
+    // Retuned for the sRGB output encode (Renderer #28). These were 4.8/4.4/3.8
+    // and 0.16/0.17/0.21, chosen by eye against a pipeline that wrote linear
+    // values to a UNORM target - so roughly half the light was being lost to the
+    // missing display encode and the constants had absorbed the difference.
+    demo->world.sun.color = {2.0f, 1.85f, 1.6f};
+    demo->world.ambient = {0.085f, 0.09f, 0.11f};
     demo->world.points[0].position = {-0.55f, 0.38f, 0.45f};
     demo->world.points[0].color = {1.f, 0.45f, 0.18f};
     demo->world.points[0].radius = 1.8f;

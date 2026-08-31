@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **23,000 lines** of C++/HLSL in **139 files**, **26
+Measured 29 Aug 2026: **23,010 lines** of C++/HLSL in **139 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
 of the engine (3,014 lines). `sandbox` is 6,555; `renderer` is 2,867.
 `physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
@@ -780,6 +780,13 @@ compute dispatch and compared against the C++ one. That last assertion is the
 load-bearing one: the curve necessarily exists twice, in `engine::math` and in
 `common.hlsli`, and nothing else would stop them drifting apart.
 
+`run_hdr_gate`'s sun threshold was re-derived as part of the retune. It used to
+require `x >= 3.5, y >= 3.0, z >= 2.5`, which was not a property of HDR at all —
+it was the pre-sRGB tuning written down as an assertion, and it would reject any
+correctly exposed scene. It now requires every channel above 1.0, which is the
+actual claim: scene radiance leaves LDR range, so RGBA16 `scene_color` and the
+tonemap are doing real work.
+
 The `Albedo PNG gate` additionally asserts `srgb=yes` — that the albedo texture
 really is created `RGBA8_UNORM_SRGB`. The colour space gate cannot cover this:
 it runs before any albedo exists, so without this assertion a revert of the
@@ -795,11 +802,25 @@ exactly, which would have silently dropped the albedo's whole chain.
 for an exposure multiply as well as the gamma correction, but exposure is a
 separate feature and colour-space correctness does not need it.
 
-Do not retune `sun` or `ambient` to chase the old look. The image changed — that
+Do not retune `sun` or `ambient` *inside* this change. The image changed — that
 is the point — and those constants are sandbox scene authoring, not engine
-behaviour. Retuning is art direction, and doing it inside this change would have
-made neither half verifiable: if the result looks wrong, the pipeline and the
-tuning must stay separately attributable.
+behaviour. Keeping them separate is what makes each half attributable.
+
+**Follow-up, 31 Aug 2026.** The retune was then done as its own commit, and it
+mostly did not work — worth recording, because the reason is not obvious.
+Dropping the sun from 4.8/4.4/3.8 to 2.0/1.85/1.6 and ambient from 0.16 to
+0.085 moved mean frame luminance from 212/255 to 206/255. `world.sun.color`
+only drives the *direct punctual* term. The bulk of this scene's light is the
+baked sky cubemap and the split-sum IBL derived from it, both of which get
+their absolute magnitude from `sky_radiance()` in `renderer/src/ibl.cpp` and
+neither of which any sandbox constant can reach.
+
+So the scene has three independent light magnitudes and no single knob, which
+is the argument for exposure control (Renderer #29) rather than more tuning.
+Narkowicz's note asks for an exposure multiply *and* the gamma correction; this
+work did the second and the first is still missing. The retuned constants were
+kept because they are more sensible for a correct pipeline, not because they
+solved the exposure.
 
 Do not create a data texture as `RGBA8_UNORM_SRGB`. The rule is colour gets
 `_SRGB`, data gets `UNORM` — metallic-roughness, normal maps, masks and LUTs are
