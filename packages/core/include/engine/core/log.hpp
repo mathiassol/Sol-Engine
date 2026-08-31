@@ -31,6 +31,10 @@ public:
     virtual void log(LogLevel level, LogChannel channel, std::string_view message) = 0;
 };
 
+// Stable text for a level/channel. Shared so every sink tags identically.
+const char* level_name(LogLevel level);
+const char* channel_name(LogChannel channel);
+
 void set_logger(ILogger* logger);
 ILogger* logger();
 

@@ -5,11 +5,6 @@
 
 namespace engine {
 
-namespace {
-
-ILogger* g_logger = nullptr;
-std::mutex g_log_mutex;
-
 const char* level_name(LogLevel level) {
     switch (level) {
     case LogLevel::Trace: return "TRACE";
@@ -33,6 +28,11 @@ const char* channel_name(LogChannel channel) {
     }
     return "???";
 }
+
+namespace {
+
+ILogger* g_logger = nullptr;
+std::mutex g_log_mutex;
 
 class StdoutLogger final : public ILogger {
 public:
