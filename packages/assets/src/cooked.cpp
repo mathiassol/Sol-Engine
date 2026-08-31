@@ -1,11 +1,26 @@
 #include <engine/assets/cooked.hpp>
 
+#include <engine/core/log.hpp>
+
+#include <cstdio>
 #include <cstring>
 
 namespace engine::assets {
 namespace {
 
 constexpr u8 kMagic[4] = {'S', 'O', 'L', 'C'};
+
+// A cooked blob is produced by the cooker, not hand-written, so the useful
+// diagnostic is which read failed and on what - a truncated or stale .solc
+// shipped to a player is otherwise a silent "asset just did not load". One
+// message per failed public read; the per-field Cursor checks stay quiet.
+bool reject(const char* what, std::span<const u8> bytes, const char* reason) {
+    char message[192];
+    std::snprintf(message, sizeof(message), "SOLC %s rejected (%zu bytes): %s",
+        what, bytes.size(), reason);
+    log(LogLevel::Error, LogChannel::Assets, message);
+    return false;
+}
 
 void append_u16_le(std::vector<u8>& out, u16 value) {
     out.push_back(static_cast<u8>(value));
@@ -210,47 +225,47 @@ bool write_cooked_mesh(const MeshData& mesh, std::vector<u8>& out) {
 bool read_cooked_mesh(std::span<const u8> bytes, MeshData& out) {
     Cursor cur{bytes};
     if (!read_header(cur, CookedKind::Mesh)) {
-        return false;
+        return reject("mesh", bytes, "magic, version or kind is not a cooked mesh");
     }
     u32 vertex_count = 0;
     u32 index_count = 0;
     if (!cur.read_u32(vertex_count) || !cur.read_u32(index_count)) {
-        return false;
+        return reject("mesh", bytes, "truncated before the vertex and index counts");
     }
     if (vertex_count == 0 || index_count < 3 || (index_count % 3) != 0) {
-        return false;
+        return reject("mesh", bytes, "no vertices, or an index count that is not a positive multiple of 3");
     }
     const u64 vertex_bytes = static_cast<u64>(vertex_count) * 32ull;
     const u64 index_bytes = static_cast<u64>(index_count) * 4ull;
     if (vertex_bytes / 32ull != vertex_count || index_bytes / 4ull != index_count) {
-        return false;
+        return reject("mesh", bytes, "declared counts overflow when sized in bytes");
     }
     const u64 need = 24ull + vertex_bytes + index_bytes;
     const u64 left = static_cast<u64>(cur.bytes.size() - cur.pos);
     if (need < 24ull || need > left) {
-        return false;
+        return reject("mesh", bytes, "declared geometry does not fit the remaining bytes");
     }
 
     MeshData mesh{};
     if (!cur.read_f32(mesh.bounds.min.x) || !cur.read_f32(mesh.bounds.min.y)
         || !cur.read_f32(mesh.bounds.min.z) || !cur.read_f32(mesh.bounds.max.x)
         || !cur.read_f32(mesh.bounds.max.y) || !cur.read_f32(mesh.bounds.max.z)) {
-        return false;
+        return reject("mesh", bytes, "truncated inside the bounding box");
     }
     mesh.vertices.resize(vertex_count);
     for (VertexPN& vertex : mesh.vertices) {
         if (!read_vertex(cur, vertex)) {
-            return false;
+            return reject("mesh", bytes, "truncated inside the vertex array");
         }
     }
     mesh.indices.resize(index_count);
     for (u32& index : mesh.indices) {
         if (!cur.read_u32(index) || index >= vertex_count) {
-            return false;
+            return reject("mesh", bytes, "index array truncated, or an index past the last vertex");
         }
     }
     if (!cur.exact_end() || !valid_mesh(mesh)) {
-        return false;
+        return reject("mesh", bytes, "trailing bytes after the geometry, or bounds that fail validation");
     }
     out = std::move(mesh);
     return true;
@@ -272,22 +287,22 @@ bool write_cooked_image(const ImageData& image, std::vector<u8>& out) {
 bool read_cooked_image(std::span<const u8> bytes, ImageData& out) {
     Cursor cur{bytes};
     if (!read_header(cur, CookedKind::Image)) {
-        return false;
+        return reject("image", bytes, "magic, version or kind is not a cooked image");
     }
     ImageData image{};
     if (!cur.read_u32(image.width) || !cur.read_u32(image.height)) {
-        return false;
+        return reject("image", bytes, "truncated before width and height");
     }
     const u64 pixel_bytes = static_cast<u64>(image.width) * static_cast<u64>(image.height) * 4ull;
     if (image.width == 0 || image.height == 0
         || pixel_bytes / 4ull / image.width != image.height
         || !cur.remaining(static_cast<usize>(pixel_bytes))) {
-        return false;
+        return reject("image", bytes, "declared dimensions do not fit the remaining bytes");
     }
     image.rgba.resize(static_cast<usize>(pixel_bytes));
     std::memcpy(image.rgba.data(), cur.bytes.data() + cur.pos, image.rgba.size());
     if (!cur.consume(image.rgba.size()) || !cur.exact_end() || !valid_image(image)) {
-        return false;
+        return reject("image", bytes, "trailing bytes after the pixels, or dimensions that fail validation");
     }
     out = std::move(image);
     return true;
@@ -311,21 +326,21 @@ bool write_cooked_audio(const CookedAudio& audio, std::vector<u8>& out) {
 bool read_cooked_audio(std::span<const u8> bytes, CookedAudio& out) {
     Cursor cur{bytes};
     if (!read_header(cur, CookedKind::Audio)) {
-        return false;
+        return reject("audio", bytes, "magic, version or kind is not cooked audio");
     }
     CookedAudio audio{};
     u32 byte_count = 0;
     if (!cur.read_u32(audio.sample_rate) || !cur.read_u16(audio.channels)
         || !cur.read_u16(audio.bits_per_sample) || !cur.read_u32(byte_count)) {
-        return false;
+        return reject("audio", bytes, "truncated before the format fields");
     }
     if (!cur.remaining(byte_count)) {
-        return false;
+        return reject("audio", bytes, "declared PCM byte count does not fit the remaining bytes");
     }
     audio.pcm.resize(byte_count);
     std::memcpy(audio.pcm.data(), cur.bytes.data() + cur.pos, byte_count);
     if (!cur.consume(byte_count) || !cur.exact_end() || !valid_audio(audio)) {
-        return false;
+        return reject("audio", bytes, "trailing bytes after the PCM, or a format that fails validation");
     }
     out = std::move(audio);
     return true;

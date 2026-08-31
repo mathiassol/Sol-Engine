@@ -1,5 +1,7 @@
 #include <engine/scene/scene_file.hpp>
 
+#include <engine/core/log.hpp>
+
 #include <cctype>
 #include <charconv>
 #include <cstdio>
@@ -9,6 +11,29 @@
 
 namespace engine::scene {
 namespace {
+
+// A `.solscene` is hand-editable, so a rejection has to say where and why. This
+// used to be 22 bare `return false` paths: the caller learned that the file was
+// bad and nothing else, which is a support ticket nobody can answer.
+u32 line_of(std::string_view text, usize pos) {
+    u32 line = 1;
+    const usize end = pos < text.size() ? pos : text.size();
+    for (usize k = 0; k < end; ++k) {
+        if (text[k] == '\n') {
+            line += 1;
+        }
+    }
+    return line;
+}
+
+// Always returns false, so a failure path stays a one-liner at the call site.
+bool reject(std::string_view text, usize pos, const char* reason) {
+    char message[192];
+    std::snprintf(message, sizeof(message), "solscene rejected at line %u: %s",
+        line_of(text, pos), reason);
+    log(LogLevel::Error, LogChannel::Assets, message);
+    return false;
+}
 
 void skip(std::string_view text, usize& i) {
     while (i < text.size()) {
@@ -206,11 +231,11 @@ bool read_world(std::string_view text, World& out) {
     out = World{};
     usize i = 0;
     if (!take_keyword(text, i, "solscene")) {
-        return false;
+        return reject(text, i, "expected the magic word \"solscene\"");
     }
     u32 version = 0;
     if (!take_u32(text, i, version) || version != 1) {
-        return false;
+        return reject(text, i, "expected format version 1");
     }
 
     struct PendingParent {
@@ -226,39 +251,39 @@ bool read_world(std::string_view text, World& out) {
         }
         std::string keyword;
         if (!take_token(text, i, keyword)) {
-            return false;
+            return reject(text, i, "expected a keyword");
         }
         if (keyword == "ambient") {
             if (!take_vec3(text, i, out.ambient)) {
-                return false;
+                return reject(text, i, "ambient wants three floats");
             }
         } else if (keyword == "sun_dir") {
             if (!take_vec3(text, i, out.sun.direction)) {
-                return false;
+                return reject(text, i, "sun_dir wants three floats");
             }
         } else if (keyword == "sun_color") {
             if (!take_vec3(text, i, out.sun.color)) {
-                return false;
+                return reject(text, i, "sun_color wants three floats");
             }
         } else if (keyword == "point") {
             u32 index = 0;
             PointLight light{};
             if (!take_u32(text, i, index) || index >= kMaxPointLights) {
-                return false;
+                return reject(text, i, "point index must be below kMaxPointLights");
             }
             if (!take_vec3(text, i, light.position) || !take_vec3(text, i, light.color)
                 || !take_f32(text, i, light.radius) || !take_f32(text, i, light.intensity)) {
-                return false;
+                return reject(text, i, "point wants position, colour, radius, intensity");
             }
             out.points[index] = light;
         } else if (keyword == "material") {
             Material material{};
             if (!take_u32(text, i, material.albedo) || !take_f32(text, i, material.metallic)
                 || !take_f32(text, i, material.roughness)) {
-                return false;
+                return reject(text, i, "material wants albedo, metallic, roughness");
             }
             if (out.material_count >= kMaxMaterials) {
-                return false;
+                return reject(text, i, "more materials than kMaxMaterials");
             }
             add_material(out, material);
         } else if (keyword == "instance") {
@@ -266,21 +291,21 @@ bool read_world(std::string_view text, World& out) {
             Instance instance{};
             std::string parent;
             if (!take_token(text, i, name) || !name_ok(name)) {
-                return false;
+                return reject(text, i, "instance name missing or too long");
             }
             if (!take_u64(text, i, instance.mesh.id) || !take_u32(text, i, instance.mesh.generation)
                 || !take_u32(text, i, instance.material) || !take_token(text, i, parent)
                 || !take_mat4(text, i, instance.model)) {
-                return false;
+                return reject(text, i, "instance wants mesh id, generation, material, parent, 16 floats");
             }
             if (out.instance_count >= kMaxInstances) {
-                return false;
+                return reject(text, i, "more instances than kMaxInstances");
             }
             // The `point` and `material` cases below bound-check their index;
             // this one did not, so a file could name a material that does not
             // exist. Its only protection was a check in the sandbox's extract.
             if (instance.material >= kMaxMaterials) {
-                return false;
+                return reject(text, i, "instance names a material index that does not exist");
             }
             const u32 index = add_instance(out, instance);
             set_instance_name(out, index, name);
@@ -288,7 +313,7 @@ bool read_world(std::string_view text, World& out) {
                 parents.push_back({index, std::move(parent)});
             }
         } else {
-            return false;
+            return reject(text, i, "unknown keyword");
         }
     }
 
@@ -298,7 +323,7 @@ bool read_world(std::string_view text, World& out) {
             continue;
         }
         if (!set_instance_parent(out, pending.index, parent, false)) {
-            return false;
+            return reject(text, i, "parent link would create a cycle");
         }
     }
     return true;

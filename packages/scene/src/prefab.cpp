@@ -1,13 +1,31 @@
 #include <engine/scene/prefab.hpp>
 
+#include <engine/core/log.hpp>
 #include <engine/scene/scene_file.hpp>
 
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include <vector>
 
 namespace engine::scene {
 namespace {
+
+// Only the public entry points report. `in_subtree` and `join_name` return false
+// as an *answer* ("not in the subtree", "name would not fit"), so logging there
+// would turn ordinary control flow into error spam.
+bool reject(const char* what, const char* reason) {
+    char message[192];
+    std::snprintf(message, sizeof(message), "prefab %s failed: %s", what, reason);
+    log(LogLevel::Error, LogChannel::Assets, message);
+    return false;
+}
+
+// Same message, for the entry points that return a handle rather than a bool.
+u32 reject_handle(const char* what, const char* reason) {
+    reject(what, reason);
+    return kInvalidInstance;
+}
 
 bool in_subtree(const World& world, u32 index, u32 root) {
     u32 walk = index;
@@ -46,7 +64,7 @@ bool extract_prefab(const World& world, std::string_view root_name, World& out) 
     out = World{};
     const u32 root = find_instance(world, root_name);
     if (root == kInvalidInstance) {
-        return false;
+        return reject("extract", "no instance with the given root name");
     }
 
     u32 mat_remap[kMaxMaterials];
@@ -68,21 +86,21 @@ bool extract_prefab(const World& world, std::string_view root_name, World& out) 
         if (instance.material < world.material_count) {
             if (mat_remap[instance.material] == kInvalidInstance) {
                 if (out.material_count >= kMaxMaterials) {
-                    return false;
+                    return reject("extract", "subtree needs more materials than kMaxMaterials");
                 }
                 mat_remap[instance.material] = add_material(out, world.materials[instance.material]);
             }
             instance.material = mat_remap[instance.material];
         }
         if (out.instance_count >= kMaxInstances) {
-            return false;
+            return reject("extract", "subtree needs more instances than kMaxInstances");
         }
         const u32 index = add_instance(out, instance);
         set_instance_name(out, index, name);
         copied += 1;
     }
     if (copied == 0) {
-        return false;
+        return reject("extract", "subtree contained no named instances to copy");
     }
 
     for (u32 i = 0; i < world.instance_count; ++i) {
@@ -106,7 +124,7 @@ bool extract_prefab(const World& world, std::string_view root_name, World& out) 
             continue;
         }
         if (!set_instance_parent(out, child, parent, false)) {
-            return false;
+            return reject("extract", "reparenting inside the extracted fragment failed");
         }
     }
     return true;
@@ -121,13 +139,14 @@ u32 instantiate_prefab(World& dest, const World& prefab, const math::Mat4& world
             continue;
         }
         if (prefix.size() + name.size() > kMaxNameChars) {
-            return kInvalidInstance;
+            return reject_handle("spawn", "prefix plus instance name exceeds kMaxNameChars");
         }
         named += 1;
     }
     if (named == 0 || dest.instance_count + named > kMaxInstances
         || dest.material_count + prefab.material_count > kMaxMaterials) {
-        return kInvalidInstance;
+        return reject_handle("spawn",
+            "fragment is empty, or would exceed kMaxInstances / kMaxMaterials in the destination");
     }
 
     u32 mat_remap[kMaxMaterials];
@@ -204,6 +223,7 @@ u32 instantiate_prefab(World& dest, std::string_view text, const math::Mat4& wor
     std::string_view prefix) {
     World prefab{};
     if (!read_world(text, prefab)) {
+        // read_world has already said which line and why.
         return kInvalidInstance;
     }
     return instantiate_prefab(dest, prefab, world_transform, prefix);

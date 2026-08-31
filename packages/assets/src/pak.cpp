@@ -1,5 +1,8 @@
 #include <engine/assets/pak.hpp>
 
+#include <engine/core/log.hpp>
+
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -79,22 +82,34 @@ bool valid_pak_name(std::string_view name) {
     return true;
 }
 
+// parse_pak is the one choke point for every pak read - peek_pak,
+// read_pak_entry and create_pak_loader all go through it - so reporting here
+// covers all three. A *missing entry* is deliberately not reported: that is a
+// normal query result, and run_pak_gate asserts on it.
+bool reject(std::span<const u8> bytes, const char* reason) {
+    char message[192];
+    std::snprintf(message, sizeof(message), "SOLP pak rejected (%zu bytes): %s",
+        bytes.size(), reason);
+    log(LogLevel::Error, LogChannel::Assets, message);
+    return false;
+}
+
 bool parse_pak(std::span<const u8> bytes, std::vector<TocRecord>& toc) {
     toc.clear();
     if (bytes.size() < 12) {
-        return false;
+        return reject(bytes, "shorter than a 12-byte header");
     }
     if (std::memcmp(bytes.data(), kMagic, 4) != 0) {
-        return false;
+        return reject(bytes, "magic is not SOLP");
     }
     Cursor cur{bytes, 4};
     u32 version = 0;
     u32 count = 0;
     if (!cur.read_u32(version) || !cur.read_u32(count)) {
-        return false;
+        return reject(bytes, "truncated before version and entry count");
     }
     if (version != kPakVersion || count == 0 || count > kMaxEntries) {
-        return false;
+        return reject(bytes, "unsupported version, or entry count zero or above kMaxEntries");
     }
 
     toc.reserve(count);
@@ -102,14 +117,14 @@ bool parse_pak(std::span<const u8> bytes, std::vector<TocRecord>& toc) {
     for (u32 i = 0; i < count; ++i) {
         u32 name_len = 0;
         if (!cur.read_u32(name_len) || name_len == 0 || name_len > kMaxNameLen) {
-            return false;
+            return reject(bytes, "entry name length missing, zero, or above kMaxNameLen");
         }
         TocRecord rec{};
         if (!cur.read_bytes(name_len, rec.name) || !cur.read_u32(rec.offset) || !cur.read_u32(rec.size)) {
-            return false;
+            return reject(bytes, "truncated inside a table-of-contents record");
         }
         if (!valid_pak_name(rec.name) || rec.size == 0 || !seen.insert(rec.name).second) {
-            return false;
+            return reject(bytes, "entry name is unsafe or duplicated, or its size is zero");
         }
         toc.push_back(std::move(rec));
     }
@@ -118,11 +133,11 @@ bool parse_pak(std::span<const u8> bytes, std::vector<TocRecord>& toc) {
     u64 expected = toc_end;
     for (const TocRecord& rec : toc) {
         if (static_cast<u64>(rec.offset) != expected) {
-            return false;
+            return reject(bytes, "entry offsets are not contiguous from the end of the table");
         }
         expected += rec.size;
         if (expected > static_cast<u64>(bytes.size()) || expected < rec.size) {
-            return false;
+            return reject(bytes, "entry payload runs past the end of the blob");
         }
     }
     return expected == static_cast<u64>(bytes.size());
