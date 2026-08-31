@@ -14,6 +14,7 @@ constexpr u32 kMaxMaterials = 16;
 constexpr u32 kMaxPointLights = 4;
 constexpr u32 kMaxNameChars = 31;
 constexpr u32 kInvalidInstance = ~0u;
+constexpr u32 kInvalidMaterial = ~0u;
 
 using MaterialHandle = u32;
 using NameId = u32;
@@ -67,6 +68,10 @@ struct World {
     u32 instance_count = 0;
 };
 
+// Both return the invalid sentinel and log when the world is full, rather than
+// aborting. How many instances a game spawns is a content outcome, not a
+// programmer error, and a caller outside the engine cannot be expected to
+// bound-check a cap it does not own. Callers must check the result.
 u32 add_material(World& world, const Material& material);
 u32 add_instance(World& world, const Instance& instance);
 void set_instance_model(World& world, u32 index, const math::Mat4& model);

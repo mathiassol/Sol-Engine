@@ -1811,6 +1811,53 @@ bool run_scene_world_gate(const engine::scene::World& world) {
     return passed;
 }
 
+// Filling the world to its cap used to be untestable: add_instance asserted, and
+// no gate can exercise a path that calls std::abort(). It returns a sentinel and
+// logs now, so the degradation can be asserted like anything else.
+bool run_scene_capacity_gate() {
+    engine::scene::World world;
+
+    engine::u32 last_instance = 0;
+    bool all_instances_ok = true;
+    for (engine::u32 i = 0; i < engine::scene::kMaxInstances; ++i) {
+        last_instance = engine::scene::add_instance(world, {});
+        if (last_instance != i) {
+            all_instances_ok = false;
+        }
+    }
+    const bool inst_full = world.instance_count == engine::scene::kMaxInstances;
+    const engine::u32 over_instance = engine::scene::add_instance(world, {});
+    const bool inst_rejected = over_instance == engine::scene::kInvalidInstance;
+    const bool inst_no_growth = world.instance_count == engine::scene::kMaxInstances;
+
+    bool all_materials_ok = true;
+    for (engine::u32 i = 0; i < engine::scene::kMaxMaterials; ++i) {
+        if (engine::scene::add_material(world, {}) != i) {
+            all_materials_ok = false;
+        }
+    }
+    const engine::u32 over_material = engine::scene::add_material(world, {});
+    const bool mat_rejected = over_material == engine::scene::kInvalidMaterial;
+    const bool mat_no_growth = world.material_count == engine::scene::kMaxMaterials;
+
+    const bool passed = all_instances_ok && inst_full && inst_rejected && inst_no_growth
+        && all_materials_ok && mat_rejected && mat_no_growth;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Scene capacity gate: instances=%u/%u last=%u over=%s count_held=%s "
+        "materials=%u/%u over=%s count_held=%s (%s)",
+        world.instance_count, engine::scene::kMaxInstances, last_instance,
+        inst_rejected ? "invalid" : "GREW",
+        inst_no_growth ? "yes" : "no",
+        world.material_count, engine::scene::kMaxMaterials,
+        mat_rejected ? "invalid" : "GREW",
+        mat_no_growth ? "yes" : "no",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
+
 bool run_scene_name_gate() {
     engine::scene::World world{};
     const engine::u32 alpha = engine::scene::add_instance(world, {});
@@ -5289,6 +5336,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     demo->world.points[0].intensity = 2.2f;
 
     if (!run_scene_world_gate(demo->world) && fail_on_gate) {
+        return false;
+    }
+    if (!run_scene_capacity_gate() && fail_on_gate) {
         return false;
     }
     if (!run_scene_name_gate() && fail_on_gate) {

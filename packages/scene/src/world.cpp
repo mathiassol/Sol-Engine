@@ -1,15 +1,43 @@
 #include <engine/scene/world.hpp>
 
 #include <engine/core/assert.hpp>
+#include <engine/core/log.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
 namespace engine::scene {
 
+namespace {
+
+// One latch per kind. A game that hits a cap hits it every frame, and an
+// unlatched message at 60 Hz is noise to scroll past rather than a diagnostic —
+// the same mistake warn_physics_capacity used to make with a shared latch.
+void warn_full(bool& latch, const char* what, u32 cap, const char* knob) {
+    if (latch) {
+        return;
+    }
+    latch = true;
+    char message[192];
+    std::snprintf(message, sizeof(message),
+        "Scene %s capacity reached (%u). Returning an invalid handle and dropping the addition; "
+        "raise %s.",
+        what, cap, knob);
+    log(LogLevel::Error, LogChannel::Assets, message);
+}
+
+bool g_material_full_warned = false;
+bool g_instance_full_warned = false;
+
+} // namespace
+
 u32 add_material(World& world, const Material& material) {
-    ENGINE_ASSERT_MSG(world.material_count < kMaxMaterials, "scene material overflow");
+    if (world.material_count >= kMaxMaterials) {
+        warn_full(g_material_full_warned, "material", kMaxMaterials, "kMaxMaterials");
+        return kInvalidMaterial;
+    }
     const u32 index = world.material_count;
     world.materials[index] = material;
     world.material_count += 1;
@@ -17,7 +45,10 @@ u32 add_material(World& world, const Material& material) {
 }
 
 u32 add_instance(World& world, const Instance& instance) {
-    ENGINE_ASSERT_MSG(world.instance_count < kMaxInstances, "scene instance overflow");
+    if (world.instance_count >= kMaxInstances) {
+        warn_full(g_instance_full_warned, "instance", kMaxInstances, "kMaxInstances");
+        return kInvalidInstance;
+    }
     const u32 index = world.instance_count;
     world.instances[index] = instance;
     world.instance_count += 1;
