@@ -7,38 +7,38 @@
     "title": "Sol Engine Scorecard"
   },
   "full": {
-    "url": "",
+    "url": "https://claude.ai/code/artifact/0ef10a95-d6af-4adf-9f5b-71f51b73178b",
     "favicon": "🔬",
     "title": "Sol Engine Full Audit"
   },
   "metrics": {
     "stability": {
-      "url": "",
+      "url": "https://claude.ai/code/artifact/b2a9a6de-be52-4ac8-b1d5-63534c6e9dea",
       "favicon": "🛡️",
       "title": "Sol Engine Stability"
     },
     "architecture": {
-      "url": "",
+      "url": "https://claude.ai/code/artifact/6df4bb21-df07-4be6-8ed7-937062128c90",
       "favicon": "🏛️",
       "title": "Sol Engine Architecture"
     },
     "capabilities": {
-      "url": "",
+      "url": "https://claude.ai/code/artifact/877d72bc-269a-4ef7-83b1-88de0bedaba1",
       "favicon": "🎮",
       "title": "Sol Engine Capabilities"
     },
     "portability": {
-      "url": "",
+      "url": "https://claude.ai/code/artifact/fa0e5ed3-090f-4e04-af34-6253b67e04b4",
       "favicon": "🌍",
       "title": "Sol Engine Portability"
     },
     "devex": {
-      "url": "",
+      "url": "https://claude.ai/code/artifact/6715a3af-665f-4bf8-9c5d-09be839647e8",
       "favicon": "🧰",
       "title": "Sol Engine Developer Setup"
     },
     "ai-tooling": {
-      "url": "",
+      "url": "https://claude.ai/code/artifact/ca2f5359-ccb6-470c-b551-10d865032d69",
       "favicon": "🤖",
       "title": "Sol Engine AI Tooling"
     }
