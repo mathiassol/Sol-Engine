@@ -26,6 +26,12 @@ file doesn't cover.
 5. Run `/ship-feature` to close it out (updates the map/roadmap, commits,
    pushes).
 
+`/roadmap <category> #<row>` does all five in one unbroken run: deep research
+(codebase **and** web), one mandatory question round that ends by asking
+whether to execute directly, across subagents, or as a workflow, then build,
+gate, `/ship-feature`, and refresh the published roadmap page. The question
+round is its only interruption.
+
 Separately, `/analizeMax` audits the whole engine — code and non-code — and
 grades six dimensions against an absolute standard. It is expensive and
 deliberate: run it to get the real picture, not during feature work. Output

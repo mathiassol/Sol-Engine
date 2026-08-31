@@ -11,6 +11,11 @@
     "favicon": "🔬",
     "title": "Sol Engine Full Audit"
   },
+  "roadmap": {
+    "url": "",
+    "favicon": "🗺️",
+    "title": "Sol Engine Roadmap"
+  },
   "metrics": {
     "stability": {
       "url": "https://claude.ai/code/artifact/b2a9a6de-be52-4ac8-b1d5-63534c6e9dea",

@@ -18,15 +18,16 @@ here is overwritten or rotated on the next run.
 | `YYYY-MM-DD-HHMM-full.md` | The full report. The **five newest are kept**; older ones are deleted automatically. |
 | `PLAN.md` | The phased remediation plan. **Overwritten every run.** Applied by `/analizeMax-execute`. |
 | `metric-<name>.md` | One metric expanded: a 1–2 page report plus the complete ordered action list. **Overwritten per metric**, so all six coexist. |
-| `artifacts.json` | The permanent artifact URLs. **Never deleted.** See below. |
+| `artifacts.json` | The permanent artifact URLs, including the roadmap page's. **Never deleted.** See below. |
 
 Rotation matches `*-full.md` only, so nothing else in this directory can be
 caught by it.
 
 ## Published pages
 
-Eight documents, eight permanent URLs: the hub, the newest full report, and one
-per metric. The scorecard hub links to every metric page, every metric page
+Nine documents, nine permanent URLs: the hub, the newest full report, the
+roadmap page, and one per metric. The roadmap page is owned by `/roadmap`, not
+by the audit — it shares this registry because it shares the hub's nav. The scorecard hub links to every metric page, every metric page
 links back to the hub and sideways to the other five — so the hub is the only
 link worth sharing.
 

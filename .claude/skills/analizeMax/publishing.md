@@ -198,6 +198,47 @@ Never a blank page. It still knows the grade — the hub has it. So:
 A reader following a link from a shared scorecard lands somewhere that makes
 sense and can get back.
 
+## 5b. The roadmap page
+
+Owned by `/roadmap`, not by the audit — but it shares this registry and sits in
+the same nav, so its layout is defined here with everything else.
+
+**One artifact, `roadmap` in the registry.** All 21 ENGINE_MAP categories are
+**tabs inside the single page**, not 21 separate artifacts. Twenty-one URLs to
+mint, track and keep in sync — for what is fundamentally one table — would cost
+more than it could ever return, and every one of them would go stale on any row
+flip.
+
+Generated from `docs/ENGINE_MAP.md` and `docs/ROADMAP.md`. Those two files are
+the source of truth; this page never holds a fact they do not.
+
+**Structure:**
+
+1. **Nav strip**, same component as everywhere else, with **← Scorecard** back
+   to the hub.
+2. **A summary line** across all categories: how many Done, Ready, Later, Far.
+   That is the honest shape of the project in one row.
+3. **Category tabs** — 21 of them, client-side (no navigation, no page reload).
+   Label each with its number and name as ENGINE_MAP writes it, and show its
+   Ready count on the tab, so the tabs with available work are visible without
+   clicking through. Default to the first category with a Ready row.
+4. **Inside a tab**, the category's rows in map order: number, item text, a
+   status chip, and Finish first where the map fills it. Status chips reuse the
+   grade badge's semantic colours — Done, Ready, Later, Far — never the accent.
+5. For a **Done** row that has a `docs/ROADMAP.md` decision-log entry, show its
+   Why / Choice / Gate / Do-not, collapsed. That log is the most valuable thing
+   in the repository and nothing else surfaces it.
+6. **Footer** with the source commit and generation time, plus links to the hub.
+
+Tabs must work without JavaScript succeeding: render every panel in the document
+and let CSS/JS switch which is visible, rather than building panels on click. A
+page that shows nothing when a script fails is worse than a long page.
+
+**Hub integration.** The scorecard's nav strip carries a **Roadmap** item beside
+the six metrics. It is not a seventh metric and takes no grade badge — give it
+the Ready count instead. Any command that re-publishes the hub keeps that item;
+dropping it silently orphans the roadmap page from the only link people share.
+
 ## 6. Verify before you finish
 
 - Every `href` to another analysis page resolves to a registry URL, and no page
