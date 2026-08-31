@@ -7,12 +7,29 @@
 namespace engine {
 
 [[noreturn]] void assert_fail(const char* expr, const char* file, int line, const char* msg) {
+    // Direct write first, and kept: if the installed logger is the thing that
+    // is broken, this is the only output that survives.
     if (msg) {
         std::fprintf(stderr, "ASSERT FAILED: %s\n  at %s:%d\n  %s\n", expr, file, line, msg);
-        log(LogLevel::Fatal, msg);
     } else {
         std::fprintf(stderr, "ASSERT FAILED: %s\n  at %s:%d\n", expr, file, line);
     }
+
+    // Always, not only when a message was given. The bare ENGINE_ASSERT form is
+    // the majority of the 77 assert sites, and it used to abort leaving nothing
+    // on disk and nothing in any log sink.
+    char message[512];
+    if (msg) {
+        std::snprintf(message, sizeof(message), "ASSERT FAILED: %s at %s:%d - %s",
+            expr, file, line, msg);
+    } else {
+        std::snprintf(message, sizeof(message), "ASSERT FAILED: %s at %s:%d",
+            expr, file, line);
+    }
+    // The file sink flushes every line, so no explicit flush is needed here for
+    // the record to survive the abort below.
+    log(LogLevel::Fatal, LogChannel::General, message);
+
     std::abort();
 }
 
