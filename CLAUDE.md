@@ -9,6 +9,9 @@ file doesn't cover.
 
 - **What to work on**: [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — pick one
   **Ready** row. Picking rules: [docs/PICKING.md](docs/PICKING.md).
+  Not sure what to pick? `/whatnow` reads the tree, the gates, CI, the
+  backlog's dependency graph and the newest audit, and offers three
+  directions with the evidence for each. It suggests; it does not start.
 - **Canonical plan / changelog**: [docs/ROADMAP.md](docs/ROADMAP.md) — every
   shipped feature has a dated Why/Choice/Gate/Do-not entry there.
 - These two files are the source of truth. There is no separate dashboard —
