@@ -61,9 +61,22 @@ options and it takes at most four.
 ls -1 docs/analysis/*-full.md | sort | tail -1
 ```
 
-That file is the source. Read it fully — the metric's section, its grade, the
-ceilings that fired, both falsification sentences, its findings, its external
-comparison, and anything in Cross-cutting that names this metric.
+That file is the source. It runs to tens of thousands of words, so navigate by
+anchor rather than reading linearly. The layout is stable:
+
+| Anchor | Holds |
+|--------|-------|
+| `## 2. Grades` | The grade table (Key / Dimension / Band / Grade / Ceilings fired), then **Why each modifier** — which names the single criterion a `+` missed — then **Falsification**, as blockquotes reading `> One band higher if …` and `> One band lower if …`, six of each. |
+| `## 3. Per dimension` | `### <KEY> — <Name> — <Band> — <Grade>`, one per metric. |
+| `#### <ID> — <title> — **<Severity>**` | The findings, inside their dimension. Severity in the heading is what `G5` was traced through, so read it — a `**Critical**` is why a dimension is capped. |
+| `## 4. Cross-cutting` | Findings that belong to more than one metric. Always check this; a shared finding missing from your list makes it look complete when it is not. |
+| `## 5. Remedies` | Costed fixes for surviving findings. Your action list's **Do** and **Cost** fields come from here. |
+| `## 6. Calibration notes` | The counter-arguments to the highest and lowest grades. Useful for the report's *what would move it* section. |
+| `## 7. Appendix: reproduction` | Commands and their literal output. Cite from here for the **Proof** field instead of inventing a command. |
+
+Read: the metric's own `###` section in full, its rows in the grade table, its
+two falsification blockquotes, its `Why each modifier` bullet, everything in
+Cross-cutting that names it, and its entries in Remedies and the Appendix.
 
 **If no full report exists** — say so and offer `/analizeMax`. Stop. Do not
 audit as a substitute.
