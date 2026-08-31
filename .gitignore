@@ -1,6 +1,11 @@
 # Build
 build/
 out/
+# `cmake --install --prefix dist` is the documented player-build layout in
+# README.md. Its content (PNG, glTF, WAV, HLSL) is not covered by the binary
+# patterns further down, so without this the documented command leaves ~36 MB
+# of addable files in the tree.
+dist/
 cmake-build-*/
 .vs/
 x64/

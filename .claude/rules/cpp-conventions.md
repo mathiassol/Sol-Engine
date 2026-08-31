@@ -24,7 +24,8 @@ every package.
   singleton. Three deliberate exceptions: the logger (`g_logger` in
   `core/src/log.cpp`, set once at startup via `set_logger()`), the cvar
   registry (a function-local static, so static-initialisation order cannot
-  bite), and `warn_physics_capacity`'s once-per-process latch.
+  bite), and `warn_physics_capacity`'s per-kind latch array (one `bool` per
+  `CapacityKind`, each firing once per process).
 - Minimize dynamic allocation; favor immutable data when practical.
 - Headers live at `include/engine/<package>/<header>.hpp`. Implementation
   details live only in `src/`, never in a public header.
