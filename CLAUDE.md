@@ -167,6 +167,23 @@ cmake --build build --config Release --target game
 - Review `git status` before staging broadly. Never `git add -A` / `git add .`
   as a reflex — name paths explicitly when a change touches many files.
 
+## How this project maps onto the installed skills
+
+The `superpowers` set is installed and its preamble tells you to invoke any
+skill that might apply. Several of them assume a workflow this repo does not
+use. The mapping, so it does not have to be re-derived every session:
+
+| Installed skill | Here |
+|-----------------|------|
+| `test-driven-development` | Use it, but the test *is* a gate. There is no test framework — see "What a gate is" above. Write the gate first and watch it fail; that is this project's red-green. |
+| `finishing-a-development-branch`, `using-git-worktrees` | Skip. Trunk-based: commit to `main`, push. There is no branch to finish and no PR to open. `/ship-feature` is the closeout. |
+| `requesting-code-review`, `code-review:code-review` | Skip the PR-shaped parts. `--gates` plus `tools/check-invariants.ps1` is the review gate; `/analizeMax` is the audit. |
+| `brainstorming`, `writing-plans`, `executing-plans` | Use as written — steps 2 and 3 of the loop above call for them by name. |
+| `systematic-debugging`, `verification-before-completion` | Use as written. Nothing here conflicts. |
+
+Where a skill and this file disagree, this file wins — that is the documented
+precedence, not a judgement call.
+
 ## Docs map
 
 | File | Purpose |

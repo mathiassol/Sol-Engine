@@ -47,6 +47,10 @@ need a rebuild to be picked up.
 .\build\bin\Debug\sandbox.exe
 ```
 
+`run.bat` at the repo root does the same interactively — it prompts for GPU
+debug and any extra arguments (`--gates`, `--set r.aa=taa`), checks the binary
+exists and tells you how to build it if not, then prints the exit code.
+
 **Ship / play `game.exe`** — Release, no GPU debug layer, content,
 `content.pak`, and DXC DLLs (`dxcompiler.dll`, `dxil.dll`) next to the exe.
 D3D12 comes from Windows; Agility is not shipped.
