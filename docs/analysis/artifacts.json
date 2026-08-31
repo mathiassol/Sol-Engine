@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "_comment": "Permanent artifact URLs. A URL here is never reused, renamed or repurposed. Written by /analizeMax, /analizeMax-metric and /analizeMax-repair; see .claude/skills/analizeMax/publishing.md. Empty url means not published yet.",
+  "hub":  { "url": "", "favicon": "🧭", "title": "Sol Engine Scorecard" },
+  "full": { "url": "", "favicon": "🔬", "title": "Sol Engine Full Audit" },
+  "metrics": {
+    "stability":    { "url": "", "favicon": "🛡️", "title": "Sol Engine Stability" },
+    "architecture": { "url": "", "favicon": "🏛️", "title": "Sol Engine Architecture" },
+    "capabilities": { "url": "", "favicon": "🎮", "title": "Sol Engine Capabilities" },
+    "portability":  { "url": "", "favicon": "🌍", "title": "Sol Engine Portability" },
+    "devex":        { "url": "", "favicon": "🧰", "title": "Sol Engine Developer Setup" },
+    "ai-tooling":   { "url": "", "favicon": "🤖", "title": "Sol Engine AI Tooling" }
+  }
+}

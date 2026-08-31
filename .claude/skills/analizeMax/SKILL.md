@@ -1,6 +1,6 @@
 ---
 name: analizeMax
-description: Full-depth audit of the engine — code (stability, architecture, capabilities, portability) and everything non-code (developer setup, AI tooling). Measures the tree, searches the web for external ground truth, verifies every finding adversarially, and grades six dimensions F to A+ against an absolute standard. Emits three files: a long report (last 5 kept), a one-page plain-language summary, and a phased plan that /analizeMax-execute can apply without further approval. Expensive and deliberate — run it when you want the real picture, not during feature work.
+description: Full-depth audit of the engine — code (stability, architecture, capabilities, portability) and everything non-code (developer setup, AI tooling). Measures the tree, searches the web for external ground truth, verifies every finding adversarially, and grades six dimensions F to A+ against an absolute standard. Emits three files: a long report (last 5 kept), a one-page plain-language summary whose scorecard is the shareable hub linking to every metric page, and a phased plan that /analizeMax-execute can apply without further approval. Expensive and deliberate — run it when you want the real picture, not during feature work.
 disable-model-invocation: true
 argument-hint: [optional: one dimension to go deep on]
 effort: max
@@ -368,21 +368,24 @@ Structure:
 ---
 run: <date>
 commit: <sha>
-artifact: <url, if published — leave the previous value if unchanged>
 ---
 
 # Sol Engine — where it stands
 
 <Two sentences: the honest one-line state of the engine.>
 
-| What was graded | Grade | In one sentence |
-|-----------------|-------|-----------------|
-| Stability | | |
-| Architecture | | |
-| Capabilities | | |
-| Cross-platform readiness | | |
-| Developer setup | | |
-| AI tooling | | |
+| What was graded | Grade | In one sentence | Detail |
+|-----------------|-------|-----------------|--------|
+| Stability | | | `metric-stability.md` |
+| Architecture | | | `metric-architecture.md` |
+| Capabilities | | | `metric-capabilities.md` |
+| Cross-platform readiness | | | `metric-portability.md` |
+| Developer setup | | | `metric-devex.md` |
+| AI tooling | | | `metric-ai-tooling.md` |
+
+The Detail column is a file path in the markdown and becomes a **link** in the
+published hub — see the publishing contract. Keep the six rows in this order;
+the published nav strip follows it.
 
 ## What this means
 
@@ -403,10 +406,24 @@ artifact: <url, if published — leave the previous value if unchanged>
 <One or two sentences. Omit the section entirely on the first run.>
 ```
 
-Then publish the summary as an artifact so it is readable outside the repo. If
-`LATEST.md` already carries an `artifact:` URL, pass it as `url` so the same
-artifact updates instead of a second one appearing. Write the URL back into the
-frontmatter. Keep the same favicon across runs.
+This summary is the **hub** of the published set — its scorecard is what gets
+shared, and every grade in it is a link to that metric's page.
+
+Publishing is governed by `.claude/skills/analizeMax/publishing.md`. **Read it
+before publishing anything.** In short, for this command:
+
+- URLs come from `docs/analysis/artifacts.json` and are permanent. Always pass
+  the registry `url`, `favicon` and `title`; never publish without a `url` for a
+  document that already has one.
+- Publish three things: the **full report**, the **hub**, and **all six metric
+  pages** — every metric's grade and staleness just changed, so a metric page
+  left alone now contradicts the hub that links to it.
+- A metric with no report yet still has a page. If one is missing, or the
+  registry has an empty URL, that is `/analizeMax-repair`'s job — say so rather
+  than improvising a layout.
+
+A grade on the hub that disagrees with the page it links to is the one failure
+mode here that a reader cannot detect, so check it before finishing.
 
 ### Output 3: the executable plan
 
@@ -513,7 +530,9 @@ prefixed, so name order is chronological:
 Get-ChildItem docs/analysis -Filter '*-full.md' | Sort-Object Name | Select-Object -SkipLast 5 | Remove-Item -Confirm:$false
 ```
 
-Report what was deleted. Never delete `LATEST.md` or `PLAN.md`.
+Report what was deleted. Never delete `LATEST.md`, `PLAN.md`,
+`artifacts.json`, `README.md`, or any `metric-*.md` — the filter is
+`*-full.md` for exactly this reason.
 
 ## Pass 7 — Close out
 

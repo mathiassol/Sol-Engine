@@ -38,6 +38,11 @@ stay on a separate list.
 report plus a full ordered action list. It derives purely from the newest full
 report — no build, no research, no re-grading — so it is cheap to re-run.
 
+All of it publishes to permanent artifact URLs tracked in
+`docs/analysis/artifacts.json`: the scorecard is a hub linking to a page per
+metric, each linking back, so sharing the scorecard shares the whole set.
+`/analizeMax-repair` creates anything missing and fixes the links.
+
 ## Non-negotiables
 
 These outrank convenience every time, regardless of what a session's context

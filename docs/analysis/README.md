@@ -8,23 +8,50 @@ here is overwritten or rotated on the next run.
 | `/analizeMax` | The audit. Measures the tree, researches externally, grades six dimensions. Expensive. |
 | `/analizeMax-metric <name>` | Expands one dimension into a working document. Pure derivation from the newest full report — no build, no research, no re-grading. Cheap. |
 | `/analizeMax-execute` | Applies `PLAN.md`, normally or fanned out across subagents or a workflow. |
+| `/analizeMax-repair` | Creates anything missing, validates every format, and re-publishes all eight pages with correct cross-links. Run it once after the first audit. |
+
+## Files
 
 | File | Lifecycle |
 |------|-----------|
-| `LATEST.md` | The one-page summary. **Overwritten every run.** |
+| `LATEST.md` | The one-page summary. Its scorecard is the **hub**. **Overwritten every run.** |
 | `YYYY-MM-DD-HHMM-full.md` | The full report. The **five newest are kept**; older ones are deleted automatically. |
 | `PLAN.md` | The phased remediation plan. **Overwritten every run.** Applied by `/analizeMax-execute`. |
-| `metric-<name>.md` | One metric expanded: a 1-2 page report plus the complete ordered action list. **Overwritten per metric**, so each of the six can coexist. Written by `/analizeMax-metric`. |
+| `metric-<name>.md` | One metric expanded: a 1–2 page report plus the complete ordered action list. **Overwritten per metric**, so all six coexist. |
+| `artifacts.json` | The permanent artifact URLs. **Never deleted.** See below. |
 
-Every task in `PLAN.md` passed an admission test before it was written:
-reversible by one `git revert`, verifiable by a named command, no behaviour
-change, no judgement call, and a file list known up front. Anything that
-failed the test is listed under **Needs a decision** and is never
-auto-executed.
+Rotation matches `*-full.md` only, so nothing else in this directory can be
+caught by it.
 
-`LATEST.md` carries the published artifact URL in its frontmatter so reruns
-update the same artifact instead of creating a new one. Do not remove that line.
+## Published pages
 
-This directory is excluded from the `doc-links` invariant check: reports are
-dated snapshots, and one from five runs ago may legitimately reference a file
-that has since moved. A generated file must never be able to turn CI red.
+Eight documents, eight permanent URLs: the hub, the newest full report, and one
+per metric. The scorecard hub links to every metric page, every metric page
+links back to the hub and sideways to the other five — so the hub is the only
+link worth sharing.
+
+`artifacts.json` is what makes those URLs permanent. A URL in it is passed back
+on every re-publish so the page someone already has updates in place instead of
+a second copy appearing. **Losing that file orphans every link already shared**,
+which is why it is committed rather than ignored: the URLs have to survive a
+fresh clone and a second machine. Artifacts are private until explicitly shared,
+so a URL in a public repo grants nothing on its own.
+
+The full contract — registry rules, the two-phase publish that resolves the
+circular hub↔metric links, staleness display, and page structure — is
+[.claude/skills/analizeMax/publishing.md](../../.claude/skills/analizeMax/publishing.md).
+
+Every metric has a page even before it has been analysed: a placeholder showing
+the grade the audit assigned, saying no detailed report exists yet, and linking
+back to the hub. A link from a shared scorecard never dead-ends.
+
+Each page carries its own date, time, and the commit its audit ran against, plus
+whether it is `current`, `behind` (commits landed since), or `superseded` (a
+newer audit exists than the one it derived from). Staleness is computed at
+publish time, never remembered.
+
+## Not link-checked
+
+This directory is excluded from the `doc-links` invariant: reports are dated
+snapshots, and one from five runs ago may legitimately reference a file that has
+since moved. A generated file must never be able to turn CI red.

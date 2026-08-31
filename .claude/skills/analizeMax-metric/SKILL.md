@@ -1,9 +1,9 @@
 ---
 name: analizeMax-metric
-description: Take one metric from the newest /analizeMax full report — stability, architecture, capabilities, portability, developer setup, or AI tooling — and derive a focused 1-2 page report plus a complete ordered action list for it. Pure derivation from the existing report: no build, no gates, no web search, no reading source. Use when the user asks to zoom in on one metric, wants the action list for a dimension, or says something like "give me the stability report" or "what should we do about architecture".
+description: Take one metric from the newest /analizeMax full report — stability, architecture, capabilities, portability, developer setup, or AI tooling — and derive a focused 1-2 page report plus a complete ordered action list for it, published at that metric's permanent artifact URL and linked from the scorecard hub. Pure derivation from the existing report: no build, no gates, no web search, no reading source. Use when the user asks to zoom in on one metric, wants the action list for a dimension, or says something like "give me the stability report" or "what should we do about architecture".
 when_to_use: The user wants one dimension of the last audit expanded into something they can work from. Trigger phrases include "analizeMax metric", "give me the <metric> report", "focus on <metric>", "action list for <metric>", "what should we do about <metric>". Do not use to audit — that is /analizeMax. Do not use to apply fixes — that is /analizeMax-execute.
 argument-hint: stability | architecture | capabilities | portability | devex | ai-tooling
-allowed-tools: Bash(git *) Bash(ls *) Read Grep Glob Write Edit
+allowed-tools: Bash(git *) Bash(ls *) Bash(cat *) Read Grep Glob Write Edit Artifact
 ---
 
 Expand one metric from the last audit into a working document: a short report
@@ -35,8 +35,9 @@ instant — an audit costs a long session, and re-auditing one metric to answer
 and move on. A derived document that quietly invents its gaps is worse than one
 with holes, because the holes are the signal to run a fresh audit.
 
-The only files you may open: the full report, `PLAN.md`, `LATEST.md`, and
-`git log`/`git rev-parse` for the staleness check.
+The only files you may open: the full report, `PLAN.md`, `LATEST.md`,
+`artifacts.json`, the publishing contract, and `git log`/`git rev-parse` for the
+staleness check.
 
 ## Step 1 — Resolve the metric
 
@@ -102,6 +103,24 @@ would have done.
 One file: `docs/analysis/metric-<key>.md`, lowercase key
 (`metric-stability.md`, `metric-ai-tooling.md`). **Overwrite it.** One file per
 metric, so running this for stability does not clobber the architecture one.
+The six keys are exactly `stability`, `architecture`, `capabilities`,
+`portability`, `devex`, `ai-tooling` — a seventh name is a typo, not a new
+metric.
+
+Frontmatter, which the hub and `/analizeMax-repair` both read:
+
+```markdown
+---
+run: <now, date and time>
+derived_from: <the full report filename this came from>
+commit: <the commit that report was generated against>
+state: report
+---
+```
+
+`state: report` distinguishes this from a placeholder written by
+`/analizeMax-repair`, which sets `state: empty`. Overwriting a placeholder is
+normal and expected — that is the file becoming real.
 
 No rotation — this is derived, and the full reports are the history.
 
@@ -184,8 +203,22 @@ Do not commit, and do not start doing the actions. This command produces a
 document. Applying it is `/analizeMax-execute` (for plan-eligible items) or
 ordinary work.
 
-Do not publish an artifact. `LATEST.md` is the artifact-worthy summary; this is
-a working file for one metric.
+### Publish
+
+Governed by `.claude/skills/analizeMax/publishing.md`. **Read it before
+publishing.** For this command:
+
+- Publish **two** documents: this metric's page, and the **hub** — the hub's row
+  for this metric just changed its timestamp and freshness, and a hub that
+  disagrees with the page it links to is worse than no hub.
+- URLs, favicons and titles come from `docs/analysis/artifacts.json` and are
+  permanent. Pass this metric's registry `url` so the page people already have
+  updates in place.
+- If this metric has no registry URL yet, or the registry is missing, that is
+  `/analizeMax-repair`'s job — run it rather than improvising, because minting a
+  URL without recording it orphans the artifact permanently.
+- The grade you put on the page must equal the grade on the hub. You are quoting
+  it, not deriving it, so any mismatch means a stale read — re-check.
 
 ## When this goes wrong
 
