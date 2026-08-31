@@ -1,6 +1,6 @@
 ---
 name: analizeMax
-description: Full-depth audit of the engine — code (stability, architecture, capabilities, portability) and everything non-code (developer setup, AI tooling). Measures the tree, searches the web for external ground truth, verifies every finding adversarially, and grades six dimensions F to A+ against an absolute standard. Emits three files: a long report (last 5 kept), a one-page plain-language summary whose scorecard is the shareable hub linking to every metric page, and a phased plan that /analizeMax-execute can apply without further approval. Expensive and deliberate — run it when you want the real picture, not during feature work.
+description: Full-depth audit of the engine — code (stability, architecture, capabilities, portability) and everything non-code (developer setup, AI tooling). Measures the tree, searches the web for external ground truth, verifies every finding adversarially, and grades six dimensions F to A+ against an absolute standard. Emits three files: a long report (last 5 kept), a one-page plain-language summary whose scorecard is the shareable hub, and a phased plan that /analizeMax-execute can apply without further approval. Publishes only the report and the hub — metric pages are written solely by /analizeMax-metric, so an audit never spends time on pages nobody asked to read. Expensive and deliberate — run it when you want the real picture, not during feature work.
 disable-model-invocation: true
 argument-hint: [optional: one dimension to go deep on]
 effort: max
@@ -429,19 +429,23 @@ before publishing anything.** In short, for this command:
 - URLs come from `docs/analysis/artifacts.json` and are permanent. Always pass
   the registry `url`, `favicon` and `title`; never publish without a `url` for a
   document that already has one.
-- Publish three things: the **full report**, the **hub**, and **all six metric
-  pages** — every metric's grade and staleness just changed, so a metric page
-  left alone now contradicts the hub that links to it.
-- **Materialise the whole set yourself.** Any of the six metrics with no file
-  gets a placeholder, written to the contract's `state: empty` template — you
-  now have the grade it needs. Do not defer this to `/analizeMax-repair`; one
-  audit must produce a complete, navigable set, because a hub whose links
-  dead-end is not shareable and the user should not have to know to run a second
-  command.
-- If any registry URL is empty, run the contract's **two-phase publish**: mint
-  with the nav disabled, write each returned URL to `artifacts.json`
-  immediately, then re-publish everything with real links. After the first audit
-  the registry is complete and this collapses to one publish per document.
+- Publish exactly **two** things: the **full report** and the **hub**.
+- **Never write or publish a metric page.** Not to refresh its grade, not to
+  fix its freshness label, not because you are already in the directory. Each
+  one is a designed page, and generating six that nobody asked to read is the
+  cost `/analizeMax-metric` exists to avoid. `metric-*.md` is that command's
+  file and nothing else writes it.
+- You may **read** the metric files. You need each one's `derived_from` to label
+  its row on the hub, and reading costs nothing.
+- **Label every hub row honestly instead.** The hub carries the new grade while
+  a metric page still carries the old one; that is fine as long as the row says
+  so. Three states, per the contract: *not analysed* (registry `url` empty —
+  render as plain text, **never a link**), *current* (page derives from this
+  audit), *superseded* (page derives from an older one, so say which). A
+  superseded row is not a defect; an unlabelled one is.
+- If the `hub` or `full` registry URL is empty, publish and write the returned
+  URL back to `artifacts.json` immediately. Do not mint metric URLs — a metric
+  gets its URL the first time someone asks for that metric.
 - `/analizeMax-repair` exists for drift and breakage afterwards, not as a
   required second step.
 
@@ -569,6 +573,10 @@ just "execute the analizeMax plan") applies the plan, and
 `/analizeMax-metric <name>` expands any one dimension into a working document
 with its full action list — cheaply, since it derives from the report you just
 wrote rather than measuring again.
+
+Say which metric pages are now **superseded** or **not analysed**, in one line.
+That is the honest consequence of not regenerating them, and it tells the user
+exactly which `/analizeMax-metric` calls would be worth making.
 
 Do not paste the full report into chat; it is a file. Do not start executing
 the plan — generating it and running it are separate acts.

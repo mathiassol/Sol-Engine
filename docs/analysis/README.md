@@ -5,8 +5,8 @@ here is overwritten or rotated on the next run.
 
 | Command | Does |
 |---------|------|
-| `/analizeMax` | The audit. Measures the tree, researches externally, grades six dimensions. Expensive. |
-| `/analizeMax-metric <name>` | Expands one dimension into a working document. Pure derivation from the newest full report — no build, no research, no re-grading. Cheap. |
+| `/analizeMax` | The audit. Measures the tree, researches externally, grades six dimensions. Publishes the full report and the hub, and **never** a metric page. Expensive. |
+| `/analizeMax-metric <name>` | Expands one dimension into a working document, and is the **only** thing that writes or publishes a metric page. Pure derivation from the newest full report — no build, no research, no re-grading. Cheap. |
 | `/analizeMax-execute` | Applies `PLAN.md`, normally or fanned out across subagents or a workflow. |
 | `/analizeMax-repair` | Repairs drift: creates anything missing, validates every format, re-publishes all eight pages with correct cross-links. Not needed after a normal audit — `/analizeMax` materialises the full set itself. |
 
@@ -42,9 +42,15 @@ The full contract — registry rules, the two-phase publish that resolves the
 circular hub↔metric links, staleness display, and page structure — is
 [.claude/skills/analizeMax/publishing.md](../../.claude/skills/analizeMax/publishing.md).
 
-Every metric has a page even before it has been analysed: a placeholder showing
-the grade the audit assigned, saying no detailed report exists yet, and linking
-back to the hub. A link from a shared scorecard never dead-ends.
+A metric page is only ever written by `/analizeMax-metric`. An audit refreshes
+the grades on the hub and leaves the metric pages alone, because generating six
+designed pages nobody asked to read is the cost that command exists to avoid.
+
+The hub stays honest about it. Each row is one of three states: **current** (its
+page derives from this audit), **superseded** (from an older one — still a link,
+labelled with which audit), or **not analysed** (no page published, rendered as
+plain text and deliberately *not* a link, so a shared scorecard never
+dead-ends).
 
 Each page carries its own date, time, and the commit its audit ran against, plus
 whether it is `current`, `behind` (commits landed since), or `superseded` (a

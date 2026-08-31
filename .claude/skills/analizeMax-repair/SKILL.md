@@ -1,7 +1,7 @@
 ---
 name: analizeMax-repair
-description: Repair and complete the analizeMax analysis set — create any missing metric file as a navigable empty placeholder, validate every file's format, mint artifact URLs for anything unpublished, and re-publish all eight pages with correct cross-links so the shared scorecard navigates properly. Use when a link is broken, a page is missing, the registry is out of sync, or the user asks to fix the analysis pages. Not a required step after an audit — /analizeMax materialises the whole set itself.
-when_to_use: Trigger phrases include "analizeMax repair", "fix the analysis pages", "the scorecard link is broken", "set up the hub", "rebuild the analysis artifacts", "the metric page is missing". Does not audit and does not re-grade. /analizeMax already materialises the full set, so this is for repairing drift afterwards.
+description: Repair drift in the analizeMax analysis set — validate every file's format, create a missing metric file on disk, restore a registry entry that lost its URL, and re-publish whatever is actually broken so the shared scorecard navigates properly. Use when a link is broken, the registry is out of sync, or the user asks to fix the analysis pages. Not a required step after an audit, and it never publishes a metric page that has never been analysed.
+when_to_use: Trigger phrases include "analizeMax repair", "fix the analysis pages", "the scorecard link is broken", "the registry is out of sync", "rebuild the analysis artifacts". Does not audit, does not re-grade, and does not generate metric pages — only /analizeMax-metric does that.
 argument-hint: [optional: --check to report without changing anything]
 allowed-tools: Bash(git *) Bash(ls *) Bash(cat *) Read Grep Glob Write Edit Artifact
 ---
@@ -36,7 +36,7 @@ Build a table of what should exist against what does:
 | `LATEST.md` | the hub's content. Only `/analizeMax` writes it |
 | `PLAN.md` | written by `/analizeMax` |
 | at least one `*-full.md` | written by `/analizeMax` |
-| six `metric-<key>.md` | `/analizeMax-metric`, or an empty placeholder from here |
+| six `metric-<key>.md` | `/analizeMax-metric`. A missing one gets a placeholder *file* from here, never a published page |
 
 The six keys are exactly: `stability`, `architecture`, `capabilities`,
 `portability`, `devex`, `ai-tooling`.
@@ -68,16 +68,20 @@ report which.
 **Orphaned files** — a `metric-<something>.md` whose key is not one of the six.
 Report it; do not delete it.
 
-## Step 3 — Create missing metric files
+## Step 3 — Create missing metric *files*
 
-For each of the six with no file, write the placeholder defined in the
-publishing contract (`### The placeholder file`). It is a real page, not a stub:
-the grade is known from `LATEST.md` even though no detailed report exists, so it
-shows the grade and links back to the hub.
+For each of the six with no file on disk, write the placeholder defined in the
+publishing contract (`### The placeholder file`). One definition, shared — do
+not restate or vary it here.
 
-One definition, used by both this command and `/analizeMax`. Do not restate or
-vary it here — a second copy is how the two commands start producing different
-placeholders.
+**Do not publish a page for a metric that has never been analysed.** The file on
+disk is cheap and the invariant wants it; a published page is a designed page,
+and only `/analizeMax-metric` makes those. A metric with an empty registry `url`
+is rendered by the hub as plain unlinked text saying it has not been analysed,
+which is the honest state and costs nothing.
+
+So: mint a metric URL only when its page exists and its registry entry has lost
+the URL. Never mint one to fill a gap.
 
 ## Step 4 — Publish
 

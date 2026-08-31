@@ -208,9 +208,13 @@ ordinary work.
 Governed by `.claude/skills/analizeMax/publishing.md`. **Read it before
 publishing.** For this command:
 
-- Publish **two** documents: this metric's page, and the **hub** — the hub's row
-  for this metric just changed its timestamp and freshness, and a hub that
-  disagrees with the page it links to is worse than no hub.
+- Publish **two** documents: this metric's page, and the **hub** — that row just
+  went from *not analysed* or *superseded* to **current**, and the hub is where
+  anyone would look.
+- **You are the only writer of a metric page.** `/analizeMax` deliberately never
+  regenerates these, so this command running is the single reason one is ever
+  current. If this metric had no registry URL, publishing here mints it — write
+  the returned URL into `artifacts.json` immediately.
 - URLs, favicons and titles come from `docs/analysis/artifacts.json` and are
   permanent. Pass this metric's registry `url` so the page people already have
   updates in place.

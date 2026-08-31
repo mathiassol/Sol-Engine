@@ -427,6 +427,15 @@ Add-Result 'map-dependencies' $mapSummary $mapViolations
 # is only enforced once LATEST.md proves an audit has actually run here.
 $analysisViolations = @()
 $analysisDir = 'docs/analysis'
+# Newest full report, by name - the filenames are date-prefixed. A metric page
+# whose `derived_from` matches this is current; an older one is superseded and
+# that is expected, because /analizeMax does not regenerate metric pages.
+$newestFull = ''
+if (Test-Path $analysisDir) {
+    $fulls = @(Get-ChildItem -Path $analysisDir -File -Filter '*-full.md' -ErrorAction SilentlyContinue |
+        Sort-Object Name)
+    if ($fulls.Count -gt 0) { $newestFull = $fulls[-1].Name }
+}
 $metricKeys = @('stability', 'architecture', 'capabilities', 'portability', 'devex', 'ai-tooling')
 $registryPath = Join-Path $analysisDir 'artifacts.json'
 $analysisSummary = 'no analysis set present'
@@ -530,10 +539,23 @@ if (Test-Path $registryPath) {
         } elseif ($state -notin @('report', 'empty')) {
             $analysisViolations += "$analysisDir/$($mf.Name): unrecognised state '$state' (use report or empty)"
         }
-        if ($hubGrades.ContainsKey($key)) {
+        # Grade agreement, but only against the audit this page actually derives
+        # from. /analizeMax deliberately does not regenerate metric pages - it
+        # would cost six designed pages nobody asked to read - so a page from an
+        # older audit legitimately carries an older grade. What matters is that
+        # `derived_from` says so; the hub labels that row superseded.
+        $derived = ([regex]::Match($body, '(?m)^derived_from:\s*(\S+)\s*$')).Groups[1].Value
+        if (-not $derived) {
+            $analysisViolations += "$analysisDir/$($mf.Name): no 'derived_from:' in frontmatter - nothing can tell which audit this page is from"
+        } elseif ($newestFull -and $derived -ne $newestFull) {
+            # Older audit: stale by design, but it must name a report that exists.
+            if (-not (Test-Path (Join-Path $analysisDir $derived))) {
+                $analysisViolations += "$analysisDir/$($mf.Name): derived_from '$derived' is not a report in this directory"
+            }
+        } elseif ($hubGrades.ContainsKey($key)) {
             $own = ([regex]::Match($body, '(?m)^\*\*Grade:\s*([^*]+?)\s*\*\*')).Groups[1].Value
             if ($own -and $own.Trim() -ne $hubGrades[$key]) {
-                $analysisViolations += "$analysisDir/$($mf.Name): grade '$($own.Trim())' disagrees with LATEST.md's '$($hubGrades[$key])' - one was written against a different audit"
+                $analysisViolations += "$analysisDir/$($mf.Name): derives from the current audit but its grade '$($own.Trim())' disagrees with LATEST.md's '$($hubGrades[$key])'"
             }
         }
     }

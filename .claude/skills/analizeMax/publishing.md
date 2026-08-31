@@ -68,12 +68,38 @@ per changed document. Only `/analizeMax-repair` should ever need Phase A again.
 
 | Command | Writes | Publishes |
 |---------|--------|-----------|
-| `/analizeMax` | full report, `LATEST.md`, `PLAN.md` | `full`, `hub`, **and re-publishes all six metric pages** — their grades and staleness just changed |
-| `/analizeMax-metric <m>` | `metric-<m>.md` | that metric, **and `hub`** — its row's timestamp and freshness just changed |
-| `/analizeMax-repair` | any missing file | whatever is missing or malformed, both phases |
+| `/analizeMax` | full report, `LATEST.md`, `PLAN.md` | `full` and `hub`. **Nothing else.** |
+| `/analizeMax-metric <m>` | `metric-<m>.md` | that metric, **and `hub`** — its row's freshness just changed |
+| `/analizeMax-repair` | any malformed file | only what is broken |
 
-**Always refresh the hub.** It is small, and a hub showing a grade the metric
-page contradicts is worse than no hub. This is not optional.
+**`/analizeMax` never writes or publishes a metric page.** Not to refresh a
+grade, not to update a freshness label, not "while it is in there". A metric
+page costs a designed page's worth of work, and the point of splitting
+`/analizeMax-metric` out was to stop paying that for six pages nobody asked to
+read. An audit that regenerates them has quietly undone the split.
+
+It may **read** the metric files — it needs their `derived_from` to label the
+hub. Reading is free; publishing is not.
+
+**Always refresh the hub**, from every command that changes what the hub shows.
+It is one small page and it is the thing people actually open.
+
+### What the hub says about a metric it did not regenerate
+
+This is the part that makes the rule safe. The hub carries the new grade; the
+metric page still carries the old one. That is not a contradiction as long as
+the hub says so, and each row has exactly three states:
+
+| Registry `url` | Page's `derived_from` | Hub renders |
+|----------------|-----------------------|-------------|
+| empty | — | **Not analysed** — plain text, *not a link*. Nothing was published, so there is nothing to link to. Name `/analizeMax-metric <key>` as what produces it. |
+| set | the newest full report | **Current** — a link, no caveat. |
+| set | an older full report | **Superseded** — a link, labelled with the audit it came from, so a reader knows the detail is older than the grade beside it. |
+
+An unlinked row is the honest rendering of "no page exists", and it costs
+nothing. The hub's stylesheet already has a `dead` variant for exactly this.
+Never link a row whose registry `url` is empty; a dead-end from a shared
+scorecard is worse than a row that admits it has no detail yet.
 
 ## 4. Staleness is computed, never remembered
 
