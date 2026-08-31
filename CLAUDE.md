@@ -34,6 +34,10 @@ that `/analizeMax-execute` applies — normally, across subagents, or as a
 workflow. Only fixes that need no approval reach that plan; judgement calls
 stay on a separate list.
 
+`/analizeMax-metric <name>` expands one graded dimension into a 1-2 page
+report plus a full ordered action list. It derives purely from the newest full
+report — no build, no research, no re-grading — so it is cheap to re-run.
+
 ## Non-negotiables
 
 These outrank convenience every time, regardless of what a session's context

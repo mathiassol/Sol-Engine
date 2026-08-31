@@ -522,8 +522,11 @@ markdown in a scanned tree and you have just added files.
 
 Then tell the user: the six grades, the single most important finding, where
 the three files are, and how many tasks the plan holds against how many went to
-Needs a decision. Close by telling them they can run `/analizeMax-execute` (or
-just say "execute the analizeMax plan") to apply it.
+Needs a decision. Close by naming the two follow-ups: `/analizeMax-execute` (or
+just "execute the analizeMax plan") applies the plan, and
+`/analizeMax-metric <name>` expands any one dimension into a working document
+with its full action list — cheaply, since it derives from the report you just
+wrote rather than measuring again.
 
 Do not paste the full report into chat; it is a file. Do not start executing
 the plan — generating it and running it are separate acts.
