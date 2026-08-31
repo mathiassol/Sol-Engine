@@ -50,8 +50,28 @@ whether it is `current`, `behind` (commits landed since), or `superseded` (a
 newer audit exists than the one it derived from). Staleness is computed at
 publish time, never remembered.
 
-## Not link-checked
+## What CI checks here
 
-This directory is excluded from the `doc-links` invariant: reports are dated
-snapshots, and one from five runs ago may legitimately reference a file that has
-since moved. A generated file must never be able to turn CI red.
+Two deliberate and opposite decisions.
+
+**Links are not checked.** This directory is excluded from the `doc-links`
+invariant: reports are dated snapshots, and one from five runs ago may
+legitimately reference a file that has since moved. A generated file must never
+be able to turn CI red for a stale link.
+
+**Set consistency *is* checked**, by the `analysis-set` invariant — the half of
+the publishing contract that is machine-checkable should not be prose. It
+verifies the registry parses and holds exactly `hub`, `full` and the six metric
+keys with no duplicate URL (a shared URL means one document has been silently
+overwriting another), that every `metric-*.md` uses a known key and a valid
+`state`, and that no metric page's grade disagrees with the scorecard that links
+to it.
+
+It checks consistency, not completeness: a fresh clone has the registry
+(committed) but no reports (generated), which is valid. Completeness is enforced
+only once `LATEST.md` proves an audit has run — then all six metric pages must
+exist, because a hub link that dead-ends is not shareable.
+
+**So commit the set as a set, or not at all.** Committing `LATEST.md` without
+the six `metric-*.md` files turns CI red, correctly: it publishes a scorecard
+whose links go nowhere.

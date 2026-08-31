@@ -253,14 +253,28 @@ and state in the report which ones fired.
 |---|---------|-----|
 | **G1** | You could not measure the dimension — it would not build, would not run, or produced no tool output. | **C+** |
 | **G2** | The evidence rests on the project's own documentation rather than on the tree. | **B−** |
-| **G3** | A foreseeable failure you can name has no gate, test, or check covering it. | **B+** |
+| **G3** | A **High**-severity finding in this dimension has no gate, test, or check that would catch it. Name the finding ID when this fires. | **B+** |
 | **G4** | You did not compare against a named external reference and say where this differs. | **A−** |
 | **G5** | A finding you rated Critical is unfixed in this dimension. | **D+** |
 | **G6** | **A+** additionally requires something here that is *better* than every reference you compared against — named, with the reason. If you cannot name it, it is not an A+. | **A** |
 
+Rate every finding **Critical / High / Medium / Low** — the ceilings are bound
+to that vocabulary, so an unrated finding cannot be adjudicated.
+
 **G5 is not negotiable.** A critical defect is disqualifying for its dimension.
 A dimension that is beautiful everywhere except the one place it is broken is
 not a B.
+
+**G3 is severity-bound on purpose.** It first read "a foreseeable failure you
+can name has no gate covering it", with no severity floor. On the 29 Aug run
+that fired on **all six dimensions and bound on none** — which is worse than it
+sounds. A ceiling that always applies is not a ceiling; it is a permanent
+maximum of B+, and it would have silently blocked an A on every dimension
+forever, for a condition true of essentially every real codebase. The severity
+ladder now divides the work cleanly: **Critical** is G5's (caps at D+),
+**High** is G3's (caps at B+), and Medium or Low caps nothing. If G3 ever fires
+on every dimension again, it has drifted back and needs re-tightening — do not
+just accept the flat result.
 
 ### Step 3 — Resolve to a letter
 

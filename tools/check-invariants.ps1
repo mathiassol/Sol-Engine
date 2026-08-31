@@ -290,6 +290,136 @@ if (Test-Path $specDir) {
 }
 Add-Result 'spec-status' 'every design spec has a recognised Status' $specViolations
 
+# ── 11. The analizeMax analysis set is internally consistent ─────────────────
+# The publishing contract (.claude/skills/analizeMax/publishing.md) is ~200
+# lines of prose that three skills are asked to obey. The half of it that is
+# machine-checkable should not be prose: a duplicate artifact URL means one
+# document has been silently overwriting another, and a grade that disagrees
+# between the hub and the page it links to is the one failure a reader cannot
+# detect for themselves.
+#
+# Consistency, not completeness. A fresh clone has the registry (committed) but
+# no reports (generated, untracked), and that is a valid state — so completeness
+# is only enforced once LATEST.md proves an audit has actually run here.
+$analysisViolations = @()
+$analysisDir = 'docs/analysis'
+$metricKeys = @('stability', 'architecture', 'capabilities', 'portability', 'devex', 'ai-tooling')
+$registryPath = Join-Path $analysisDir 'artifacts.json'
+$analysisSummary = 'no analysis set present'
+
+if (Test-Path $registryPath) {
+    $registry = $null
+    try {
+        $registry = Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json
+    } catch {
+        $analysisViolations += "$analysisDir/artifacts.json: not valid JSON - $($_.Exception.Message)"
+    }
+
+    if ($registry) {
+        foreach ($key in @('hub', 'full')) {
+            if (-not $registry.PSObject.Properties.Name.Contains($key)) {
+                $analysisViolations += "$analysisDir/artifacts.json: missing '$key' entry"
+            }
+        }
+        if (-not $registry.PSObject.Properties.Name.Contains('metrics')) {
+            $analysisViolations += "$analysisDir/artifacts.json: missing 'metrics' object"
+        } else {
+            foreach ($key in $metricKeys) {
+                if (-not $registry.metrics.PSObject.Properties.Name.Contains($key)) {
+                    $analysisViolations += "$analysisDir/artifacts.json: metrics is missing '$key'"
+                }
+            }
+            foreach ($extra in $registry.metrics.PSObject.Properties.Name) {
+                if ($extra -notin $metricKeys) {
+                    $analysisViolations += "$analysisDir/artifacts.json: unknown metric key '$extra'"
+                }
+            }
+        }
+
+        # Every entry needs a favicon and title (both fixed at creation), and a
+        # url field even when empty. A duplicate url is the serious one.
+        $entries = @()
+        foreach ($key in @('hub', 'full')) {
+            if ($registry.PSObject.Properties.Name.Contains($key)) {
+                $entries += [pscustomobject]@{ Name = $key; Entry = $registry.$key }
+            }
+        }
+        if ($registry.PSObject.Properties.Name.Contains('metrics')) {
+            foreach ($key in $registry.metrics.PSObject.Properties.Name) {
+                $entries += [pscustomobject]@{ Name = "metrics.$key"; Entry = $registry.metrics.$key }
+            }
+        }
+        foreach ($e in $entries) {
+            foreach ($field in @('url', 'favicon', 'title')) {
+                if (-not $e.Entry.PSObject.Properties.Name.Contains($field)) {
+                    $analysisViolations += "$analysisDir/artifacts.json: $($e.Name) has no '$field'"
+                }
+            }
+        }
+        $urls = @($entries | ForEach-Object { $_.Entry.url } | Where-Object { $_ })
+        foreach ($dup in ($urls | Group-Object | Where-Object { $_.Count -gt 1 })) {
+            $analysisViolations += "$analysisDir/artifacts.json: $($dup.Count) entries share the URL $($dup.Name) - one has been overwriting the other"
+        }
+    }
+
+    # Grades in the hub, if an audit has run here.
+    $latestPath = Join-Path $analysisDir 'LATEST.md'
+    $hubGrades = @{}
+    $rowToKey = @{
+        'Stability' = 'stability'; 'Architecture' = 'architecture'
+        'Capabilities' = 'capabilities'; 'Cross-platform readiness' = 'portability'
+        'Developer setup' = 'devex'; 'AI tooling' = 'ai-tooling'
+    }
+    if (Test-Path $latestPath) {
+        foreach ($line in Get-Content -LiteralPath $latestPath) {
+            if ($line -notmatch '^\|') { continue }
+            $cells = @($line -split '\|' | ForEach-Object { $_.Trim() })
+            if ($cells.Count -lt 4) { continue }
+            $label = $cells[1]
+            if (-not $rowToKey.ContainsKey($label)) { continue }
+            $grade = ($cells[2] -replace '\*', '').Trim()
+            if ($grade) { $hubGrades[$rowToKey[$label]] = $grade }
+        }
+        foreach ($key in $metricKeys) {
+            if (-not $hubGrades.ContainsKey($key)) {
+                $analysisViolations += "$analysisDir/LATEST.md: scorecard has no grade row for '$key'"
+            }
+            # An audit has run, so every metric must have a page to link to -
+            # a placeholder counts. A hub link that dead-ends is not shareable.
+            if (-not (Test-Path (Join-Path $analysisDir "metric-$key.md"))) {
+                $analysisViolations += "$analysisDir/metric-$key.md: missing, but LATEST.md exists (run /analizeMax-repair)"
+            }
+        }
+    }
+
+    # Each metric file that does exist: known key, valid state, agreeing grade.
+    foreach ($mf in Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue) {
+        $key = $mf.BaseName -replace '^metric-', ''
+        if ($key -notin $metricKeys) {
+            $analysisViolations += "$analysisDir/$($mf.Name): '$key' is not one of the six metric keys"
+            continue
+        }
+        $body = Get-Content -LiteralPath $mf.FullName -Raw
+        $state = ([regex]::Match($body, '(?m)^state:\s*(\S+)\s*$')).Groups[1].Value
+        if (-not $state) {
+            $analysisViolations += "$analysisDir/$($mf.Name): no 'state:' in frontmatter (expected report or empty)"
+        } elseif ($state -notin @('report', 'empty')) {
+            $analysisViolations += "$analysisDir/$($mf.Name): unrecognised state '$state' (use report or empty)"
+        }
+        if ($hubGrades.ContainsKey($key)) {
+            $own = ([regex]::Match($body, '(?m)^\*\*Grade:\s*([^*]+?)\s*\*\*')).Groups[1].Value
+            if ($own -and $own.Trim() -ne $hubGrades[$key]) {
+                $analysisViolations += "$analysisDir/$($mf.Name): grade '$($own.Trim())' disagrees with LATEST.md's '$($hubGrades[$key])' - one was written against a different audit"
+            }
+        }
+    }
+
+    $published = @($urls).Count
+    $metricFiles = @(Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue).Count
+    $analysisSummary = "registry valid, $published/8 published, $metricFiles/6 metric pages"
+}
+Add-Result 'analysis-set' $analysisSummary $analysisViolations
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 
