@@ -19,6 +19,25 @@ struct GpuMemoryStats {
     u64 local_budget_bytes = 0;
 };
 
+// Per-frame upload ring occupancy. Separate from GpuMemoryStats because that
+// one is a DXGI adapter query about video memory, while this is the backend's
+// own bump-allocator bookkeeping - one struct fed by two sources of truth is
+// how a stats accessor starts lying.
+//
+// `peak_bytes` is a high-water mark across every frame since device creation,
+// never reset. The ring itself resets each begin_frame, so a per-frame figure
+// would be gone before anything could read it.
+//
+// This exists because the ring is the tightest ceiling in the engine and
+// nothing reported it: exhaustion logs, but only once it is already dropping
+// draws. A peak reading is what lets a gate fail *before* that.
+struct FrameRingStats {
+    u64 peak_bytes = 0;
+    u64 capacity_bytes = 0;
+    // Frames in which the ring ran dry and work was dropped.
+    u64 exhausted_frames = 0;
+};
+
 // Packed like the D3D12 enums (no graphics API in this header).
 // Feature Level 11_0 = 0xB000. Shader Model 6.0 = 0x60.
 inline constexpr u32 kGpuFeatureLevel_11_0 = 0xB000;
@@ -82,6 +101,7 @@ public:
     virtual ITexture& swapchain_color() = 0;
     virtual ITexture& swapchain_depth() = 0;
     virtual GpuMemoryStats gpu_memory_stats() const = 0;
+    virtual FrameRingStats frame_ring_stats() const = 0;
     virtual GpuBaseline gpu_baseline() const = 0;
     virtual f32 last_gpu_time_ms() const = 0;
 

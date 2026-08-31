@@ -4695,6 +4695,87 @@ bool run_graph_gate() {
     return ok;
 }
 
+// Frame-ring budget: does the worst case the engine can produce still fit, with
+// margin to spare?
+//
+// The ring is the tightest ceiling in the engine and nothing checked it. This
+// models the worst case from the *real* constants rather than a literal, so it
+// goes red when any of them moves - raise kMaxInstances, grow FrameConstants,
+// add a fourth geometry pass, and the arithmetic stops fitting.
+//
+// Worst case is driven by *batch* count, not instance count: per-batch constants
+// are ~1 KB across shadow + forward + motion while an instance is only 144
+// bytes, and batch identity includes index_count and every bound texture, so a
+// scene with as many distinct materials as objects gets one batch per instance.
+// That is the case batching cannot help, and it is what this budgets for.
+//
+// Calibration: an earlier version of this gate drove a real 512-batch frame
+// through the graph and measured a peak of 600,832 bytes. This model computes
+// 601,856 - within 1,024 bytes, one alignment quantum. That measured run is not
+// kept because executing the standard frame from inside the gate sequence
+// produced 1,023 D3D12 debug-layer errors (CopyDescriptorsSimple reading a
+// CPU-write-only heap); the model is the safe way to hold the same line, and
+// the divergence is recorded in the ROADMAP as unfinished business.
+bool run_frame_ring_budget_gate(const engine::rhi::IDevice& device) {
+    const engine::rhi::FrameRingStats ring = device.frame_ring_stats();
+
+    // alloc_frame_memory rounds every request up to kBufferAlign (256).
+    constexpr engine::u64 kAlign = 256;
+    auto aligned = [](engine::u64 bytes) {
+        return (bytes + kAlign - 1) & ~(kAlign - 1);
+    };
+
+    constexpr engine::u64 kBatches = engine::scene::kMaxInstances;
+    // One upload for the whole frame, not one per pass.
+    const engine::u64 instance_array =
+        aligned(kBatches * sizeof(engine::renderer::InstanceData));
+    const engine::u64 per_batch =
+        aligned(sizeof(engine::renderer::ShadowConstants))
+        + aligned(sizeof(engine::renderer::FrameConstants))
+        + aligned(sizeof(engine::renderer::motion::Constants));
+    // Fixed post-processing cost: sky, 5 bloom downsamples + 4 upsamples, TAA,
+    // tonemap, and up to 3 SMAA passes.
+    const engine::u64 fixed =
+        aligned(sizeof(engine::renderer::sky::Constants))
+        + 9 * aligned(sizeof(engine::renderer::bloom::Constants))
+        + aligned(sizeof(engine::renderer::taa::Constants))
+        + aligned(sizeof(engine::renderer::tonemap::Constants))
+        + 3 * aligned(sizeof(engine::renderer::aa::Constants));
+
+    const engine::u64 worst = instance_array + kBatches * per_batch + fixed;
+    const engine::f64 used = ring.capacity_bytes > 0
+        ? static_cast<engine::f64>(worst) / static_cast<engine::f64>(ring.capacity_bytes)
+        : 1.0;
+    const engine::f64 headroom = 1.0 - used;
+    constexpr engine::f64 kMinHeadroom = 0.15;
+
+    const bool have_capacity = ring.capacity_bytes > 0;
+    const bool fits = worst < ring.capacity_bytes;
+    // The margin is the point: this goes red *before* the ring can actually run
+    // dry, so the next capacity raise fails here instead of silently dropping
+    // draws at runtime.
+    const bool roomy = headroom >= kMinHeadroom;
+    const bool never_dry = ring.exhausted_frames == 0;
+    const bool passed = have_capacity && fits && roomy && never_dry;
+
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Frame ring budget gate: batches=%llu per_batch=%llu instances=%llu fixed=%llu "
+        "worst=%llu/%llu headroom=%.1f%% (min %.0f%%) exhausted=%llu (%s)",
+        static_cast<unsigned long long>(kBatches),
+        static_cast<unsigned long long>(per_batch),
+        static_cast<unsigned long long>(instance_array),
+        static_cast<unsigned long long>(fixed),
+        static_cast<unsigned long long>(worst),
+        static_cast<unsigned long long>(ring.capacity_bytes),
+        headroom * 100.0, kMinHeadroom * 100.0,
+        static_cast<unsigned long long>(ring.exhausted_frames),
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_swap_gate() {
     engine::renderer::RenderGraph probe;
     engine::renderer::StandardFrameDesc desc{};
@@ -5561,12 +5642,17 @@ int run_app(int argc, char** argv) {
     }
 
     gates_ok = run_graph_gate() && run_swap_gate() && gates_ok;
+    if (auto* ring_device = app.device()) {
+        gates_ok = run_frame_ring_budget_gate(*ring_device) && gates_ok;
+    }
     if (!setup_render_graph(app, state)) {
         engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
             "Render graph setup failed — running without rendering");
         gates_ok = false;
     }
 
+    // After setup_render_graph: this one executes the real compiled graph, so it
+    // has to run once the graph exists and the demo owns real resources.
     int exit_code = 0;
     if (gates_mode) {
         char done_message[64];

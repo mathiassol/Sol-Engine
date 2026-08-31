@@ -230,6 +230,7 @@ public:
     ITexture& swapchain_color() override;
     ITexture& swapchain_depth() override;
     GpuMemoryStats gpu_memory_stats() const override;
+    FrameRingStats frame_ring_stats() const override;
     GpuBaseline gpu_baseline() const override;
 
     void retire_resource(ID3D12Resource* resource);
@@ -320,6 +321,11 @@ private:
 
     std::unique_ptr<IBuffer> frame_ring_[3]{};
     usize frame_ring_offset_ = 0;
+    // High-water mark across every frame, never reset - frame_ring_offset_ is
+    // cleared each begin_frame, so a per-frame figure is gone before anything
+    // can read it. This is the only reading of the engine's tightest ceiling.
+    usize frame_ring_peak_ = 0;
+    u64 frame_ring_exhausted_frames_ = 0;
     UINT64 copy_fence_value_ = 0;
 
     ComPtr<ID3D12DescriptorHeap> shader_heap_;

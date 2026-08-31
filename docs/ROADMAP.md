@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 31 Aug 2026: **23,202 lines** of C++/HLSL in **140 files**, **26
+Measured 31 Aug 2026: **23,326 lines** of C++/HLSL in **140 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 6,220
 (its `content/shaders/*.hlsl` counts here too); `renderer` is 2,626;
 `rhi-d3d12` is 2,589 — 11% of the engine, down from 13% since the mip builder
@@ -718,6 +718,90 @@ failure mode is silently dropped draws. Going past that wants instanced draws
 wants a heap-backed `World`, a name hash table, and cached world matrices - the
 name intern is O(n^2) and the parent walk is uncached. Both are invisible at
 512.
+
+---
+
+## Stability — frame-ring budget gate (done)
+
+Not an ENGINE_MAP row: this closes the **G3 ceiling** on Stability from the
+29 Aug `/analizeMax` audit — "a foreseeable failure you can name has no gate,
+test or check covering it". The named failure was frame-ring exhaustion.
+
+**Why:** The 1 MiB per-slot frame constant ring is the tightest ceiling in the
+engine by the author's own account, and nothing measured it. Exhaustion logs,
+but only once it is already dropping draws — and since instanced draws a
+dropped batch is a *group* of objects vanishing, not one. Worse, the argument
+that the current cap is safe was pure arithmetic: Renderer #27 raised
+`kMaxInstances` 64 -> 512, and the claim that this landed near 57% occupancy
+came from a hand calculation nobody had checked against the hardware.
+
+**Choice:** a `FrameRingStats` accessor on `rhi::IDevice`, plus a gate that
+budgets the worst case from the real constants.
+
+- *A new accessor, not a field on `GpuMemoryStats`.* That struct is fed by a
+  DXGI adapter query about video memory; the ring is the backend's own
+  bump-allocator bookkeeping. One struct fed by two sources of truth is how a
+  stats accessor starts lying. Cost: one virtual on a lean interface.
+- *`peak_bytes` is a high-water mark across all frames, never reset.* The ring
+  itself resets every `begin_frame`, so a per-frame figure is gone before
+  anything can read it.
+- *The gate models the worst case rather than measuring one.* This is the part
+  worth reading, because the measured version was built first and then
+  deliberately abandoned — see below.
+
+Worst case is driven by *batch* count, not instance count: per-batch constants
+are 1,024 bytes across shadow + forward + motion, while an instance is only the
+144-byte `InstanceData`. Batch identity includes `index_count` and every bound
+texture, so a scene with as many distinct materials as objects gets one batch
+per instance. That is exactly the case batching cannot help, and it is what the
+budget assumes.
+
+**Why the measured gate was abandoned — unfinished business.** The first
+version drove a real 512-batch frame through the compiled graph and read the
+peak. It worked, and it measured **600,832 bytes** against the model's 601,856 —
+1,024 bytes apart, one alignment quantum, which is the best calibration this
+model will ever get. It is not kept because executing the standard frame from
+inside the gate sequence produced **1,023 D3D12 debug-layer errors**, all
+`CopyDescriptorsSimple: SrcDescriptorRangeStart points to a descriptor heap
+type that is CPU write only, so reading it (in this case a copy source) is
+invalid`. Bisected: with the gate disabled the debug layer reports 0 messages,
+so the gate causes them.
+
+That is a real finding and it is **not diagnosed**. Either the graph has a
+latent first-execute problem with descriptor staging, or there is an
+undocumented ordering requirement for driving it outside `Engine::run`. Worth
+knowing before anyone else tries to execute the graph from a tool or a test.
+
+One trap found on the way, worth recording so the next person does not repeat
+it: `RenderGraph::execute` owns the *whole* frame envelope — it calls
+`begin_frame` and `end_frame` itself, which is why `Engine::run` never touches
+them. Wrapping it in another pair opens a second frame over the first and logs
+`Command allocator reset failed`.
+
+**Gate (met):** `Frame ring budget gate: batches=512 per_batch=1024
+instances=73728 fixed=3840 worst=601856/1048576 headroom=42.6% (min 15%)
+exhausted=0`.
+
+The 15% margin is the whole point: it goes red *before* the ring can run dry,
+so the next capacity raise fails here instead of silently dropping draws.
+Verified failing: with the ring temporarily shrunk to 680 KiB the gate reported
+`headroom=13.6% (min 15%)` and exited 1 — while `exhausted=0`, i.e. it caught
+the problem before any work was actually lost.
+
+70 gates pass in Debug and Release `game`, exit 0. D3D12 debug layer 0 messages,
+0 errors, 0 warnings. Invariants 10/10.
+
+**Do-not:** Do not fold ring stats into `GpuMemoryStats`.
+
+Do not drive `RenderGraph::execute` from a gate until the descriptor-heap errors
+above are diagnosed. The measurement is attractive and the side effects are not
+understood.
+
+Do not treat the model as self-validating. It agreed with one real measurement
+to within an alignment quantum, and that is the only empirical anchor it has. If
+a pass starts allocating from the ring in a way the model does not know about,
+the model will keep passing while being wrong — so any new ring consumer must
+be added to it.
 
 ---
 

@@ -1653,6 +1653,7 @@ FrameAllocation D3D12Device::alloc_frame_memory(usize size) {
     if (aligned > kFrameRingBytes - frame_ring_offset_) {
         if (!frame_ring_exhausted_) {
             frame_ring_exhausted_ = true;
+            frame_ring_exhausted_frames_ += 1;
             char message[192];
             std::snprintf(message, sizeof(message),
                 "Frame constant ring exhausted: %zu of %zu bytes used (~%zu instances). "
@@ -1668,6 +1669,9 @@ FrameAllocation D3D12Device::alloc_frame_memory(usize size) {
     allocation.buffer = frame_ring_[frame_index_].get();
     allocation.offset = frame_ring_offset_;
     frame_ring_offset_ += aligned;
+    if (frame_ring_offset_ > frame_ring_peak_) {
+        frame_ring_peak_ = frame_ring_offset_;
+    }
     return allocation;
 }
 
@@ -1685,6 +1689,14 @@ ITexture& D3D12Device::swapchain_color() {
 
 ITexture& D3D12Device::swapchain_depth() {
     return depth_target_;
+}
+
+FrameRingStats D3D12Device::frame_ring_stats() const {
+    FrameRingStats stats{};
+    stats.peak_bytes = frame_ring_peak_;
+    stats.capacity_bytes = kFrameRingBytes;
+    stats.exhausted_frames = frame_ring_exhausted_frames_;
+    return stats;
 }
 
 GpuMemoryStats D3D12Device::gpu_memory_stats() const {
