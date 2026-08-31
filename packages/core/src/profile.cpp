@@ -1,14 +1,16 @@
 #include <engine/core/profile.hpp>
 
 #include <engine/core/clock.hpp>
+#include <engine/core/log.hpp>
 
+#include <cstdio>
 #include <cstring>
 
 namespace engine {
 
 namespace {
 
-// Bounds two independent things, and both overrun silently. Audit finding S6.
+// Bounds two independent things. Audit finding S6.
 //
 // 1. **Nesting depth.** Past kMaxScopes, begin_scope drops the push but
 //    end_scope still decrements, so the pop consumes a *different* scope's
@@ -22,6 +24,8 @@ namespace {
 //    falls off its loop when all kMaxScopes are taken, so the next new name is
 //    dropped and scope_ms() returns 0.0 for it - which the F3 overlay renders
 //    as "0.0", indistinguishable from a scope that genuinely took no time.
+//    accumulate() warns once when that happens, so this one is loud rather than
+//    silent, but the reading is still wrong until the cap goes up.
 //
 //    This is the near limit: **7 of the 8 slots are in use** (frame,
 //    poll_events, fixed_update, update, render, extract, execute). One more
@@ -82,6 +86,26 @@ private:
                 return;
             }
         }
+
+        // Falling off the loop means the table is full and this scope's time is
+        // being thrown away - and scope_ms() will report 0.0 for it, which reads
+        // as "took no time" rather than "not measured". Say so once.
+        //
+        // Once, not per call: accumulate runs on every end_scope, so an
+        // unlatched warning here would fire thousands of times a second and
+        // become noise to scroll past - the same mistake the shared latch in
+        // warn_physics_capacity used to make.
+        static bool warned = false;
+        if (warned) {
+            return;
+        }
+        warned = true;
+        char message[192];
+        std::snprintf(message, sizeof(message),
+            "Profiler scope table full (%u names). Dropping '%s' - its scope_ms reads 0.0, "
+            "which is not the same as zero time. Raise kMaxScopes.",
+            kMaxScopes, name);
+        log(LogLevel::Warn, LogChannel::General, message);
     }
 
     static f32 find_ms(const Slot* slots, const char* name) {
