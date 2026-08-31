@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 31 Aug 2026: **23,349 lines** of C++/HLSL in **140 files**, **26
+Measured 31 Aug 2026: **23,372 lines** of C++/HLSL in **140 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 6,220
 (its `content/shaders/*.hlsl` counts here too); `renderer` is 2,626;
 `rhi-d3d12` is 2,589 — 11% of the engine, down from 13% since the mip builder

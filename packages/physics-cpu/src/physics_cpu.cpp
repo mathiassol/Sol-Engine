@@ -382,16 +382,39 @@ bool ray_shape_hit(const ShapeDesc& shape, math::Vec3 position, const math::Aabb
 // silent. A dropped subtree means a raycast or overlap query quietly misses
 // bodies, and the visible symptom is a character intermittently falling
 // through the floor with nothing in the log to explain it. Warn once.
-void warn_physics_capacity(const char* what) {
-    static bool warned = false;
-    if (warned) {
+// One latch per kind, not one shared by all of them.
+//
+// The single `static bool` this replaces meant the first kind to trip
+// permanently silenced the others: a BVH-stack warning during startup hid every
+// later contact-buffer and trigger-event overflow for the rest of the process,
+// which is the failure the warning exists to report. Warning once *per kind*
+// keeps the original intent - a nag that fires every frame gets ignored - while
+// letting each distinct failure say its piece exactly once.
+enum class CapacityKind : u8 { BvhStack, ContactBuffer, TriggerEvents, Count };
+
+constexpr const char* kCapacityNames[] = {
+    "BVH traversal stack",
+    "contact buffer",
+    "trigger event buffer",
+};
+static_assert(sizeof(kCapacityNames) / sizeof(kCapacityNames[0])
+        == static_cast<usize>(CapacityKind::Count),
+    "kCapacityNames must have one entry per CapacityKind");
+
+void warn_physics_capacity(CapacityKind kind) {
+    const auto index = static_cast<usize>(kind);
+    if (index >= static_cast<usize>(CapacityKind::Count)) {
         return;
     }
-    warned = true;
+    static bool warned[static_cast<usize>(CapacityKind::Count)]{};
+    if (warned[index]) {
+        return;
+    }
+    warned[index] = true;
     char message[192];
     std::snprintf(message, sizeof(message),
         "Physics capacity reached (%s). Queries may miss bodies and contacts may be "
-        "dropped until the scene shrinks.", what);
+        "dropped until the scene shrinks.", kCapacityNames[index]);
     log(LogLevel::Warn, LogChannel::Physics, message);
 }
 
@@ -857,7 +880,7 @@ public:
                 stack[sp++] = node.child1;
                 stack[sp++] = node.child2;
             } else {
-                warn_physics_capacity("BVH traversal stack");
+                warn_physics_capacity(CapacityKind::BvhStack);
             }
         }
 
@@ -931,7 +954,7 @@ private:
                 stack[sp++] = node.child1;
                 stack[sp++] = node.child2;
             } else {
-                warn_physics_capacity("BVH traversal stack");
+                warn_physics_capacity(CapacityKind::BvhStack);
             }
         }
     }
@@ -959,7 +982,7 @@ private:
                 stack[sp++] = node.child1;
                 stack[sp++] = node.child2;
             } else {
-                warn_physics_capacity("BVH traversal stack");
+                warn_physics_capacity(CapacityKind::BvhStack);
             }
         }
     }
@@ -975,7 +998,7 @@ private:
             u32 hit_count = 0;
             query_ids(a.fat, hits, hit_count);
             if (hit_count > 0 && contact_count_ >= kMaxContacts) {
-                warn_physics_capacity("contact buffer");
+                warn_physics_capacity(CapacityKind::ContactBuffer);
             }
             for (u32 h = 0; h < hit_count && contact_count_ < kMaxContacts; ++h) {
                 const u32 j = hits[h];
@@ -1047,7 +1070,7 @@ private:
             // Dropping these silently meant a trigger that never fired and
             // nothing in the log to explain it. Every other capacity in this
             // file reports itself; this one did not.
-            warn_physics_capacity("trigger event buffer");
+            warn_physics_capacity(CapacityKind::TriggerEvents);
             return;
         }
         events_[event_count_++] = {pair.a, pair.b, type};
