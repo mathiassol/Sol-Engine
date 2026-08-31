@@ -68,7 +68,7 @@ cmake --install build --config Release --prefix dist
 | `Space` | A | Jump in walk mode — 2D beep otherwise |
 | `Enter` | Y | Cycle game camera: follow / orbit / FPS |
 | `Z` / `X` | — | Nudge the walker on world X |
-| `F3` | — | Stats overlay: `P` poll / `X` extract / `E` execute / `G` GPU ms, plus AA mode |
+| `F3` | — | Stats overlay: `P` poll / `X` extract / `E` execute / `G` GPU ms, `R` frame-ring peak as % of capacity, plus AA mode |
 | `F4` | — | Instance AABBs |
 | `F5` | — | Cycle AA: **Off** (default) → FXAA → SMAA → TAA |
 | `F11` | — | Toggle windowed / borderless |

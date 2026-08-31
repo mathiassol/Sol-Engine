@@ -5445,6 +5445,11 @@ int run_app(int argc, char** argv) {
             stats.cpu_ms = engine::profiler_scope_ms("frame");
             if (app.device()) {
                 stats.gpu_ms = app.device()->last_gpu_time_ms();
+                const engine::rhi::FrameRingStats ring = app.device()->frame_ring_stats();
+                if (ring.capacity_bytes > 0) {
+                    stats.ring_pct = 100.f * static_cast<engine::f32>(ring.peak_bytes)
+                        / static_cast<engine::f32>(ring.capacity_bytes);
+                }
             }
             if (state.forward) {
                 stats.aa = engine::renderer::aa::mode_name(state.forward->aa_mode);

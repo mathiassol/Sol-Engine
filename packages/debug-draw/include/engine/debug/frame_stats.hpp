@@ -12,6 +12,13 @@ struct FrameStats {
     f32 extract_ms = 0.f;
     f32 execute_ms = 0.f;
     f32 gpu_ms = 0.f;
+    // Frame constant ring high-water mark, as a percentage of capacity. A
+    // percentage rather than bytes because the number that matters is how close
+    // the tightest ceiling in the engine is to being hit - the budget gate fails
+    // below 15% headroom, so anything past ~85% here is about to go red.
+    //
+    // Monotonic, so it settles quickly and the overlay stops rebuilding its mesh.
+    f32 ring_pct = 0.f;
     const char* aa = "";
 };
 

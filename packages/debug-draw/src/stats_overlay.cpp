@@ -43,6 +43,9 @@ constexpr u8 kFontX[8]     = {0x66, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x66, 0x00};
 constexpr u8 kFontN[8]     = {0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x00};
 constexpr u8 kFontA[8]     = {0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00};
 constexpr u8 kFontSlash[8] = {0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0, 0x80, 0x00};
+constexpr u8 kFontPct[8]   = {0xC2, 0xC4, 0x08, 0x10, 0x20, 0x43, 0x83, 0x00};
+constexpr u8 kFontO[8]     = {0x3C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00};
+constexpr u8 kFontT[8]     = {0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00};
 constexpr u8 kFont0[8]     = {0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00};
 constexpr u8 kFont1[8]     = {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00};
 constexpr u8 kFont2[8]     = {0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30, 0x7E, 0x00};
@@ -72,6 +75,10 @@ const u8* glyph_rows(char c) {
     case 'n': return kFontN;
     case 'a': return kFontA;
     case '/': return kFontSlash;
+    case '%': return kFontPct;
+    case 'O': return kFontO;
+    case 'T': return kFontT;
+    case 'M': return kFontM;
     case '0': return kFont0;
     case '1': return kFont1;
     case '2': return kFont2;
@@ -166,13 +173,17 @@ bool StatsOverlay::init(rhi::IDevice& device, shaders::IShaderCompiler& compiler
 }
 
 void StatsOverlay::update(const FrameStats& stats) {
-    char text[80];
+    // Widened past the old 80 when R: was added - snprintf truncates in silence,
+    // and a clipped overlay reads as a rendering bug rather than a short buffer.
+    char text[112];
     if (stats.aa && stats.aa[0] != '\0') {
-        std::snprintf(text, sizeof(text), "FPS:%.1f P:%.1f X:%.1f E:%.1f G:%.1f %s",
-            stats.fps, stats.poll_ms, stats.extract_ms, stats.execute_ms, stats.gpu_ms, stats.aa);
+        std::snprintf(text, sizeof(text), "FPS:%.1f P:%.1f X:%.1f E:%.1f G:%.1f R:%.0f%% %s",
+            stats.fps, stats.poll_ms, stats.extract_ms, stats.execute_ms, stats.gpu_ms,
+            static_cast<double>(stats.ring_pct), stats.aa);
     } else {
-        std::snprintf(text, sizeof(text), "FPS:%.1f P:%.1f X:%.1f E:%.1f G:%.1f",
-            stats.fps, stats.poll_ms, stats.extract_ms, stats.execute_ms, stats.gpu_ms);
+        std::snprintf(text, sizeof(text), "FPS:%.1f P:%.1f X:%.1f E:%.1f G:%.1f R:%.0f%%",
+            stats.fps, stats.poll_ms, stats.extract_ms, stats.execute_ms, stats.gpu_ms,
+            static_cast<double>(stats.ring_pct));
     }
     if (cached_text_ == text) {
         return;
