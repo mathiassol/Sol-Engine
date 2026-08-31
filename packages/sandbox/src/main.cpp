@@ -5401,11 +5401,6 @@ int run_app(int argc, char** argv) {
     constexpr const char* kAppName = "Sandbox";
     constexpr const char* kWindowTitle = "Engine Sandbox";
 #endif
-    char start_message[64];
-    std::snprintf(start_message, sizeof(start_message),
-        gates_mode ? "%s starting (--gates)" : "%s starting", kAppName);
-    engine::log(engine::LogLevel::Info, engine::LogChannel::General, start_message);
-
     engine::EngineModules modules{};
 
 #ifdef ENGINE_HAS_WIN32_PLATFORM
@@ -5414,6 +5409,28 @@ int run_app(int argc, char** argv) {
     engine::log(engine::LogLevel::Fatal, engine::LogChannel::Platform, "No platform backend");
     return 1;
 #endif
+
+    // Earliest point the executable directory is known, and before the banner
+    // below so the banner is the log's first line.
+    //
+    // Not in gates mode: --gates is a test harness, not a session, and two gate
+    // runs would push a real crash log out of both log.txt and log.prev.txt.
+    if (!gates_mode && modules.platform) {
+        const std::string log_dir =
+            engine::default_log_directory(modules.platform->executable_directory());
+        if (!engine::install_file_logger(log_dir)) {
+            char warning[320];
+            std::snprintf(warning, sizeof(warning),
+                "Could not open a log file in %s - continuing on stderr only",
+                log_dir.c_str());
+            engine::log(engine::LogLevel::Warn, engine::LogChannel::General, warning);
+        }
+    }
+
+    char start_message[64];
+    std::snprintf(start_message, sizeof(start_message),
+        gates_mode ? "%s starting (--gates)" : "%s starting", kAppName);
+    engine::log(engine::LogLevel::Info, engine::LogChannel::General, start_message);
 
 #ifdef ENGINE_HAS_XAUDIO2
     modules.audio = engine::audio::xaudio2::create_audio();
