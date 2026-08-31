@@ -8,7 +8,7 @@ file doesn't cover.
 ## Start here
 
 - **What to work on**: [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — pick one
-  **Ready** row. Picking rules: [docs/TODO_LATER.md](docs/TODO_LATER.md).
+  **Ready** row. Picking rules: [docs/PICKING.md](docs/PICKING.md).
 - **Canonical plan / changelog**: [docs/ROADMAP.md](docs/ROADMAP.md) — every
   shipped feature has a dated Why/Choice/Gate/Do-not entry there.
 - These two files are the source of truth. There is no separate dashboard —
@@ -176,7 +176,7 @@ cmake --build build --config Release --target game
 | [docs/STABILITY_NORTH_STAR.md](docs/STABILITY_NORTH_STAR.md) | Why stability-first; industry research |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Canonical phase sequence + decision log |
 | [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) | Canonical backlog (Done/Ready/Later/Far) |
-| [docs/TODO_LATER.md](docs/TODO_LATER.md) | How to pick the next row from the map |
+| [docs/PICKING.md](docs/PICKING.md) | How to choose the next row from the map |
 | [docs/GPU_BASELINE.md](docs/GPU_BASELINE.md) | Player GPU/OS/DLL requirements |
 | [reasarch/GRAPICS-RESEARCH.md](reasarch/GRAPICS-RESEARCH.md) | Personal paraphrased learning notes — **unverified, not a technical reference**. Do independent research before implementing a graphics technique from it. |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Design specs, one per shipped/in-progress feature |

@@ -11,7 +11,7 @@ canvas — read this file directly.
 a visible sandbox check with `ENGINE_GPU_DEBUG=1`), put it behind a package
 interface when it is a system. Live numbered sequence stays in
 [ROADMAP.md](ROADMAP.md). Triggers and "do not scaffold empty packages":
-[TODO_LATER.md](TODO_LATER.md). `/roadmap <category> #<id>` runs one row from
+[PICKING.md](PICKING.md). `/roadmap <category> #<id>` runs one row from
 research to shipped.
 
 **Status**

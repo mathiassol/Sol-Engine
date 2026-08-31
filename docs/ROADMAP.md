@@ -87,7 +87,7 @@ contract a second backend can target.** Audio #1–#2 and Physics #1–#5
 (overlap + bodies + capsule + triggers + rays) are **Done**. Next work is
 **one Ready row** from [ENGINE_MAP.md](ENGINE_MAP.md) (UI, skins, particles,
 actions, logger, …).
-Picking rules: [TODO_LATER.md](TODO_LATER.md).
+Picking rules: [PICKING.md](PICKING.md).
 
 ---
 
@@ -97,7 +97,7 @@ Phases 0–14 are all **Done**. The numbered-phase model is finished; work is no
 picked from the map.
 
 1. Pick **one Ready row** from [ENGINE_MAP.md](ENGINE_MAP.md). Picking rules:
-   [TODO_LATER.md](TODO_LATER.md).
+   [PICKING.md](PICKING.md).
 2. Finish its **gate** (`--gates` and/or a visible sandbox check with
    `ENGINE_GPU_DEBUG=1`).
 3. Add its Why / Choice / Gate (met) / Do-not entry here, flip the row to

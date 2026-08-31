@@ -151,7 +151,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROAD
 - [docs/ROADMAP.md](docs/ROADMAP.md) — decision log: why each shipped feature was built the way it was
 - [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — the backlog. Pick one **Ready** row
 - [docs/GPU_BASELINE.md](docs/GPU_BASELINE.md) — player GPU / OS / DLL baseline
-- [docs/TODO_LATER.md](docs/TODO_LATER.md) — how to pick the next gate from the map
+- [docs/PICKING.md](docs/PICKING.md) — how to choose the next row from the map
 
 ## License
 

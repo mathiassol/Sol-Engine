@@ -14,7 +14,7 @@ behind an interface. If the trigger is imaginary, the idea is a liability. If
 the idea has no package boundary, it will be un-swappable later.
 
 Related: [Philosophy.md](../Philosophy.md), [packageRules.md](packageRules.md),
-[ROADMAP.md](ROADMAP.md), [TODO_LATER.md](TODO_LATER.md),
+[ROADMAP.md](ROADMAP.md), [PICKING.md](PICKING.md),
 [ARCHITECTURE.md](ARCHITECTURE.md), [FOUNDATION.md](FOUNDATION.md).
 
 Executable sequence is [ROADMAP.md](ROADMAP.md). This file is the **why
@@ -276,7 +276,7 @@ Phase 6 debug lines/AABBs fit here when you have bounds to draw.
 ### Horizon E — Method, not a never-list
 
 Keep the **method**: one gate, one package, debug-layer clean. The systems
-themselves live on [TODO_LATER.md](TODO_LATER.md) and [ROADMAP.md](ROADMAP.md)
+themselves live on [PICKING.md](PICKING.md) and [ROADMAP.md](ROADMAP.md)
 phases 12+:
 
 - Physics, audio, net — behind interfaces, when triggered
