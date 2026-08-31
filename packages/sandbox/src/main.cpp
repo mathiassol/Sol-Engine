@@ -8,6 +8,7 @@
 #include <engine/core/clock.hpp>
 #include <engine/core/cvar.hpp>
 #include <engine/core/log.hpp>
+#include <engine/core/log_file.hpp>
 #include <engine/core/profile.hpp>
 #include <engine/renderer/render_graph.hpp>
 #include <engine/renderer/render_snapshot.hpp>
@@ -629,6 +630,88 @@ bool build_fullscreen_pipeline(engine::rhi::IDevice& device,
 // Capacity limits used to abort the process, which also made them untestable:
 // no gate can exercise a path that calls std::abort(). They now degrade, so
 // these gates can prove the degradation is what it claims to be.
+
+// Reads a whole file. The gate asserts on what landed on disk, not on what it
+// asked for, so it has to read it back.
+std::string read_text_file(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return {};
+    }
+    return std::string(std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
+bool run_file_log_gate() {
+    std::error_code ec;
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path(ec) / "sol_file_log_gate";
+    std::filesystem::remove_all(root, ec);
+
+    const std::filesystem::path log_dir = root / "logs";
+    const std::filesystem::path current = log_dir / "log.txt";
+    const std::filesystem::path previous = log_dir / "log.prev.txt";
+
+    // Run one: three records, then close by destroying the sink.
+    bool created = false;
+    {
+        auto sink = engine::create_file_logger(log_dir.string());
+        created = sink != nullptr;
+        if (sink) {
+            sink->log(engine::LogLevel::Info, engine::LogChannel::General, "first line");
+            sink->log(engine::LogLevel::Warn, engine::LogChannel::Assets, "second line");
+            sink->log(engine::LogLevel::Error, engine::LogChannel::Render, "third line");
+        }
+    }
+
+    const std::string run_one = read_text_file(current);
+    const bool header_ok = run_one.find("Sol Engine session log") != std::string::npos
+        && run_one.find("started ") != std::string::npos;
+    const bool lines_ok = run_one.find("[INFO][general] first line") != std::string::npos
+        && run_one.find("[WARN][assets] second line") != std::string::npos
+        && run_one.find("[ERROR][render] third line") != std::string::npos;
+
+    // Run two: rotates run one to log.prev.txt and starts fresh.
+    {
+        auto sink = engine::create_file_logger(log_dir.string());
+        if (sink) {
+            sink->log(engine::LogLevel::Info, engine::LogChannel::General, "fourth line");
+        }
+    }
+
+    const std::string prev = read_text_file(previous);
+    const std::string run_two = read_text_file(current);
+    const bool rotated = !prev.empty() && !run_two.empty();
+    const bool prev_intact = prev.find("[INFO][general] first line") != std::string::npos
+        && prev.find("[ERROR][render] third line") != std::string::npos;
+    const bool fresh = run_two.find("[INFO][general] fourth line") != std::string::npos
+        && run_two.find("first line") == std::string::npos;
+
+    // An undirectory: create_directories cannot make a directory under a file,
+    // so this is a deterministic unwritable path on any platform.
+    const std::filesystem::path blocker = root / "not_a_directory";
+    {
+        std::ofstream make_file(blocker);
+        make_file << "x";
+    }
+    auto rejected_sink = engine::create_file_logger((blocker / "logs").string());
+    const bool unwritable_rejected = rejected_sink == nullptr;
+
+    std::filesystem::remove_all(root, ec);
+
+    const bool passed = created && header_ok && lines_ok && rotated && prev_intact
+        && fresh && unwritable_rejected;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "File log gate: created=%s header=%s lines=%s rotated=%s prev_intact=%s "
+        "fresh=%s unwritable_rejected=%s (%s)",
+        created ? "yes" : "no", header_ok ? "yes" : "no", lines_ok ? "yes" : "no",
+        rotated ? "yes" : "no", prev_intact ? "yes" : "no", fresh ? "yes" : "no",
+        unwritable_rejected ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
+}
 
 bool run_arena_gate() {
     engine::Arena arena(1024);
@@ -5565,6 +5648,9 @@ int run_app(int argc, char** argv) {
     bool gates_ok = run_mount_gate(*loader);
     gates_ok = run_mount_containment_gate(*loader) && gates_ok;
     gates_ok = run_build_gate(app.content_layout()) && gates_ok;
+    if (!run_file_log_gate()) {
+        gates_ok = false;
+    }
     if (!run_arena_gate()) {
         gates_ok = false;
     }
