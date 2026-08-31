@@ -27,12 +27,20 @@ function(engine_add_runtime_app TARGET)
         engine::assets-obj
         engine::assets-gltf
         engine::assets-gpu
-        engine::assets-png-wic
         engine::debug-draw
         engine::math
         engine::scene
         engine::gameplay
     )
+
+    # packages/assets-png-wic is added only under if(WIN32), so an unconditional
+    # link here made `cmake -B build` fail at generate time on Linux and macOS.
+    # No ENGINE_HAS_* definition to match the backends below: nothing gates on
+    # one for PNG yet, and the sandbox's include of the loader is still
+    # unconditional, so a define here would have no consumer.
+    if(TARGET engine::assets-png-wic)
+        target_link_libraries(${TARGET} PRIVATE engine::assets-png-wic)
+    endif()
 
     if(TARGET engine::audio-xaudio2)
         target_link_libraries(${TARGET} PRIVATE engine::audio-xaudio2)

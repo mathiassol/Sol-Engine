@@ -420,6 +420,85 @@ if (Test-Path $registryPath) {
 }
 Add-Result 'analysis-set' $analysisSummary $analysisViolations
 
+# ── 12. Conditionally-added packages are only ever linked conditionally ──────
+# `target_link_libraries(app PRIVATE engine::foo)` where foo's add_subdirectory
+# sits inside an `if()` is a CMake **generate-time** error wherever that
+# condition is false - not a warning, and not something a build ever reaches.
+#
+# Nothing else here catches it. `--gates` needs a GPU. `dependency-direction`
+# below reads layer ranks, not conditions. And CI's configure-options matrix
+# runs on windows-latest, where `if(WIN32)` is always true - so the one job that
+# exists to keep the modularity claim honest cannot see this class at all.
+#
+# Found by the 31 Aug audit: engine_add_runtime_app linked engine::assets-png-wic
+# unconditionally while the package is added only under if(WIN32), so
+# `cmake -B build` failed at configure on Linux and macOS - step one of this
+# project's stated cross-platform goal, broken with no signal anywhere.
+function Get-CMakeSubdirConditions {
+    # packages/<X> -> the if() conditions enclosing its add_subdirectory.
+    # An empty list means unconditional.
+    param([string]$Path)
+    $map = @{}
+    $stack = New-Object System.Collections.Generic.List[string]
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $t = $line.Trim()
+        if ($t -match '^if\s*\((.*)\)\s*$') { $stack.Add($Matches[1]); continue }
+        if ($t -match '^endif\s*\(') {
+            if ($stack.Count -gt 0) { $stack.RemoveAt($stack.Count - 1) }
+            continue
+        }
+        if ($t -match '^add_subdirectory\(packages/([a-z0-9\-]+)\)') {
+            $map[$Matches[1]] = @($stack)
+        }
+    }
+    return $map
+}
+
+$subdirConditions = Get-CMakeSubdirConditions 'CMakeLists.txt'
+$conditionalPkgs = @($subdirConditions.Keys | Where-Object { $subdirConditions[$_].Count -gt 0 })
+
+$condLinkViolations = @()
+$condLinkCount = 0
+$cmakeFiles = @(Get-ChildItem 'cmake' -File -Filter '*.cmake' -ErrorAction SilentlyContinue) +
+              @(Get-ChildItem 'packages' -Recurse -File -Filter 'CMakeLists.txt' -ErrorAction SilentlyContinue)
+foreach ($file in $cmakeFiles) {
+    # A package that is itself conditional may reference its siblings freely:
+    # packages/cook is inside if(WIN32), so its link to engine::assets-png-wic
+    # can never be evaluated on a platform where that target is absent.
+    $owner = $null
+    if ($file.FullName -match '[\\/]packages[\\/]([a-z0-9\-]+)[\\/]CMakeLists\.txt$') {
+        $owner = $Matches[1]
+    }
+    if ($owner -and $subdirConditions.ContainsKey($owner) -and
+        $subdirConditions[$owner].Count -gt 0) { continue }
+
+    $stack = New-Object System.Collections.Generic.List[string]
+    $lineNo = 0
+    foreach ($line in Get-Content -LiteralPath $file.FullName) {
+        $lineNo++
+        $t = $line.Trim()
+        # The guard itself lives on the `if` line, so it is never a reference.
+        if ($t -match '^if\s*\((.*)\)\s*$') { $stack.Add($Matches[1]); continue }
+        if ($t -match '^endif\s*\(') {
+            if ($stack.Count -gt 0) { $stack.RemoveAt($stack.Count - 1) }
+            continue
+        }
+        $guarded = @($stack | Where-Object { $_ -match '\bTARGET\b|\bWIN32\b' }).Count -gt 0
+        foreach ($m in [regex]::Matches($t, 'engine::([a-z0-9\-]+)')) {
+            $dep = $m.Groups[1].Value
+            if ($dep -notin $conditionalPkgs) { continue }
+            $condLinkCount++
+            if ($guarded) { continue }
+            $rel = ((Resolve-Path -LiteralPath $file.FullName -Relative) -replace '\\', '/') -replace '^\./', ''
+            $condLinkViolations += ("${rel}:${lineNo}: references engine::$dep unguarded, but " +
+                "packages/$dep is added only under if($($subdirConditions[$dep] -join ' && ')) - " +
+                "wrap it in if(TARGET engine::$dep), or configure fails wherever that is false")
+        }
+    }
+}
+Add-Result 'conditional-target-links' `
+    "$condLinkCount references to conditional packages, all guarded" $condLinkViolations
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 

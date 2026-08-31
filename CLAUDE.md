@@ -86,11 +86,13 @@ any debug-layer message as a build-breaking bug, not a warning to skip.
 pwsh -NoProfile -File tools/check-invariants.ps1
 ```
 
-Machine-checks the non-negotiables above plus doc-level drift. Eleven checks:
+Machine-checks the non-negotiables above plus doc-level drift. Twelve checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
-the ROADMAP LOC audit, spec statuses, and the analizeMax analysis set. No compiler or GPU needed — this is
+the ROADMAP LOC audit, spec statuses, the analizeMax analysis set, and that a
+package added under an `if()` is never linked unconditionally (which would fail
+`cmake` at generate time wherever that condition is false). No compiler or GPU needed — this is
 what CI runs, since `--gates` cannot run on a hosted runner (the D3D12 backend
 skips software adapters). Run it alongside the gates before shipping.
 
