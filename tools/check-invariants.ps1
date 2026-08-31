@@ -290,6 +290,130 @@ if (Test-Path $specDir) {
 }
 Add-Result 'spec-status' 'every design spec has a recognised Status' $specViolations
 
+# ── 13. ENGINE_MAP dependency graph is sound ─────────────────────────────────
+# The backlog is only usable if every Later row has a path to Ready. Two
+# failures make that untrue and neither is visible by reading:
+#
+#   * a dependency loop - two rows each naming the other, so neither can ever
+#     become Ready. There were two of these, both created by prose that
+#     mentioned a row in order to say it was *not* a blocker.
+#   * a stale blocker - a Later row whose named rows are all Done, which should
+#     have been flipped to Ready when the last one shipped.
+#
+# The map's own rule is what makes this checkable: a `Category #N` reference in
+# Finish first *is* a blocker, and nothing else in the column is. Walls are
+# written without a reference.
+$mapViolations = @()
+$mapPath = 'docs/ENGINE_MAP.md'
+$mapSummary = 'ENGINE_MAP.md not present'
+if (Test-Path $mapPath) {
+    $catNames = @{}
+    $rowStatus = @{}
+    $rowFirst  = @{}
+    $curCat = 0
+    foreach ($line in Get-Content -LiteralPath $mapPath) {
+        $h = [regex]::Match($line, '^##\s+(\d+)\.\s+(.*)$')
+        if ($h.Success) {
+            $curCat = [int]$h.Groups[1].Value
+            $catNames[$curCat] = $h.Groups[2].Value.Trim()
+            continue
+        }
+        if ($curCat -eq 0) { continue }
+        $r = [regex]::Match($line, '^\|\s*(\d+)\s*\|(.*?)\|(.*?)\|(.*?)\|\s*$')
+        if (-not $r.Success) { continue }
+        $key = "$curCat/$([int]$r.Groups[1].Value)"
+        $rowStatus[$key] = ($r.Groups[3].Value -replace '\*', '').Trim()
+        $rowFirst[$key]  = $r.Groups[4].Value.Trim()
+    }
+
+    # First word of each category heading is how rows refer to it.
+    $alias = @{}
+    foreach ($n in $catNames.Keys) {
+        $first = ($catNames[$n] -split '[ /(,]')[0].ToLower()
+        $alias[$first] = $n
+    }
+    $alias['ui'] = 12   # heading is "In-game UI"
+
+    $deps = @{}
+    foreach ($key in $rowStatus.Keys) {
+        $list = @()
+        foreach ($m in [regex]::Matches($rowFirst[$key], '\b([A-Z][A-Za-z]*)\s*#(\d+)')) {
+            $w = $m.Groups[1].Value.ToLower()
+            if (-not $alias.ContainsKey($w)) {
+                $mapViolations += "ENGINE_MAP $key : Finish first names unknown category '$($m.Groups[1].Value)'"
+                continue
+            }
+            $t = "$($alias[$w])/$([int]$m.Groups[2].Value)"
+            if (-not $rowStatus.ContainsKey($t)) {
+                $mapViolations += "ENGINE_MAP $key : dangling reference $($m.Groups[1].Value) #$($m.Groups[2].Value)"
+                continue
+            }
+            $list += $t
+        }
+        $deps[$key] = $list
+
+        if ($rowStatus[$key] -in @('Done', 'Ready') -and $rowFirst[$key]) {
+            $mapViolations += "ENGINE_MAP $key : status $($rowStatus[$key]) but Finish first is filled"
+        }
+        if ($rowStatus[$key] -eq 'Later' -and -not $rowFirst[$key]) {
+            $mapViolations += "ENGINE_MAP $key : Later with an empty Finish first - name a row or a wall"
+        }
+    }
+
+    foreach ($key in $deps.Keys) {
+        if ($rowStatus[$key] -ne 'Later' -or $deps[$key].Count -eq 0) { continue }
+        $undone = @($deps[$key] | Where-Object { $rowStatus[$_] -ne 'Done' })
+        if ($undone.Count -eq 0) {
+            $mapViolations += "ENGINE_MAP $key : every named blocker is Done - this row should be Ready"
+        }
+    }
+
+    # Cycles, over not-Done rows only: a Done blocker cannot hold anything up.
+    $adj = @{}
+    foreach ($key in $deps.Keys) {
+        $adj[$key] = @($deps[$key] | Where-Object { $rowStatus[$_] -ne 'Done' })
+    }
+    $colour = @{}
+    foreach ($key in $adj.Keys) { $colour[$key] = 'white' }
+    $found = @()
+    function Find-MapCycle {
+        param([string]$Node, [System.Collections.ArrayList]$Stack)
+        $script:colour[$Node] = 'grey'
+        [void]$Stack.Add($Node)
+        foreach ($next in $script:adj[$Node]) {
+            $c = if ($script:colour.ContainsKey($next)) { $script:colour[$next] } else { 'black' }
+            if ($c -eq 'grey') {
+                $at = $Stack.IndexOf($next)
+                $script:found += , @($Stack[$at..($Stack.Count - 1)] + $next)
+            } elseif ($c -eq 'white') {
+                Find-MapCycle -Node $next -Stack $Stack
+            }
+        }
+        $Stack.RemoveAt($Stack.Count - 1)
+        $script:colour[$Node] = 'black'
+    }
+    $script:adj = $adj; $script:colour = $colour; $script:found = $found
+    foreach ($key in @($adj.Keys)) {
+        if ($script:colour[$key] -eq 'white') {
+            Find-MapCycle -Node $key -Stack ([System.Collections.ArrayList]::new())
+        }
+    }
+    foreach ($cyc in $script:found) {
+        $names = @()
+        foreach ($node in $cyc) {
+            $parts = $node -split '/'
+            $catWord = ($catNames[[int]$parts[0]] -split '[ /(,]')[0]
+            $names += ($catWord + ' #' + $parts[1])
+        }
+        $pretty = $names -join ' -> '
+        $mapViolations += ('ENGINE_MAP dependency loop: ' + $pretty)
+    }
+
+    $ready = @($rowStatus.Values | Where-Object { $_ -eq 'Ready' }).Count
+    $mapSummary = "$($rowStatus.Count) rows, $ready ready, no dependency loops"
+}
+Add-Result 'map-dependencies' $mapSummary $mapViolations
+
 # ── 11. The analizeMax analysis set is internally consistent ─────────────────
 # The publishing contract (.claude/skills/analizeMax/publishing.md) is ~200
 # lines of prose that three skills are asked to obey. The half of it that is
