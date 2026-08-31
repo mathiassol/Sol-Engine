@@ -1748,12 +1748,34 @@ void D3D12Device::wait_for_copy() {
 
 void D3D12Device::begin_copy() {
     wait_for_copy();
-    copy_allocator_->Reset();
-    copy_list_->Reset(copy_allocator_.get(), nullptr);
+    // Same two checks the frame path makes in begin_frame(). A list that failed
+    // to open cannot be closed, and end_copy() below refuses to submit it - so
+    // no recording flag is needed here, only the log line that says which step
+    // went wrong.
+    if (FAILED(copy_allocator_->Reset())) {
+        log_device_error("Copy allocator reset failed - uploads this batch are dropped");
+        return;
+    }
+    if (FAILED(copy_list_->Reset(copy_allocator_.get(), nullptr))) {
+        log_device_error("Copy list reset failed - uploads this batch are dropped");
+    }
 }
 
 UINT64 D3D12Device::end_copy() {
-    copy_list_->Close();
+    // The frame path has checked this since day one, for the reason in the
+    // comment above submit(): executing a list that is not closed is undefined
+    // behaviour and typically removes the device - which would then be reported
+    // as "GPU device lost ... not a content error", the opposite of the truth.
+    // The copy path is where uploads of mesh, texture and mip data are
+    // submitted, so it needs the same guard.
+    //
+    // Signal the queue even when nothing was submitted: callers wait on the
+    // returned fence value, and returning an unsignalled one would hang them.
+    if (FAILED(copy_list_->Close())) {
+        log_device_error("Copy list close failed - copy not submitted");
+        copy_fence_value_ = signal_queue();
+        return copy_fence_value_;
+    }
     ID3D12CommandList* lists[] = {copy_list_.get()};
     queue_->ExecuteCommandLists(1, lists);
     copy_fence_value_ = signal_queue();
