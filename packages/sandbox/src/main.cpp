@@ -123,6 +123,7 @@ constexpr const char* kHuskyAlbedos[] = {
     "/content/textures/husky/Cartoon_Husky_Albedo4.png",
 };
 constexpr const char* kGroundMesh = "/content/meshes/ground_quad";
+constexpr const char* kDemoScene = "/content/scenes/demo.solscene";
 constexpr const char* kOverlayShader = "/debug/shaders/overlay.hlsl";
 constexpr const char* kDebugLinesShader = "/debug/shaders/debug_lines.hlsl";
 constexpr const char* kTestFile = "/content/test.txt";
@@ -1805,6 +1806,58 @@ bool run_scene_world_gate(const engine::scene::World& world) {
         world.instance_count,
         models_differ ? "yes" : "no",
         moved ? "yes" : "no",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
+
+// The gate that makes scene files a content path rather than a library: it
+// loads a real file off disk through the mounted loader, which is the thing no
+// runtime code could do before load_world existed. Everything it asserts comes
+// from the file, and the mesh ids are cross-checked against make_mesh_handle
+// rather than trusted, so a change to the hash or the mesh key fails here
+// instead of silently producing a scene of invalid handles.
+bool run_scene_load_gate(engine::assets::IAssetLoader& loader) {
+    engine::scene::World world;
+    const bool loaded = engine::scene::load_world(loader, kDemoScene, world);
+
+    const engine::assets::MeshHandle husky = engine::assets::make_mesh_handle(kHuskyMesh);
+    const engine::assets::MeshHandle ground = engine::assets::make_mesh_handle(kGroundMesh);
+
+    const bool counts_ok = loaded && world.instance_count == 3 && world.material_count == 2;
+    bool names_ok = false;
+    bool meshes_ok = false;
+    bool parent_ok = false;
+    bool child_moved = false;
+    if (counts_ok) {
+        const engine::u32 a = engine::scene::find_instance(world, "husky_a");
+        const engine::u32 b = engine::scene::find_instance(world, "husky_b");
+        const engine::u32 g = engine::scene::find_instance(world, "ground");
+        names_ok = a != engine::scene::kInvalidInstance && b != engine::scene::kInvalidInstance
+            && g != engine::scene::kInvalidInstance;
+        if (names_ok) {
+            meshes_ok = world.instances[a].mesh == husky && world.instances[b].mesh == husky
+                && world.instances[g].mesh == ground;
+            parent_ok = world.instances[b].parent == a
+                && world.instances[a].parent == engine::scene::kInvalidInstance;
+            // world = parent * local, so the child sits at 0.5 + 0.8.
+            const engine::math::Mat4 world_b = engine::scene::instance_world_model(world, b);
+            child_moved = std::fabs(world_b.cols[3].y - 1.3f) < 1.e-4f;
+        }
+    }
+
+    const bool passed = counts_ok && names_ok && meshes_ok && parent_ok && child_moved;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Scene load gate: file=%s instances=%u materials=%u names=%s meshes=%s parent=%s "
+        "child_y=%.3f (%s)",
+        loaded ? "read" : "MISSING", world.instance_count, world.material_count,
+        names_ok ? "yes" : "no", meshes_ok ? "yes" : "no", parent_ok ? "yes" : "no",
+        static_cast<double>(counts_ok && names_ok
+                ? engine::scene::instance_world_model(world,
+                      engine::scene::find_instance(world, "husky_b")).cols[3].y
+                : 0.f),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
@@ -5339,6 +5392,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         return false;
     }
     if (!run_scene_capacity_gate() && fail_on_gate) {
+        return false;
+    }
+    if (!run_scene_load_gate(loader) && fail_on_gate) {
         return false;
     }
     if (!run_scene_name_gate() && fail_on_gate) {

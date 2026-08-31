@@ -227,6 +227,30 @@ bool write_world(const World& world, std::string& out) {
     return true;
 }
 
+bool load_world(assets::IAssetLoader& loader, std::string_view virtual_path, World& out) {
+    out = World{};
+    std::vector<u8> bytes;
+    if (!loader.load_bytes(virtual_path, bytes) || bytes.empty()) {
+        char message[224];
+        std::snprintf(message, sizeof(message),
+            "solscene '%.*s' could not be read (missing, unreadable, or empty)",
+            static_cast<int>(virtual_path.size()), virtual_path.data());
+        log(LogLevel::Error, LogChannel::Assets, message);
+        return false;
+    }
+    const std::string_view text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    if (!read_world(text, out)) {
+        // read_world has already logged the line and the reason; name the file,
+        // because "line 12" is useless when a game loads several scenes.
+        char message[224];
+        std::snprintf(message, sizeof(message), "solscene '%.*s' was rejected (see above)",
+            static_cast<int>(virtual_path.size()), virtual_path.data());
+        log(LogLevel::Error, LogChannel::Assets, message);
+        return false;
+    }
+    return true;
+}
+
 bool read_world(std::string_view text, World& out) {
     out = World{};
     usize i = 0;

@@ -1,0 +1,17 @@
+# Demo scene, loaded from disk by run_scene_load_gate.
+#
+# An instance names its mesh by MeshHandle id, which is
+# fnv1a64(<the key the mesh was stored under>) with generation 1:
+#   /content/meshes/cartoon_husky.gltf -> 14620780413506688374
+#   /content/meshes/ground_quad        -> 7257218618063748517
+# Stable across runs, but not readable. See scene_file.hpp.
+solscene 1
+ambient 0.18 0.19 0.22
+sun_dir 0.35 0.85 -0.4
+sun_color 1 0.95 0.88
+point 0 0 2 0 1 0.4 0.2 6 2
+material 0 0 1
+material 0 0 0.35
+instance "ground" 7257218618063748517 1 0 - 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+instance "husky_a" 14620780413506688374 1 1 - 1 0 0 0 0 1 0 0 0 0 1 0 0 0.5 0 1
+instance "husky_b" 14620780413506688374 1 1 "husky_a" 1 0 0 0 0 1 0 0 0 0 1 0 0 0.8 0 1
