@@ -56,7 +56,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 | 4 | `--gates` + GPU debug layer as the stability method | **Done** | |
 | 5 | CPU profiler scopes + F3 overlay slots | **Done** | |
 | 6 | File logger (not only stderr) | **Done** | |
-| 7 | Crash dump / minidump on unhandled exception | Later | Foundation #6 (somewhere to write the dump). App-data can be `%LOCALAPPDATA%/Sol` until Build #7. |
+| 7 | Crash dump / minidump on unhandled exception | **Ready** | |
 | 8 | Config / cvars (named knobs without recompile) | **Done** | |
 | 9 | Deterministic fixed-step gameplay clock (already sketched; prove it with a sim) | **Done** | |
 
@@ -372,7 +372,7 @@ The sandbox is not the product. A player should run a **game** binary with
 | 4 | Icon, version resource, window title as game identity | **Done** | |
 | 5 | Cooked asset pack next to (or inside) the exe | **Done** | |
 | 6 | Startup splash / loading that does not hitch the first frame silently | Later | A first-frame hitch worth hiding (many assets or cooker). Current load is tiny. |
-| 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | Later | Foundation #6 file logger and #7 minidump. |
+| 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | Later | Foundation #7 minidump. #6 is Done — `default_log_directory()` in `core/log_file.hpp` is the single function this row changes. |
 | 8 | Zip / installer (no Visual Studio on the player machine) | **Ready** | |
 | 9 | Ship dxcompiler/D3D12 Agility if required; document GPU baseline | **Done** | |
 | 10 | Fullscreen options, quality presets | **Ready** | |
