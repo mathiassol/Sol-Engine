@@ -310,6 +310,10 @@ if (Test-Path $mapPath) {
     $catNames = @{}
     $rowStatus = @{}
     $rowFirst  = @{}
+    $catClaim = @{}       # category -> @(done, ready, rows) as the map claims
+    $catTally = @{}       # category -> @(done, ready, rows) as recounted here
+    $headerClaim = $null  # the file's own whole-backlog totals
+    $totals = @{ Done = 0; Ready = 0; Later = 0; Far = 0 }
     $curCat = 0
     foreach ($line in Get-Content -LiteralPath $mapPath) {
         $h = [regex]::Match($line, '^##\s+(\d+)\.\s+(.*)$')
@@ -318,12 +322,35 @@ if (Test-Path $mapPath) {
             $catNames[$curCat] = $h.Groups[2].Value.Trim()
             continue
         }
+        # The map states its own arithmetic twice: once at the top for the whole
+        # backlog, once per category. Separators are matched as \D+ rather than
+        # a literal middle dot, so this does not depend on how the file decodes.
+        if ($null -eq $headerClaim) {
+            $ht = [regex]::Match($line,
+                '^(\d+) Done\D+(\d+) Ready\D+(\d+) Later\D+(\d+) Far')
+            if ($ht.Success) {
+                $headerClaim = @([int]$ht.Groups[1].Value, [int]$ht.Groups[2].Value,
+                    [int]$ht.Groups[3].Value, [int]$ht.Groups[4].Value)
+            }
+        }
         if ($curCat -eq 0) { continue }
+        $st = [regex]::Match($line, '^\*(\d+) done\D+(\d+) ready\D+(\d+) rows\.\*$')
+        if ($st.Success) {
+            $catClaim[$curCat] = @([int]$st.Groups[1].Value, [int]$st.Groups[2].Value,
+                [int]$st.Groups[3].Value)
+            continue
+        }
         $r = [regex]::Match($line, '^\|\s*(\d+)\s*\|(.*?)\|(.*?)\|(.*?)\|\s*$')
         if (-not $r.Success) { continue }
         $key = "$curCat/$([int]$r.Groups[1].Value)"
-        $rowStatus[$key] = ($r.Groups[3].Value -replace '\*', '').Trim()
+        $status = ($r.Groups[3].Value -replace '\*', '').Trim()
+        $rowStatus[$key] = $status
         $rowFirst[$key]  = $r.Groups[4].Value.Trim()
+        if (-not $catTally.ContainsKey($curCat)) { $catTally[$curCat] = @(0, 0, 0) }
+        $catTally[$curCat][2] += 1
+        if ($totals.ContainsKey($status)) { $totals[$status] += 1 }
+        if ($status -eq 'Done')  { $catTally[$curCat][0] += 1 }
+        if ($status -eq 'Ready') { $catTally[$curCat][1] += 1 }
     }
 
     # First word of each category heading is how rows refer to it.
@@ -409,8 +436,43 @@ if (Test-Path $mapPath) {
         $mapViolations += ('ENGINE_MAP dependency loop: ' + $pretty)
     }
 
+    # Reconcile the map's own arithmetic against the tables under it. This is
+    # what roadmap-audit does for ROADMAP's LOC figures; these 22 numbers - one
+    # header line plus one subtotal per category - had no equivalent, and a
+    # number nothing checks is a number that drifts.
+    if ($null -eq $headerClaim) {
+        $mapViolations += 'ENGINE_MAP: no "N Done / N Ready / N Later / N Far" totals line found'
+    } else {
+        $order = @('Done', 'Ready', 'Later', 'Far')
+        for ($i = 0; $i -lt $order.Count; $i++) {
+            $claimed = $headerClaim[$i]
+            $counted = $totals[$order[$i]]
+            if ($claimed -ne $counted) {
+                $mapViolations += ("ENGINE_MAP totals: header claims $claimed " +
+                    "$($order[$i]), tables have $counted")
+            }
+        }
+    }
+    foreach ($n in ($catNames.Keys | Sort-Object)) {
+        $tally = if ($catTally.ContainsKey($n)) { $catTally[$n] } else { @(0, 0, 0) }
+        if (-not $catClaim.ContainsKey($n)) {
+            $mapViolations += ("ENGINE_MAP category $n ($($catNames[$n])): no " +
+                "'*N done / N ready / N rows.*' subtotal line")
+            continue
+        }
+        $labels = @('done', 'ready', 'rows')
+        for ($i = 0; $i -lt $labels.Count; $i++) {
+            if ($catClaim[$n][$i] -ne $tally[$i]) {
+                $mapViolations += ("ENGINE_MAP category $n ($($catNames[$n])): " +
+                    "subtotal claims $($catClaim[$n][$i]) $($labels[$i]), " +
+                    "tables have $($tally[$i])")
+            }
+        }
+    }
+
     $ready = @($rowStatus.Values | Where-Object { $_ -eq 'Ready' }).Count
-    $mapSummary = "$($rowStatus.Count) rows, $ready ready, no dependency loops"
+    $mapSummary = ("$($rowStatus.Count) rows, $ready ready, totals and " +
+        "$($catClaim.Count) subtotals agree, no dependency loops")
 }
 Add-Result 'map-dependencies' $mapSummary $mapViolations
 
