@@ -1,7 +1,7 @@
 # Exposure control — one scalar before the tonemap
 
 Date: 31 Aug 2026
-Status: approved
+Status: implemented
 
 ENGINE_MAP **Renderer #29**. Follows
 [the colour-space work](2026-08-29-colour-space-design.md) (Renderer #28),

@@ -7,6 +7,7 @@
 #include <engine/renderer/motion.hpp>
 #include <engine/renderer/sky.hpp>
 #include <engine/renderer/taa.hpp>
+#include <engine/renderer/tonemap.hpp>
 #include <engine/rhi/device.hpp>
 
 #include <cstdio>
@@ -286,7 +287,8 @@ void record_bloom_downsample(PassContext& ctx, bool first_mip) {
         return;
     }
     const bloom::Constants constants = bloom::make_downsample_constants(
-        ctx.shader_reads[0]->width(), ctx.shader_reads[0]->height(), first_mip);
+        ctx.shader_reads[0]->width(), ctx.shader_reads[0]->height(), first_mip,
+        ctx.snapshot.exposure);
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
     if (!slice.buffer) {
         return;  // constant ring exhausted this frame; skip the pass
@@ -321,7 +323,17 @@ void record_tonemap(PassContext& ctx) {
     if (!ctx.snapshot.tonemap_pipeline || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
         return;
     }
+    // This pass had no constants until exposure needed one. Bail out of the
+    // recorder rather than drawing with root CBV slot 0 unset - the mistake
+    // bind_aa_constants used to make.
+    const tonemap::Constants constants = tonemap::make_constants(ctx.snapshot.exposure);
+    const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
+    if (!slice.buffer) {
+        return;  // constant ring exhausted this frame; skip the pass
+    }
+    ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
     ctx.cmd.set_pipeline(*ctx.snapshot.tonemap_pipeline);
+    ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     if (ctx.shader_read_count > 1 && ctx.shader_reads[1]) {
         ctx.cmd.set_shader_resource(1, *ctx.shader_reads[1]);
@@ -408,7 +420,7 @@ void record_taa(PassContext& ctx) {
         history = ctx.shader_reads[0];
     }
     const taa::Constants constants = taa::make_constants(ctx.shader_reads[0]->width(),
-        ctx.shader_reads[0]->height(), ctx.snapshot.taa_jitter, reset);
+        ctx.shader_reads[0]->height(), ctx.snapshot.taa_jitter, reset, ctx.snapshot.exposure);
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
     if (!slice.buffer) {
         return;  // constant ring exhausted this frame; skip the pass

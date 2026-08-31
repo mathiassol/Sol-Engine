@@ -153,6 +153,9 @@ struct RenderSnapshot {
     u32 width = 0;
     u32 height = 0;
     aa::Mode aa_mode = aa::kDefault;
+    // Linear multiplier applied to scene_color at each of its first-read sites
+    // (bloom's first downsample, tonemap, TAA) and never to bloom's output.
+    f32 exposure = 1.f;
     math::Vec2 taa_jitter{};
     bool taa_reset = true;
     bool taa_odd = false;

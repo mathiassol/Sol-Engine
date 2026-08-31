@@ -137,6 +137,7 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
     desc.width = snapshot.width;
     desc.height = snapshot.height;
     desc.aa_mode = assets.aa_mode;
+    desc.exposure = assets.exposure;
     desc.taa_sample = assets.taa_sample;
     desc.taa_reset = assets.taa_reset;
     desc.overlay_visible = overlay_visible;

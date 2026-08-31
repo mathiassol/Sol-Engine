@@ -61,6 +61,8 @@ struct ExtractDesc {
     u32 height = 0;
     aa::Mode aa_mode = aa::kDefault;
     u32 taa_sample = 0;
+    // Linear multiplier, not EV. The app owns the photographic convention.
+    f32 exposure = 1.f;
     bool taa_reset = true;
     bool overlay_visible = false;
     bool debug_visible = false;

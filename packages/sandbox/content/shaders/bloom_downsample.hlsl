@@ -52,8 +52,13 @@ float3 apply_knee(float3 color) {
     return color;
 }
 
+// params.y is exposure on the first mip and 1.0 on every later one, so the
+// multiply is unconditional here and the gating is asserted in C++
+// (bloom::make_downsample_constants). Applying it *before* apply_knee is the
+// point: the threshold then means "would clip on the sensor" rather than
+// "brighter than 1.0 in absolute scene radiance, whatever the camera is doing".
 float3 sample_src(float2 uv, bool prefilter) {
-    float3 color = src.Sample(linear_sampler, uv).rgb;
+    float3 color = src.Sample(linear_sampler, uv).rgb * params.y;
     return prefilter ? apply_knee(color) : color;
 }
 

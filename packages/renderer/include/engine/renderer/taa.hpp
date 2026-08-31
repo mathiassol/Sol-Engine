@@ -111,13 +111,19 @@ inline bool nearly_zero(math::Vec2 v, f32 eps = 1e-8f) {
     return v.x * v.x + v.y * v.y <= eps * eps;
 }
 
-inline Constants make_constants(u32 width, u32 height, math::Vec2 jitter_ndc_offset, bool reset) {
+// `exposure` rides in params.w. The TAA path composites bloom itself rather than
+// leaving it to the tonemap, so this is the second of the two composite sites
+// and it must scale scene exactly as tonemap.hlsl does - and must not scale
+// bloom, which arrives already exposed. If the two disagree, toggling AA with F5
+// changes image brightness. The exposure gate asserts they match.
+inline Constants make_constants(u32 width, u32 height, math::Vec2 jitter_ndc_offset, bool reset,
+    f32 exposure = 1.f) {
     Constants out{};
     const f32 w = width > 0 ? static_cast<f32>(width) : 1.f;
     const f32 h = height > 0 ? static_cast<f32>(height) : 1.f;
     const math::Vec2 uv = jitter_to_uv(jitter_ndc_offset);
     out.texel_size = {1.f / w, 1.f / h, w, h};
-    out.params = {reset ? 1.f : 0.f, kHistoryWeight, kBloomIntensity, 0.f};
+    out.params = {reset ? 1.f : 0.f, kHistoryWeight, kBloomIntensity, exposure};
     out.jitter = {uv.x, uv.y, jitter_ndc_offset.x, jitter_ndc_offset.y};
     return out;
 }

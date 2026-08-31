@@ -76,13 +76,23 @@ inline math::Vec3 apply_knee(math::Vec3 color, math::Vec4 thresh = threshold_par
     return out;
 }
 
-inline Constants make_downsample_constants(u32 src_width, u32 src_height, bool first_mip) {
+// `exposure` is applied on the first mip only, because that is the one that
+// reads scene_color; every later mip reads an already-exposed bloom level. The
+// gating lives here rather than in the shader so a gate can assert it - the
+// shader multiplies by params.y unconditionally.
+//
+// Thresholding after exposure is the point, not a side effect: kThreshold = 1
+// then means "would clip on the sensor" rather than "brighter than 1.0 in
+// absolute scene radiance regardless of camera", which is what it meant before
+// exposure existed.
+inline Constants make_downsample_constants(u32 src_width, u32 src_height, bool first_mip,
+    f32 exposure = 1.f) {
     Constants out{};
     const f32 w = src_width > 0 ? static_cast<f32>(src_width) : 1.f;
     const f32 h = src_height > 0 ? static_cast<f32>(src_height) : 1.f;
     out.texel_size = {1.f / w, 1.f / h, 0.f, 0.f};
     out.threshold = threshold_params();
-    out.params = {first_mip ? 1.f : 0.f, 0.f, 0.f, 0.f};
+    out.params = {first_mip ? 1.f : 0.f, first_mip ? exposure : 1.f, 0.f, 0.f};
     return out;
 }
 

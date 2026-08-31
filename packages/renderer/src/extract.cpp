@@ -69,6 +69,7 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
     out.width = desc.width;
     out.height = desc.height;
     out.aa_mode = desc.aa_mode;
+    out.exposure = desc.exposure;
     out.taa_reset = desc.taa_reset;
     out.taa_odd = (desc.taa_sample & 1u) != 0;
     const bool smaa = desc.smaa_edge_pipeline && desc.smaa_weights_pipeline

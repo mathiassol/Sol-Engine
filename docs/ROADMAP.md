@@ -6,7 +6,7 @@ is not the work list. The backlog is [ENGINE_MAP.md](ENGINE_MAP.md): pick one
 **Ready** row. There is no dashboard or canvas; these two files are read
 directly.
 
-Last updated: 29 Aug 2026.
+Last updated: 31 Aug 2026.
 
 ---
 
@@ -47,11 +47,17 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 29 Aug 2026: **23,010 lines** of C++/HLSL in **139 files**, **26
-packages** (engine sources; vendored `cgltf.h` not counted). `rhi-d3d12` is 13%
-of the engine (3,014 lines). `sandbox` is 6,555; `renderer` is 2,867.
-`physics-cpu` is 1,405; `core` is 1,162. `game.exe` reuses sandbox sources
-(install layout, no extra .cpp).
+Measured 31 Aug 2026: **23,202 lines** of C++/HLSL in **140 files**, **26
+packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 6,220
+(its `content/shaders/*.hlsl` counts here too); `renderer` is 2,626;
+`rhi-d3d12` is 2,589 — 11% of the engine, down from 13% since the mip builder
+moved to `math` in Renderer #28. `physics-cpu` is 1,292; `core` is 971; `math`
+is 558. `game.exe` reuses sandbox sources (install layout, no extra .cpp).
+
+The per-package figures above are **not** machine-checked — only the total,
+file count and package count are, by the `roadmap-audit` invariant. The
+previous set in this slot had drifted well past rounding (it claimed
+`rhi-d3d12` 3,014 and `renderer` 2,867), so recount rather than trust them.
 
 Roughly 3,000 of `sandbox`'s lines are the gate suite itself, which is compiled
 into `game.exe` too — the player binary carries the tests.
@@ -712,6 +718,96 @@ failure mode is silently dropped draws. Going past that wants instanced draws
 wants a heap-backed `World`, a name hash table, and cached world matrices - the
 name intern is O(n^2) and the parent walk is uncached. Both are invisible at
 512.
+
+---
+
+## Renderer #29 — exposure control (done)
+
+**Why:** Renderer #28 applied the display encode Narkowicz's note asks for and
+left the exposure multiply the same sentence asks for still missing, so the
+sandbox rendered correct but over-exposed. The retune in `efb9fd6` then measured
+why tuning could not substitute: cutting the sun 2.4x moved mean frame
+luminance 212/255 -> 206/255, because `world.sun.color` drives only the direct
+punctual term. Most of the light is the baked sky cubemap and the split-sum IBL
+derived from it, both taking their magnitude from `sky_radiance()` in
+`renderer/src/ibl.cpp`, neither reachable from any sandbox constant.
+
+Three independent light magnitudes, no single knob. Exposure is the knob.
+
+**Choice:** a cvar in EV stops, applied post-composite at each site that first
+reads `scene_color`. Full reasoning in
+[the design spec](superpowers/specs/2026-08-31-exposure-control-design.md).
+
+- *EV in the app, a linear multiplier in the renderer.* `r.exposure` is stops
+  because each ±1 halves or doubles and that is tunable by feel;
+  `RenderSnapshot::exposure` is `2^ev` because the renderer has no business
+  knowing about photographic conventions. It defaults to 1.0, so the renderer
+  ships neutral and only an app changes it.
+- *Post-exposure, not pre-exposure.* Scaling radiance in `forward.hlsl` and
+  `sky.hlsl` would have been two shader edits with no new constant buffer and
+  nothing downstream touched — materially the cheapest option, and rejected
+  because `scene_color` would stop holding radiance and start holding exposed
+  radiance. That bakes a camera setting into the scene representation, and has
+  to be undone when auto-exposure needs to measure un-exposed luminance.
+- *Not a dedicated pass.* A full-screen RGBA16 transient, ~15 MB/frame at 720p
+  and a 26th pass, to do what two multiplies do.
+- *Applied at the three first-read sites, never to bloom's output.* Bloom's
+  first downsample reads `scene_color` and exposes it, so bloom arrives already
+  exposed at both composite sites; scaling it again would square the exposure in
+  the glow. The rule is "expose scene once, at first read."
+- *`bloom_intensity` folded into the new tonemap CBV.* It was already duplicated
+  — `bloom::kIntensity` in C++ against a literal in `tonemap.hlsl` — with
+  nothing keeping them equal. The buffer had to exist for exposure regardless.
+
+Bloom's threshold moves to the correct side of exposure as a side effect worth
+naming: `kThreshold = 1.0` used to mean "brighter than 1.0 in absolute scene
+radiance whatever the camera is doing", and now means "would clip on the
+sensor".
+
+The two AA paths composite bloom in *different* shaders — non-TAA in
+`tonemap.hlsl`, TAA inside `taa.hlsl` — so both had to apply exposure
+identically or F5 would change image brightness. The gate asserts they agree
+numerically rather than leaving it to inspection.
+
+**Gate (met):** `Exposure gate` asserts, with no GPU readback:
+`ev(0,-1,1)=yes` (the EV conversion), `clamp=yes` (an absurd knob value cannot
+put inf into `scene_color`), `plumbed=0.375/0.375`, `paths_agree=yes`,
+`intensity=0.060`, `bloom_first=0.375 bloom_later=1.000`, and `cvar=yes`.
+
+`plumbed` is the load-bearing one and it failed first, exactly as intended:
+before `extract.cpp` copied the field it read `plumbed=1.000/0.375`. That is the
+failure finding A1 of the 29 Aug audit named — a field added to three of the
+four plumbing structs, silently disabling the feature — caught here by a number
+rather than by someone noticing the image did not change.
+
+69 gates pass in Debug and Release `game`, exit 0. D3D12 debug layer 0 messages,
+0 errors, 0 warnings. Invariants 10/10.
+
+**Tuning:** the shipped default is **-2.0 EV** (a 0.25x multiplier), picked by
+screenshot sweep rather than derived. Measured mean frame luminance across the
+sweep: 203/255 at 0 EV, 168 at -1.0, 147 at -1.5, **126 at -2.0**. At -2.0 the
+sky keeps a gradient instead of clipping to white, the sun reads as a disc with
+a halo rather than a blown band, and the floor holds contrast into the distance.
+
+Worth recording about the method: tuning under `efb9fd6` was a
+build-screenshot-judge loop at minutes per iteration. As a cvar it is
+`--set r.exposure=<ev>` with no rebuild, and the whole four-point sweep above
+ran in one pass.
+
+**Do-not:** Do not add auto-exposure here. It needs a luminance reduction, which
+wants a compute pass, and `PassKind` is `{Graphics, Copy}` — the graph cannot
+express one (29 Aug audit, finding A2). It is blocked on unrelated work and is a
+separate feature.
+
+Do not put exposure on `scene::World` yet. Per-scene exposure is the right home
+if scenes ever need their own authored look, but it means designing the
+`.solscene` format and extending the round-trip gate for a value nobody authors.
+
+Do not retune `sun` or `ambient` again. Exposure is now the knob for overall
+brightness; that is the point of it. The values from `efb9fd6` stay.
+
+Do not scale bloom by exposure at a composite site. It is already exposed. The
+gate's `bloom_first` / `bloom_later` pair exists to catch a second application.
 
 ---
 

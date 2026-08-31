@@ -20,6 +20,7 @@
 #include <engine/renderer/bloom.hpp>
 #include <engine/renderer/motion.hpp>
 #include <engine/renderer/taa.hpp>
+#include <engine/renderer/tonemap.hpp>
 #include <engine/renderer/standard_frame.hpp>
 #include <engine/assets/filesystem/asset_loader_filesystem.hpp>
 #include <engine/assets/gpu/mesh_store.hpp>
@@ -144,6 +145,12 @@ engine::Cvar cv_text_comment{"gate.text_comment", "unset", "Cvar gate: text pars
 // The AA default is demo state, not engine state, so the knob is read here
 // rather than in Engine::init.
 engine::Cvar cv_aa{"r.aa", "off", "Anti-aliasing: off | fxaa | smaa | taa"};
+// -2.0 EV (a 0.25x multiplier) was picked by screenshot sweep, not derived:
+// mean frame luminance runs 203/255 at 0 EV, 168 at -1, 147 at -1.5 and 126 at
+// -2.0, and -2.0 is where the sky keeps a gradient, the sun reads as a disc
+// rather than a blown band, and the floor holds contrast into the distance.
+engine::Cvar cv_exposure{"r.exposure", -2.0f,
+    "Exposure in EV stops; the multiplier is 2^ev. Scales sun, sky and IBL together."};
 
 struct FlyCamera {
     engine::math::Vec3 position{0.f, 0.35f, -2.2f};
@@ -215,6 +222,8 @@ struct ForwardDemo {
     bool taa_history_valid = false;
     engine::renderer::motion::MotionHistory motion_history{};
     engine::renderer::aa::Mode aa_mode = engine::renderer::aa::kDefault;
+    // Linear multiplier, converted from the r.exposure EV knob at startup.
+    engine::f32 exposure = 1.f;
     engine::assets::gpu::GpuMeshStore meshes;
     engine::assets::MeshHandle husky{};
     engine::assets::MeshHandle ground{};
@@ -278,6 +287,7 @@ sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo) {
     assets.taa_sample = demo.taa_frames;
     assets.taa_reset = !demo.taa_history_valid;
     assets.aa_mode = demo.aa_mode;
+    assets.exposure = demo.exposure;
     assets.meshes = &demo.meshes;
     for (engine::u32 i = 0; i < sandbox::kHuskyVariantCount; ++i) {
         assets.husky_albedos[i] = demo.albedos[i].get();
@@ -374,6 +384,7 @@ engine::rhi::GraphicsPipelineDesc make_tonemap_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
+    desc.constant_buffer_count = 1;
     desc.shader_resource_count = 2;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
@@ -1355,6 +1366,92 @@ void fill_rgba8(std::vector<engine::u8>& pixels, engine::u32 pixel_count, engine
 //      gamma-correcting it would corrupt it.
 //   4. The HLSL curve matches the C++ one, read back from a compute dispatch.
 //      The curve exists twice by necessity; this is what keeps them in step.
+// EV stops -> linear multiplier. Clamped because a cvar is user input: 2^40 is
+// inf in f32 and would poison scene_color, and the exposure gate asserts the
+// clamp rather than trusting the range.
+engine::f32 exposure_from_ev(engine::f32 ev) {
+    constexpr engine::f32 kMinEv = -16.f;
+    constexpr engine::f32 kMaxEv = 16.f;
+    const engine::f32 clamped = ev < kMinEv ? kMinEv : (ev > kMaxEv ? kMaxEv : ev);
+    return std::exp2(clamped);
+}
+
+// Exposure: one linear multiplier applied to scene_color at each of its three
+// first-read sites, and never to bloom's output.
+//
+// No GPU readback needed - every assertion is on a value:
+//
+//   1. EV conversion and its clamp.
+//   2. The multiplier survives the renderer's plumbing end to end. This is the
+//      load-bearing one: the 29 Aug audit's finding A1 is that a field added to
+//      three of the four plumbing structs produces a silently disabled feature,
+//      and nothing catches it. extract_visible is where that would happen.
+//   3. The two AA paths agree. They composite bloom in different shaders, so if
+//      their exposure disagrees, F5 changes image brightness.
+//   4. Bloom applies it exactly once - first mip only.
+//   5. The cvar round-trips.
+bool run_exposure_gate() {
+    const bool ev_ok = std::fabs(exposure_from_ev(0.f) - 1.f) < 1.e-6f
+        && std::fabs(exposure_from_ev(-1.f) - 0.5f) < 1.e-6f
+        && std::fabs(exposure_from_ev(1.f) - 2.f) < 1.e-6f;
+    // Out-of-range EV must clamp to something finite rather than inf.
+    const engine::f32 huge = exposure_from_ev(1000.f);
+    const engine::f32 tiny = exposure_from_ev(-1000.f);
+    const bool clamp_ok = std::isfinite(huge) && huge > 0.f && std::isfinite(tiny) && tiny > 0.f;
+
+    // 2: through ExtractDesc -> extract_visible -> RenderSnapshot.
+    constexpr engine::f32 kProbe = 0.375f;
+    engine::renderer::ExtractDesc desc{};
+    desc.exposure = kProbe;
+    desc.width = 64;
+    desc.height = 64;
+    desc.projection = engine::math::Mat4::perspective(1.f, 1.f, 0.1f, 10.f);
+    desc.view = engine::math::Mat4::identity();
+    engine::Arena arena(64 * 1024);
+    engine::renderer::RenderSnapshot snapshot{};
+    engine::renderer::extract_visible(desc, arena, snapshot, nullptr);
+    const bool plumbed = std::fabs(snapshot.exposure - kProbe) < 1.e-6f;
+
+    // 3: the two composite sites must carry the same number.
+    const engine::renderer::tonemap::Constants tm =
+        engine::renderer::tonemap::make_constants(kProbe);
+    const engine::renderer::taa::Constants ta =
+        engine::renderer::taa::make_constants(64, 64, {}, false, kProbe);
+    const bool paths_agree = std::fabs(tm.params.x - ta.params.w) < 1.e-6f
+        && std::fabs(tm.params.x - kProbe) < 1.e-6f;
+    // The tonemap CBV also carries bloom intensity, which used to be duplicated
+    // as a literal in tonemap.hlsl.
+    const bool intensity_ok =
+        std::fabs(tm.params.y - engine::renderer::bloom::kIntensity) < 1.e-6f;
+
+    // 4: first mip exposes, later mips must not re-expose.
+    const engine::renderer::bloom::Constants first =
+        engine::renderer::bloom::make_downsample_constants(64, 64, true, kProbe);
+    const engine::renderer::bloom::Constants later =
+        engine::renderer::bloom::make_downsample_constants(32, 32, false, kProbe);
+    const bool bloom_once = std::fabs(first.params.y - kProbe) < 1.e-6f
+        && std::fabs(later.params.y - 1.f) < 1.e-6f;
+
+    // 5: the cvar exists, is a float, and reads back.
+    const engine::Cvar* knob = engine::find_cvar("r.exposure");
+    const bool cvar_ok = knob != nullptr && knob->type() == engine::CvarType::Float;
+
+    const bool passed = ev_ok && clamp_ok && plumbed && paths_agree && intensity_ok
+        && bloom_once && cvar_ok;
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Exposure gate: ev(0,-1,1)=%s clamp=%s plumbed=%.3f/%.3f paths_agree=%s "
+        "intensity=%.3f bloom_first=%.3f bloom_later=%.3f cvar=%s (%s)",
+        ev_ok ? "yes" : "no", clamp_ok ? "yes" : "no",
+        static_cast<double>(snapshot.exposure), static_cast<double>(kProbe),
+        paths_agree ? "yes" : "no", static_cast<double>(tm.params.y),
+        static_cast<double>(first.params.y), static_cast<double>(later.params.y),
+        cvar_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path) {
     // 1 + 2: the curve itself.
@@ -4786,6 +4883,10 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         return false;
     }
 
+    if (!run_exposure_gate() && fail_on_gate) {
+        return false;
+    }
+
     auto demo = std::make_unique<ForwardDemo>();
     vs_desc.file_path = shader_path;
     ps_desc.file_path = shader_path;
@@ -5072,6 +5173,11 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     }
     // Applied here, before run_aa_gate, so the gate can assert the knob-aware
     // startup mode rather than only the factory default.
+    // Exposure is demo state for the same reason the AA mode is: the engine has
+    // no opinion on how bright this scene should be. exposure_from_ev clamps, so
+    // an absurd knob value cannot put inf into scene_color.
+    demo->exposure = exposure_from_ev(cv_exposure.as_float());
+
     if (cv_aa.source() != engine::CvarSource::Default) {
         engine::renderer::aa::Mode mode = demo->aa_mode;
         if (engine::renderer::aa::parse_mode(cv_aa.as_string(), mode)) {

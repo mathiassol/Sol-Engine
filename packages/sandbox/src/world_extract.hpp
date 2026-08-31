@@ -33,6 +33,7 @@ struct WorldExtractAssets {
     engine::u32 taa_sample = 0;
     bool taa_reset = true;
     engine::renderer::aa::Mode aa_mode = engine::renderer::aa::kDefault;
+    engine::f32 exposure = 1.f;
     engine::rhi::ITexture* sky_cubemap = nullptr;
     const engine::assets::gpu::GpuMeshStore* meshes = nullptr;
     engine::rhi::ITexture* husky_albedos[kHuskyVariantCount]{};

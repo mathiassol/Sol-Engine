@@ -74,6 +74,10 @@ float4 ps_main(PSInput input) : SV_TARGET {
     float reset = params.x;
     float history_weight = params.y;
     float bloom_intensity = params.z;
+    // Must match tonemap.hlsl exactly: scene scaled, bloom not (it arrives
+    // exposed). History needs no scaling either - it was written post-exposure.
+    // If these two paths disagree, F5 changes image brightness.
+    float exposure = params.w;
     float2 current_uv = uv - jitter.xy;
 
     float3 neighborhood_min = 10000.0;
@@ -87,7 +91,7 @@ float4 ps_main(PSInput input) : SV_TARGET {
         for (int x = -1; x <= 1; x++) {
             float2 offset = float2(x, y);
             float2 sample_uv = current_uv + offset * texel;
-            float3 neighbor = max(0.0, scene_color.SampleLevel(linear_clamp, sample_uv, 0).rgb);
+            float3 neighbor = max(0.0, scene_color.SampleLevel(linear_clamp, sample_uv, 0).rgb) * exposure;
             neighbor += bloom_color.SampleLevel(linear_clamp, sample_uv, 0).rgb * bloom_intensity;
             float w = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
             current += neighbor * w;
