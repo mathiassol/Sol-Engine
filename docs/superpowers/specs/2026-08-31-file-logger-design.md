@@ -1,7 +1,7 @@
 # File logger — a durable copy of the session log
 
 Date: 31 Aug 2026
-Status: approved
+Status: implemented
 
 ENGINE_MAP **Foundation #6** ("File logger (not only stderr)"). Closes audit
 findings **S4** and **S5** from
@@ -56,9 +56,9 @@ filter). Composable and future-proof, but this is one sink with one consumer.
 package ahead of its implementation.
 
 **Chosen: a sink in `core`, installed by the app.** `core` already owns
-`ILogger`. The sink is portable C++ (`<fstream>`, `<filesystem>`, `<ctime>`) so
-it needs no platform backend and adds no package edge — `core` stays at layer 0
-with no dependencies.
+`ILogger`. The sink is portable C++ (`<fstream>`, `<filesystem>`, `<format>` +
+`<chrono>`) so it needs no platform backend and adds no package edge — `core`
+stays at layer 0 with no dependencies.
 
 ## Component
 
@@ -117,17 +117,25 @@ shader descriptor window).
 
 ```
 === Sol Engine session log ===
-started 2026-08-31 14:22:33
+started 2026-08-31 12:54:48 UTC
+times below are seconds since this file was opened
 
-[   0.004][INFO][general] Sandbox starting
-[   0.181][INFO][audio] XAudio2 audio ready
+[   0.001][INFO][general] Sandbox starting
+[   0.060][INFO][audio] XAudio2 audio ready
 ```
 
-Wall-clock time appears once, in the header, via `std::time_t` + `std::strftime`
-— not `std::format`, to avoid a toolchain dependency for one string. Per-line
-timestamps are monotonic seconds from `Clock`, which already exists in `core`.
-Elapsed answers "how far did it get before it died", which is what a crash log
-is read for; the header answers "when".
+Wall-clock time appears once, in the header, in **UTC** via `std::format` +
+`std::chrono`. This changed during implementation: the plan first reached for
+`std::time_t` + `std::strftime`, but `std::localtime` trips C4996 under `/W4`
+and would have broken a warning-clean build, and the alternative — an
+`#ifdef _WIN32` for `localtime_s` — would have put platform code in the one
+package that has none. `<format>` with chrono was compiled at `/W4` on MSVC
+14.51 to confirm zero warnings before being adopted. UTC also compares across
+machines without ambiguity.
+
+Per-line timestamps are monotonic seconds from `Clock`, which already exists in
+`core`. Elapsed answers "how far did it get before it died", which is what a
+crash log is read for; the header answers "when".
 
 **Failure.** If the directory cannot be created or the file cannot be opened,
 `create_file_logger` returns `nullptr` and `install_file_logger` returns false

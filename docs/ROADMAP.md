@@ -47,17 +47,22 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 31 Aug 2026: **23,437 lines** of C++/HLSL in **140 files**, **26
-packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 6,220
-(its `content/shaders/*.hlsl` counts here too); `renderer` is 2,626;
-`rhi-d3d12` is 2,589 — 11% of the engine, down from 13% since the mip builder
-moved to `math` in Renderer #28. `physics-cpu` is 1,292; `core` is 971; `math`
-is 558. `game.exe` reuses sandbox sources (install layout, no extra .cpp).
+Measured 31 Aug 2026: **23,716 lines** of C++/HLSL in **142 files**, **26
+packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 7,089
+— 30% of the engine, and its `content/shaders/*.hlsl` (1,058 lines) counts here
+too; `rhi-d3d12` is 2,998 (13%); `renderer` is 2,948 (12%); `physics-cpu` is
+1,432; `core` is 1,381; `math` is 674. `game.exe` reuses sandbox sources
+(install layout, no extra .cpp).
+
+Every per-package figure above was recounted on 31 Aug and every one had
+drifted — the slot claimed `rhi-d3d12` 2,589 against an actual 2,998 and
+`sandbox` 6,220 against 7,089. The "down from 13%" claim it carried for
+`rhi-d3d12` was wrong in the same pass: the share is 13%, not 11%. Recount this
+slot; do not trust it.
 
 The per-package figures above are **not** machine-checked — only the total,
-file count and package count are, by the `roadmap-audit` invariant. The
-previous set in this slot had drifted well past rounding (it claimed
-`rhi-d3d12` 3,014 and `renderer` 2,867), so recount rather than trust them.
+file count and package count are, by the `roadmap-audit` invariant. That is
+why they drift, and why the paragraph above records what each one actually was.
 
 Roughly 3,000 of `sandbox`'s lines are the gate suite itself, which is compiled
 into `game.exe` too — the player binary carries the tests.
@@ -68,7 +73,7 @@ command in the `ship-feature` skill rather than adjusting it by hand.
 
 | Layer | What is real | What is missing for a general engine |
 |-------|----------------|--------------------------------------|
-| Loop | Phased `Engine::run`, frame arena, F3, `--gates`, async DXC worker, **cvars** (`config.cfg` + `--set`) | No gameplay beyond fly camera + Z/X; no file logger |
+| Loop | Phased `Engine::run`, frame arena, F3, `--gates`, async DXC worker, **cvars** (`config.cfg` + `--set`), **file logger** (`<exe_dir>/logs`, rotated, flushed per line) | No gameplay beyond fly camera + Z/X; no crash dump |
 | GPU | D3D12 RHI, 3-frame flight, mips, **SamplerDesc**, **compute PSO + dispatch**, **cube / array textures**, **GGX PBR**, **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA** (optional F5, default Off, exclusive with SMAA 1x / FXAA), **motion vectors** (RGBA16 UV, object+camera), RGBA16 + ACES, SM 6.0 | UAV textures, BC7 |
 | Graph | Declared reads/writes, transients, **standard frame in renderer** | max 4 refs; no compute **passes** in the graph yet |
 | Scene | Names, hierarchy, `solscene` save/load, prefab extract/instantiate | Streaming, ECS |
@@ -1088,6 +1093,52 @@ state. Batch membership depends on what survived the cull, so it cannot be
 cached across frames as written. The next real ceiling is the O(n x batches)
 linear scan in extract, which is invisible at 512 instances and a handful of
 keys and would want a hash the moment either grows an order of magnitude.
+
+---
+
+## Foundation #6 — file logger (done)
+
+**Why:** `StdoutLogger` was the only `ILogger` in the tree and `set_logger()`
+was never called anywhere — the seam existed with zero consumers. Three facts
+compounded into a shipped game that recorded nothing: `game.exe` is a
+console-subsystem binary whose window closes with the process; `assert_fail`
+logged only when handed a message, so the ~40 bare `ENGINE_ASSERT` sites of 77
+wrote nothing at all; and `std::abort()` discards a buffered stream. The most
+common hard failure left no evidence. Found as S4 and S5 in the 31 Aug audit.
+
+**Choice:** A `FileLogger` in `core` — portable C++, so no platform backend and
+no new package edge. `<exe_dir>/logs/log.txt`, rotating the previous run to
+`log.prev.txt`: bounded at two files with no pruning logic, and it survives the
+case that matters, where the player relaunches after a crash and would
+otherwise overwrite the evidence. Tees to stderr, so console behaviour is
+unchanged. **Flushes every line** — the record worth keeping is the one written
+immediately before `abort()`, and logging here is startup- and event-driven, so
+the cost is nil. Header carries wall-clock UTC once; each line carries monotonic
+seconds, which answers "how far did it get".
+
+`install_file_logger()` owns the sink in a function-local static rather than
+handing it back: `main()` is the process's one exception boundary and its
+`catch` handlers log *after* `run_app()` returns, so a caller-owned sink would
+be logged through after destruction.
+
+Installed right after `create_platform()` — the earliest point the executable
+directory is known — and the start banner moved after it so the banner is the
+file's first record. **Not installed under `--gates`**: two gate runs would push
+a real crash log out of both files, and gates run constantly during
+development. An unwritable directory logs a warning and continues on stderr,
+which is what a `C:\Program Files` install hits.
+
+**Gate (met):** `File log gate: created=yes header=yes lines=yes rotated=yes
+prev_intact=yes fresh=yes unwritable_rejected=yes (pass)`. Because gates mode
+installs no sink, the gate drives `create_file_logger` directly against a temp
+directory and reads every field back off disk — the same shape as
+`run_pak_gate`'s synthetic pak. Verified beyond the gate by killing a live
+session with no clean shutdown and confirming the log survived intact, which is
+the per-line flush claim tested directly.
+
+**Do not (still):** `%LOCALAPPDATA%` (Build #7 — `default_log_directory()` is
+the single function that moves), minidumps (Foundation #7), level filtering,
+per-channel files, async writing.
 
 ---
 

@@ -55,7 +55,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 | 3 | Phased `Engine::run` (poll → fixed → update → extract → render) | **Done** | |
 | 4 | `--gates` + GPU debug layer as the stability method | **Done** | |
 | 5 | CPU profiler scopes + F3 overlay slots | **Done** | |
-| 6 | File logger (not only stderr) | **Ready** | |
+| 6 | File logger (not only stderr) | **Done** | |
 | 7 | Crash dump / minidump on unhandled exception | Later | Foundation #6 (somewhere to write the dump). App-data can be `%LOCALAPPDATA%/Sol` until Build #7. |
 | 8 | Config / cvars (named knobs without recompile) | **Done** | |
 | 9 | Deterministic fixed-step gameplay clock (already sketched; prove it with a sim) | **Done** | |
