@@ -12,8 +12,10 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
-; C++ formatting proper is owned by .clang-format (LLVM base, 4-space indent,
-; 100-column limit). Keep the two in agreement.
+; Indent width and column limit match .clang-format, but that file is
+; DESCRIPTIVE ONLY - the tree is not formatter-clean and must not be
+; bulk-reformatted. See the header of .clang-format for the measurement, and
+; .claude/rules/cpp-conventions.md for the rule.
 [*.{cpp,hpp,h,hlsl,hlsli}]
 indent_size = 4
 max_line_length = 100

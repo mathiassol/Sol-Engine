@@ -1,3 +1,22 @@
+# DESCRIPTIVE, NOT ENFORCED. Read this before running the formatter.
+#
+# This file is a starting point for a *new* file, so it lands near the house
+# style. It does not describe the existing tree and nothing checks it.
+#
+# Do not bulk-reformat. Measured 31 Aug 2026 with clang-format 20.1.8: even with
+# the settings below tuned toward the house style, 108 of 141 files and 2,012
+# sites still differ. The tree's formatting is hand-tuned per site - aligned
+# `case` returns, line breaks chosen for readability, grouped initialiser lists -
+# and a formatter destroys that information rather than normalising it. Running
+# clang-format over an existing file produces a large diff that buries whatever
+# you came to change, so format the lines you touch, by hand, to match what is
+# around them.
+#
+# Settings below the base style were chosen by measuring the tree, not by
+# preference: BreakBeforeBinaryOperators and AlignAfterOpenBracket each cut
+# divergence materially (2,885 -> 2,012 sites together). SpacesBeforeTrailingComments: 2
+# was tried and rejected - it made 30 more files diverge, because the tree uses
+# one space.
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 100
@@ -6,3 +25,10 @@ AllowShortFunctionsOnASingleLine: Inline
 SortIncludes: CaseInsensitive
 PointerAlignment: Left
 ReferenceAlignment: Left
+
+# Operators lead the continuation line: `... \n || cond` not `... || \n cond`.
+BreakBeforeBinaryOperators: NonAssignment
+# Continuation indents by one level rather than aligning to the open bracket.
+AlignAfterOpenBracket: DontAlign
+# `case LogLevel::Info: return "INFO";` stays on one line.
+AllowShortCaseLabelsOnASingleLine: true

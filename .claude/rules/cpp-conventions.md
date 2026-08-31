@@ -17,6 +17,14 @@ From [Philosophy.md](../../Philosophy.md)'s Code section and
 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)'s conventions — applies to
 every package.
 
+- **Never run `clang-format` over an existing file, and never bulk-reformat.**
+  `.clang-format` is descriptive, not enforced: it exists so a *new* file starts
+  near the house style. It does not describe the tree and nothing checks it —
+  measured 31 Aug 2026, 108 of 141 files and 2,012 sites diverge even with the
+  config tuned toward house style. The formatting is hand-tuned per site
+  (aligned `case` returns, breaks chosen for readability, grouped initialiser
+  lists), so the formatter destroys information rather than normalising it.
+  Match the lines around the ones you touch, by hand.
 - RAII everywhere. No manual cleanup that a destructor could do.
 - Prefer composition over inheritance; prefer data over objects.
 - Ownership is explicit: `std::unique_ptr` for modules, injected at startup.
