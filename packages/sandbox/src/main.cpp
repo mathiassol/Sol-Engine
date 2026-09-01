@@ -2544,7 +2544,7 @@ bool run_hdr_gate(const engine::scene::World& world,
     return passed;
 }
 
-bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher) {
+[[maybe_unused]] bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher) {
     engine::Clock clock;
     watcher.request_compile();
 
@@ -4807,7 +4807,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     engine::log(engine::LogLevel::Info, engine::LogChannel::Render, "Shader hot-reload applied");
 }
 
-bool run_graph_gate() {
+[[maybe_unused]] bool run_graph_gate() {
     bool ok = true;
 
     {
@@ -4957,7 +4957,7 @@ bool run_graph_gate() {
 // produced 1,023 D3D12 debug-layer errors (CopyDescriptorsSimple reading a
 // CPU-write-only heap); the model is the safe way to hold the same line, and
 // the divergence is recorded in the ROADMAP as unfinished business.
-bool run_frame_ring_budget_gate(const engine::rhi::IDevice& device) {
+[[maybe_unused]] bool run_frame_ring_budget_gate(const engine::rhi::IDevice& device) {
     const engine::rhi::FrameRingStats ring = device.frame_ring_stats();
 
     // alloc_frame_memory rounds every request up to kBufferAlign (256).
@@ -5017,7 +5017,7 @@ bool run_frame_ring_budget_gate(const engine::rhi::IDevice& device) {
     return passed;
 }
 
-bool run_swap_gate() {
+[[maybe_unused]] bool run_swap_gate() {
     engine::renderer::RenderGraph probe;
     engine::renderer::StandardFrameDesc desc{};
     desc.log_ready = false;
@@ -5029,7 +5029,7 @@ bool run_swap_gate() {
     return compiled;
 }
 
-bool setup_render_graph(engine::Engine& app, SandboxState& state) {
+[[maybe_unused]] bool setup_render_graph(engine::Engine& app, SandboxState& state) {
     engine::renderer::StandardFrameDesc desc{};
     desc.draw_debug_lines = [&state](engine::renderer::PassContext& ctx) {
         state.debug_lines.draw(ctx.cmd, ctx.snapshot.view, ctx.snapshot.projection);
@@ -5040,7 +5040,7 @@ bool setup_render_graph(engine::Engine& app, SandboxState& state) {
     return engine::renderer::setup_standard_frame(app.render_graph(), std::move(desc));
 }
 
-bool setup_stats_overlay(engine::Engine& app, engine::assets::IAssetLoader& loader,
+[[maybe_unused]] bool setup_stats_overlay(engine::Engine& app, engine::assets::IAssetLoader& loader,
     engine::shaders::IShaderCompiler& compiler, SandboxState& state) {
     auto* device = app.device();
     if (!device) return false;
@@ -5059,7 +5059,7 @@ bool setup_stats_overlay(engine::Engine& app, engine::assets::IAssetLoader& load
     return true;
 }
 
-bool setup_debug_lines(engine::Engine& app, engine::assets::IAssetLoader& loader,
+[[maybe_unused]] bool setup_debug_lines(engine::Engine& app, engine::assets::IAssetLoader& loader,
     engine::shaders::IShaderCompiler& compiler, SandboxState& state) {
     auto* device = app.device();
     if (!device) return false;
@@ -5078,7 +5078,7 @@ bool setup_debug_lines(engine::Engine& app, engine::assets::IAssetLoader& loader
     return true;
 }
 
-bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loader,
+[[maybe_unused]] bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loader,
     engine::shaders::IShaderCompiler& compiler, SandboxState& state, bool fail_on_gate) {
     auto* device = app.device();
     if (!device) return false;
