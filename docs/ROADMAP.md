@@ -47,12 +47,14 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 1 Sep 2026: **24,544 lines** of C++/HLSL in **144 files**, **26
-packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 7,239
-— 30% of the engine, and its `content/shaders/*.hlsl` (1,040 lines) counts here
-too; `renderer` is 3,028 (13%); `rhi-d3d12` is 3,016 (12%); `physics-cpu` is
-1,435; `core` is 1,382; `math` is 674. `game.exe` reuses sandbox sources
-(install layout, no extra .cpp).
+Measured 1 Sep 2026: **24,914 lines** of C++/HLSL in **152 files**, **26
+packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is still
+the largest at 7,609 — 31% — but it is no longer one file: `main.cpp` is 1,351
+lines, the seven `gates/gates_*.cpp` hold the 72 gates, and its
+`content/shaders/*.hlsl` (1,040 lines) counts here too. `renderer` is 3,028
+(12%); `rhi-d3d12` is 3,016 (12%); `physics-cpu` is 1,435; `core` is 1,382;
+`math` is 674. `game.exe` reuses sandbox sources (install layout, no extra
+.cpp).
 
 Every per-package figure above was recounted on 31 Aug and every one had
 drifted — the slot claimed `rhi-d3d12` 2,589 against an actual 2,998 and

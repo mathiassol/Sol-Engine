@@ -133,7 +133,15 @@ skips software adapters). Run it alongside the gates before shipping.
 ### What a gate is
 
 There is no test framework. A gate is a plain function in
-`packages/sandbox/src/main.cpp`:
+`packages/sandbox/src/gates/gates_<domain>.cpp`, declared in
+`gates/gates.hpp`, and called from the sequence in `main.cpp`. Domains are
+`core`, `platform`, `rhi`, `assets`, `scene`, `physics`, `renderer` — pick the
+one the gate is *about*, not the one it happens to allocate from. Helpers only
+that file needs are `static`; anything `main.cpp` also uses goes in
+`sandbox_common.hpp`. All 72 lived in `main.cpp` until Sep 2026, which made it
+26% of the engine (analizeMax A4).
+
+The shape is unchanged:
 
 ```cpp
 bool run_<name>_gate(/* the things it needs */) {

@@ -363,4 +363,24 @@ bool build_fullscreen_pipeline(engine::rhi::IDevice& device,
 
 std::string read_text_file(const std::filesystem::path& path);
 
+// Colour space: sRGB decode on the way in, sRGB encode on the way out.
+//
+// Four independent assertions, all against numbers derived from IEC 61966-2-1
+// rather than from this code:
+//
+//   1. srgb_to_linear(0.5) == 0.214041. The midpoint anchor.
+//   2. linear_to_srgb(0.001) == 0.01292 (12.92 * 0.001). A pow(1/2.2)
+//      approximation gives 0.0195, so only the piecewise curve passes. This is
+//      the assertion that discriminates.
+//   3. A 2x2 half-black half-white image, mipped. Averaging encoded bytes
+//      gives 127; averaging light gives 0.5 linear, which encodes to 188.
+//      Alpha must still average to 127 - sRGB formats leave alpha alone, and
+//      gamma-correcting it would corrupt it.
+//   4. The HLSL curve matches the C++ one, read back from a compute dispatch.
+//      The curve exists twice by necessity; this is what keeps them in step.
+// EV stops -> linear multiplier. Clamped because a cvar is user input: 2^40 is
+// inf in f32 and would poison scene_color, and the exposure gate asserts the
+// clamp rather than trusting the range.
+engine::f32 exposure_from_ev(engine::f32 ev);
+
 } // namespace sandbox

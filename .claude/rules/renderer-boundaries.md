@@ -49,7 +49,9 @@ declines.
 1. **Shader** → `packages/sandbox/content/shaders/<name>.hlsl`. Mounted as
    `/shaders/<name>.hlsl`. (Engine shaders living under the sandbox's content
    root is a known wart — do not "fix" it in passing.)
-2. **Pipeline** → `packages/sandbox/src/main.cpp`: a `k<Name>Shader` path
+2. **Pipeline** → `packages/sandbox/src/sandbox_common.hpp` for the
+   `k<Name>Shader` path constant and the `make_<name>_pipeline_desc()`, then
+   `packages/sandbox/src/main.cpp`: a `k<Name>Shader` path
    constant, a `make_<name>_pipeline_desc()`, and a compile + create block
    alongside the existing ones. Pipelines are created by the app, not the
    renderer. Hand the new pipeline to `ForwardDemo::adopt`, which stores the
@@ -68,8 +70,10 @@ declines.
    `{Graphics, Copy}` — there is no compute pass kind.
 5. **Record** → declare the recorder in `render_snapshot.hpp`, define it in
    `render_graph.cpp`.
-6. **Gate** → a `run_<name>_gate()` in `main.cpp` (see the gate protocol in
-   CLAUDE.md), then run with `ENGINE_GPU_DEBUG=1`.
+6. **Gate** → a `run_<name>_gate()` in
+   `packages/sandbox/src/gates/gates_renderer.cpp`, declared in
+   `gates/gates.hpp` and called from the sequence in `main.cpp` (see the gate
+   protocol in CLAUDE.md), then run with `ENGINE_GPU_DEBUG=1`.
 
 Budget note: pass constants come from a **1 MiB frame ring** (per
 frame-in-flight slot). Since instanced draws they are per *batch* (1,024 bytes
