@@ -1,0 +1,84 @@
+name: Release
+
+# A tag produces a downloadable build. Build #15.
+#
+# workflow_dispatch is here so the whole path can be rehearsed without tagging —
+# tags are permanent and a broken first release is awkward to withdraw. Rehearse,
+# download the artifact, run it on a machine with a GPU, then tag.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Only what creating a release needs. Nothing here writes to the repository.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows x64 zip
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The ci-build preset deliberately sets no generator, same as ci.yml: the
+      # dev box pins "Visual Studio 18 2026" and the runner ships whatever it
+      # ships. A release must not be the one job that breaks on an image update.
+      - name: Configure
+        run: cmake --preset ci-build
+
+      - name: Build Release game
+        run: cmake --build --preset ci-release-game
+
+      # Source-only, no GPU. Cheap, and a release built from a tree that fails
+      # its own invariants is not one to publish.
+      - name: Invariants
+        shell: pwsh
+        run: pwsh -NoProfile -File tools/check-invariants.ps1
+
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -C Release
+
+      # The gate before upload. Two things go wrong quietly: the CRT setting
+      # reverts and game.exe silently needs the Visual C++ redistributable again
+      # — which still runs on every developer machine and fails only for the
+      # player — or an install() rule moves and dxcompiler.dll stops travelling,
+      # which fails at first shader compile rather than at launch.
+      - name: Check the archive is self-contained
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem build/package -Filter *.zip | Select-Object -First 1
+          pwsh -NoProfile -File tools/check-shipped-zip.ps1 -Zip $zip.FullName
+
+      # NOTE: `--gates` is deliberately not run here, and adding it will not
+      # work — the same reason ci.yml gives. The D3D12 backend skips any adapter
+      # flagged DXGI_ADAPTER_FLAG_SOFTWARE, and a hosted runner has no hardware
+      # D3D12 adapter, so device creation fails for environmental reasons.
+      #
+      # Say the consequence plainly rather than implying more coverage than
+      # exists: a release is only as gate-verified as the last local `--gates`
+      # run on the commit it was built from. Run them before you tag.
+
+      - name: Upload the archive to the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sol-win64
+          path: build/package/*.zip
+          if-no-files-found: error
+
+      # Tag only. A workflow_dispatch rehearsal stops at the artifact above,
+      # which is the point of rehearsing.
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-ChildItem build/package -Filter *.zip | Select-Object -First 1
+          gh release create "$env:GITHUB_REF_NAME" $zip.FullName `
+            --title "$env:GITHUB_REF_NAME" `
+            --generate-notes

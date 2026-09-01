@@ -123,8 +123,25 @@ cpack --config build/CPackConfig.cmake -C Release
 directory containing `game.exe`, `content/`, `debug/`, `content.pak`,
 `dxcompiler.dll`, `dxil.dll` and `LICENSE` — and nothing else: no `.pdb`, no
 import libraries, and **no Visual C++ redistributable**, because the CRT is
-linked statically. A player unzips it and runs `game.exe`. Pushing a `v*` tag
-does all of this in CI and attaches the zip to a GitHub Release.
+linked statically. A player unzips it and runs `game.exe`.
+
+**Cut a release** — push a `v*` tag and
+[`release.yml`](.github/workflows/release.yml) configures, builds, runs the
+invariants, packs, checks the archive is self-contained, and attaches it to a
+GitHub Release:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Rehearse first with **Run workflow** on the Actions tab — a `workflow_dispatch`
+run does everything except publish, and leaves the zip as a run artifact. Tags
+are permanent; a broken first release is awkward to withdraw.
+
+Run `--gates` locally before you tag. CI cannot: a hosted runner has no hardware
+D3D12 adapter, so a release is only as gate-verified as the last local run on
+that commit.
 
 ## Controls
 
