@@ -18,7 +18,9 @@ The sandbox is the proving ground, not the product.
 - Windows 10/11 SDK (ships with that workload) — supplies `dxcompiler.dll` +
   `dxil.dll`. Configure fails with a `FATAL_ERROR` without it.
 - [CMake 4.2+](https://cmake.org/download/) (or VS bundled CMake) — the
-  `Visual Studio 18 2026` generator was added in CMake 4.2
+  `Visual Studio 18 2026` generator was added in CMake 4.2. The project's own
+  floor is `cmake_minimum_required(VERSION 3.24)`, so an older CMake works with
+  a different generator; 4.2 is what the *documented* build needs.
 - C++20 (`/std:c++20`, no compiler extensions) — set by the build
 - Git
 - [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)

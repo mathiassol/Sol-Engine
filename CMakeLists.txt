@@ -1,4 +1,37 @@
+# 3.24 is what the CMake code in this repository actually needs. README asks for
+# 4.2+ because that is where the "Visual Studio 18 2026" generator was added, and
+# that generator is the documented build. Another generator works on older CMake;
+# these two numbers answer different questions and both are correct.
 cmake_minimum_required(VERSION 3.24)
+
+# Windows MAX_PATH. This build generates paths up to 119 characters below the
+# source directory, and CMake's try-compile scratch directories go deeper still,
+# so a source path much past 140 characters pushes MSBuild over the
+# 260-character limit. What the reader then sees is
+# `MSB4018 ... exceeds the OS max path limit` from inside a generated
+# cmTC_*.vcxproj, followed by "No CMAKE_CXX_COMPILER could be found" — two errors
+# that name nothing about this project and send them looking in the wrong place.
+# Measured 1 Sep 2026: clean at a 42-character root, dead at 145.
+#
+# This runs BEFORE project(), deliberately. The try-compile that blows up *is*
+# project()'s compiler check, so a guard placed after it never prints — which is
+# how the first version of this block failed its own control test. That is also
+# why the test is CMAKE_HOST_WIN32 and not WIN32: WIN32 is not set until
+# project() has run.
+#
+# A warning, not a FATAL_ERROR: a machine with long paths enabled configures fine
+# and must not be blocked.
+if(CMAKE_HOST_WIN32)
+    string(LENGTH "${CMAKE_CURRENT_SOURCE_DIR}" ENGINE_SOURCE_PATH_LENGTH)
+    if(ENGINE_SOURCE_PATH_LENGTH GREATER 140)
+        message(WARNING
+            "Source path is ${ENGINE_SOURCE_PATH_LENGTH} characters, past the ~140 this build "
+            "needs to stay inside Windows' 260-character MAX_PATH limit. Configure or build is "
+            "likely to fail with an MSB4018 \"exceeds the OS max path limit\" error that does "
+            "not mention this project. Clone somewhere shorter, or enable LongPathsEnabled.")
+    endif()
+    unset(ENGINE_SOURCE_PATH_LENGTH)
+endif()
 
 project(Engine
     VERSION 0.1.0
