@@ -112,6 +112,20 @@ cmake --install build --config Release --prefix dist
 .\dist\game.exe
 ```
 
+**Ship a build** — the same layout, zipped:
+
+```powershell
+cmake --build --preset release-game
+cpack --config build/CPackConfig.cmake -C Release
+```
+
+`build/package/Sol-<version>-win64.zip`, about 11 MB. It unzips to one
+directory containing `game.exe`, `content/`, `debug/`, `content.pak`,
+`dxcompiler.dll`, `dxil.dll` and `LICENSE` — and nothing else: no `.pdb`, no
+import libraries, and **no Visual C++ redistributable**, because the CRT is
+linked statically. A player unzips it and runs `game.exe`. Pushing a `v*` tag
+does all of this in CI and attaches the zip to a GitHub Release.
+
 ## Controls
 
 | Key | Gamepad | Action |

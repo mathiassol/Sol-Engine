@@ -113,3 +113,40 @@ option(ENGINE_BUILD_GAME "Build player game.exe (install layout)" ON)
 if(ENGINE_BUILD_GAME)
     add_subdirectory(packages/game)
 endif()
+
+# ── Packaging (Build #8) ──────────────────────────────────────────────────────
+#
+# CPack wraps the install layout that `cmake --install` already produces - exe,
+# content/, debug/, content.pak, the DXC pair, LICENSE. It deliberately does not
+# restate what ships: the install() rules are the single definition, and CPack
+# reads them. Adding a file here instead of to an install() rule would put it in
+# the zip and not in `cmake --install --prefix dist`, which is how the two drift.
+#
+# ZIP only. Build #8 reads "Zip / installer"; an NSIS or WiX installer buys
+# nothing while the game is a folder you unzip, and Build #19 (delta patching,
+# Far) is the row that would need one.
+#
+# Multi-config generator, so the configuration is chosen at pack time:
+#     cmake --build --preset release-game
+#     cpack --config build/CPackConfig.cmake -C Release
+#
+# No package preset: packagePresets needs schema version 6, which needs CMake
+# 3.25, and raising CMakePresets.json's version would lock out every CMake
+# between this project's 3.24 floor and 3.25 from *all* presets - a real cost
+# for a saved keystroke. The install() rules are already the single source of
+# truth, so nothing is duplicated by spelling the cpack command out.
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME "Sol")
+set(CPACK_PACKAGE_VENDOR "Sol Engine")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "Sol-${PROJECT_VERSION}-win64")
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/package")
+# 1, so unzipping produces one Sol-<version>-win64/ directory rather than
+# spilling the exe and three content folders into whatever directory you are in.
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 1)
+set(CPACK_VERBATIM_VARIABLES TRUE)
+
+# MIT, and the binary travels without the repository.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE" DESTINATION .)
+
+include(CPack)
