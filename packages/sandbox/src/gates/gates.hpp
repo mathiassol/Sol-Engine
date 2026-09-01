@@ -135,6 +135,8 @@ bool run_motion_gate(const ForwardDemo& demo);
 
 bool run_pcf_gate();
 
+bool run_depth_convention_gate(const engine::rhi::IDevice* device);
+
 bool run_compute_pass_gate();
 
 bool run_graph_gate();

@@ -113,9 +113,12 @@ math::Mat4 GameCamera::view() const {
     return math::Mat4::look_at(position_, look_at_, {0.f, 1.f, 0.f});
 }
 
-math::Mat4 GameCamera::projection(f32 aspect) const {
+math::Mat4 GameCamera::projection(f32 aspect, bool reversed_z) const {
     const f32 a = aspect > 0.f ? aspect : 1.f;
-    return math::Mat4::perspective(math::radians(desc.fov_y_deg), a, desc.near_z, desc.far_z);
+    const f32 fov = math::radians(desc.fov_y_deg);
+    return reversed_z
+        ? math::Mat4::perspective_reversed_z(fov, a, desc.near_z, desc.far_z)
+        : math::Mat4::perspective(fov, a, desc.near_z, desc.far_z);
 }
 
 } // namespace engine::gameplay

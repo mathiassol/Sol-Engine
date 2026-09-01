@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/core/types.hpp>
+#include <engine/rhi/rhi.hpp>
 
 #include <span>
 #include <string_view>
@@ -77,11 +78,14 @@ inline SamplerDesc point_clamp_sampler() {
     return desc;
 }
 
-inline SamplerDesc shadow_comparison_sampler() {
+// Takes the convention rather than hard-coding a direction: a shadow sampler
+// comparing the wrong way is a fully-lit or fully-shadowed scene, with nothing
+// logged.
+inline SamplerDesc shadow_comparison_sampler(DepthConvention convention) {
     SamplerDesc desc{};
     desc.filter = FilterMode::Linear;
     desc.address = AddressMode::Border;
-    desc.compare = CompareOp::Less;
+    desc.compare = convention == DepthConvention::Reversed ? CompareOp::Greater : CompareOp::Less;
     return desc;
 }
 
@@ -99,7 +103,30 @@ enum class VertexSemantic : u8 { Position, Normal, Color, TexCoord };
 enum class VertexFormat : u8 { Float2, Float3, Float4 };
 enum class CullMode : u8 { None, Back, Front };
 enum class BlendMode : u8 { Opaque, Alpha };
-enum class DepthTest : u8 { Disabled, Less, LessEqual, Equal };
+// Greater/GreaterEqual are the reversed-Z half. Which one a pipeline gets is
+// derived from IDevice::depth_convention(), never chosen per pipeline - see
+// DepthConvention in rhi.hpp.
+enum class DepthTest : u8 { Disabled, Less, LessEqual, Equal, Greater, GreaterEqual };
+
+// What a pass means is "the closer fragment wins"; *which* compare implements
+// that depends on the convention. Say the intent and derive the mechanism -
+// writing DepthTest::Less at a call site hard-codes Standard, and that is how
+// five-of-six reversed-Z happens.
+inline DepthTest depth_closer(DepthConvention convention) {
+    return convention == DepthConvention::Reversed ? DepthTest::Greater : DepthTest::Less;
+}
+
+inline DepthTest depth_closer_or_equal(DepthConvention convention) {
+    return convention == DepthConvention::Reversed ? DepthTest::GreaterEqual
+                                                   : DepthTest::LessEqual;
+}
+
+// Shadow-map slope bias pushes samples *away* from the light, and which sign
+// that is flips with the depth direction. A positive bias under reversed-Z
+// pulls them toward it, which is shadow acne with no error.
+inline f32 depth_bias_for(f32 magnitude, DepthConvention convention) {
+    return convention == DepthConvention::Reversed ? -magnitude : magnitude;
+}
 enum class PrimitiveTopology : u8 { TriangleList, LineList };
 
 struct VertexAttribute {

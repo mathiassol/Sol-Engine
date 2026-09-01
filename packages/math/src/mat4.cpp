@@ -74,6 +74,15 @@ Mat4 Mat4::perspective(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z) {
     return m;
 }
 
+Mat4 Mat4::perspective_reversed_z(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z) {
+    // Swapping the planes is the whole of reversed-Z: the same projection with
+    // near and far exchanged maps near to 1 and far to 0. Delegating rather than
+    // duplicating means the three NaN guards above cover this too, which is what
+    // they were written for - a degenerate frustum here poisons shadow fitting
+    // exactly the same way.
+    return perspective(fov_y_radians, aspect, far_z, near_z);
+}
+
 Mat4 Mat4::ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z) {
     // Same reasoning as perspective(): a degenerate extent must not become a
     // NaN sun view-projection. The shadow pass fits this to visible bounds

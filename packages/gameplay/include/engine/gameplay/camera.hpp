@@ -42,7 +42,10 @@ public:
     math::Vec3 forward() const;
     math::Vec3 horizontal_forward() const;
     math::Mat4 view() const;
-    math::Mat4 projection(f32 aspect) const;
+    // `reversed_z` rather than an rhi type: gameplay links core, math and
+    // physics, and a camera has no business knowing a GPU exists. The caller
+    // has the device and passes what it says.
+    math::Mat4 projection(f32 aspect, bool reversed_z = false) const;
 
 private:
     void clamp_pitch();

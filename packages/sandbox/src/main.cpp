@@ -339,7 +339,8 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
 
     device.wait_idle();
     auto pipeline = device.create_graphics_pipeline(
-        make_forward_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
+        make_forward_pipeline_desc(
+            vs_bytecode.data, ps_bytecode.data, device.depth_convention()));
     if (!pipeline) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
             "Shader hot-reload pipeline creation failed");
@@ -541,7 +542,8 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     ps_desc.file_path = shader_path;
     {
         auto p = device->create_graphics_pipeline(
-            make_forward_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
+            make_forward_pipeline_desc(
+                vs_bytecode.data, ps_bytecode.data, device->depth_convention()));
         if (!p) {
             engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
                 "Forward pipeline creation failed");
@@ -560,7 +562,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     }
     {
         auto p = device->create_graphics_pipeline(
-            make_shadow_pipeline_desc(shadow_bytecode.data));
+            make_shadow_pipeline_desc(shadow_bytecode.data, device->depth_convention()));
         if (!p) {
             engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
                 "Shadow pipeline creation failed");
@@ -1140,13 +1142,17 @@ int run_app(int argc, char** argv) {
         const engine::u32 height = std::max(snapshot.height, 1u);
         const engine::f32 aspect
             = static_cast<engine::f32>(width) / static_cast<engine::f32>(height);
+        // From the device, so the projection cannot disagree with the depth
+        // clear and compare the backend is using.
+        const bool reversed_z = app.device() != nullptr
+            && app.device()->depth_convention() == engine::rhi::DepthConvention::Reversed;
         const bool use_game = state.walk_mode && state.player.spawned();
         if (use_game) {
             world.camera.view = state.game_camera.view();
-            world.camera.projection = state.game_camera.projection(aspect);
+            world.camera.projection = state.game_camera.projection(aspect, reversed_z);
         } else {
             world.camera.view = state.forward->camera.view();
-            world.camera.projection = state.forward->camera.projection(aspect);
+            world.camera.projection = state.forward->camera.projection(aspect, reversed_z);
         }
         if (app.device()) {
             ensure_taa_history(*app.device(), app.render_graph(), *state.forward, width, height);
@@ -1178,6 +1184,11 @@ int run_app(int argc, char** argv) {
     config.window.width  = 1280;
     config.window.height = 720;
     config.device.preferred_api = engine::rhi::GraphicsAPI::D3D12;
+    // Reversed-Z: near maps to 1, far to 0, which is where D32_FLOAT keeps its
+    // precision. One value - the projection, the depth clear, every depth
+    // compare, the shadow sampler and the shadow bias sign all derive from it,
+    // and run_depth_convention_gate fails if any one of them does not.
+    config.device.depth_convention = engine::rhi::DepthConvention::Reversed;
 
     if (!app.init(config)) {
         return 1;
@@ -1306,6 +1317,9 @@ int run_app(int argc, char** argv) {
     // Two statements, not `a() && b() && gates_ok`: && short-circuits, so a
     // failing graph gate used to skip the swap gate entirely and a red run
     // under-reported. Every other gate in this sequence uses this form.
+    if (!run_depth_convention_gate(app.device())) {
+        gates_ok = false;
+    }
     if (!run_graph_gate()) {
         gates_ok = false;
     }

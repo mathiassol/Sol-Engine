@@ -191,7 +191,8 @@ bool ensure_taa_history(engine::rhi::IDevice& device, engine::renderer::RenderGr
 }
 
 engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -205,10 +206,10 @@ engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     desc.uniform_buffer_count = 1;
     desc.sampled_texture_count = 7;
     desc.samplers[0] = engine::rhi::linear_wrap_sampler();
-    desc.samplers[1] = engine::rhi::shadow_comparison_sampler();
+    desc.samplers[1] = engine::rhi::shadow_comparison_sampler(convention);
     desc.samplers[2] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 3;
-    desc.depth = engine::rhi::DepthTest::Less;
+    desc.depth = engine::rhi::depth_closer(convention);
     desc.cull = engine::rhi::CullMode::Back;
     desc.blend = engine::rhi::BlendMode::Opaque;
     desc.color_format = engine::rhi::Format::RGBA16_FLOAT;
@@ -219,19 +220,20 @@ engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     return desc;
 }
 
-engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(std::span<const engine::u8> vs) {
+engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(
+    std::span<const engine::u8> vs, engine::rhi::DepthConvention convention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.attributes[0] = {engine::rhi::VertexSemantic::Position, 0,
         engine::rhi::VertexFormat::Float3, 0};
     desc.attribute_count = 1;
     desc.uniform_buffer_count = 1;
-    desc.depth = engine::rhi::DepthTest::Less;
+    desc.depth = engine::rhi::depth_closer(convention);
     desc.cull = engine::rhi::CullMode::Front;
     desc.blend = engine::rhi::BlendMode::Opaque;
     desc.color_format = engine::rhi::Format::Unknown;
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
-    desc.slope_scaled_depth_bias = 1.5f;
+    desc.slope_scaled_depth_bias = engine::rhi::depth_bias_for(1.5f, convention);
     // One root SRV (t0, space1) holding the frame's per-instance array.
     desc.storage_buffer_count = 1;
     desc.debug_name = "shadow";
@@ -239,7 +241,8 @@ engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(std::span<const engi
 }
 
 engine::rhi::GraphicsPipelineDesc make_tonemap_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -256,7 +259,8 @@ engine::rhi::GraphicsPipelineDesc make_tonemap_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_sky_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -264,7 +268,7 @@ engine::rhi::GraphicsPipelineDesc make_sky_pipeline_desc(
     desc.sampled_texture_count = 1;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
-    desc.depth = engine::rhi::DepthTest::LessEqual;
+    desc.depth = engine::rhi::depth_closer_or_equal(convention);
     desc.depth_write = false;
     desc.cull = engine::rhi::CullMode::None;
     desc.blend = engine::rhi::BlendMode::Opaque;
@@ -275,7 +279,8 @@ engine::rhi::GraphicsPipelineDesc make_sky_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_bloom_downsample_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -292,7 +297,8 @@ engine::rhi::GraphicsPipelineDesc make_bloom_downsample_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_bloom_upsample_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -309,7 +315,8 @@ engine::rhi::GraphicsPipelineDesc make_bloom_upsample_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_fxaa_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -326,23 +333,26 @@ engine::rhi::GraphicsPipelineDesc make_fxaa_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_smaa_edge_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
-    engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention) {
+    engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps, convention);
     desc.debug_name = "smaa_edge";
     return desc;
 }
 
 engine::rhi::GraphicsPipelineDesc make_smaa_weights_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
-    engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention) {
+    engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps, convention);
     desc.samplers[0] = engine::rhi::point_clamp_sampler();
     desc.debug_name = "smaa_weights";
     return desc;
 }
 
 engine::rhi::GraphicsPipelineDesc make_smaa_blend_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
-    engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention) {
+    engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps, convention);
     desc.sampled_texture_count = 2;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.samplers[1] = engine::rhi::point_clamp_sampler();
@@ -352,7 +362,8 @@ engine::rhi::GraphicsPipelineDesc make_smaa_blend_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_motion_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -377,7 +388,8 @@ engine::rhi::GraphicsPipelineDesc make_motion_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_taa_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -395,7 +407,8 @@ engine::rhi::GraphicsPipelineDesc make_taa_pipeline_desc(
 }
 
 engine::rhi::GraphicsPipelineDesc make_tonemap_aces_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention) {
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
@@ -466,7 +479,8 @@ bool build_fullscreen_pipeline(engine::rhi::IDevice& device,
         return false;
     }
 
-    out = device.create_graphics_pipeline(make_desc(vs_bytecode.data, ps_bytecode.data));
+    out = device.create_graphics_pipeline(
+        make_desc(vs_bytecode.data, ps_bytecode.data, device.depth_convention()));
     if (!out) {
         std::snprintf(label, sizeof(label), "%s pipeline creation failed", name);
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render, label);

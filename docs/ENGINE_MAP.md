@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-83 Done · 42 Ready · 98 Later · 60 Far.
+84 Done · 41 Ready · 98 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -124,7 +124,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 
 Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 
-*8 done · 5 ready · 23 rows.*
+*9 done · 4 ready · 23 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -136,7 +136,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 6 | **Implement** compute on D3D12 (PSO + dispatch that works) | **Done** |  |
 | 7 | Cube maps + array textures on `TextureDesc` | **Done** |  |
 | 14 | Instanced draws + root SRV structured buffers (per-instance data) | **Done** |  |
-| 15 | Reversed-Z depth on the contract (near-plane precision, one flag) | **Ready** |  |
+| 15 | Reversed-Z depth on the contract (near-plane precision, one flag) | **Done** |  |
 | 16 | PSO disk cache keyed on the pipeline desc, so a cold start stops recompiling | **Ready** |  |
 | 17 | GPU crash breadcrumbs (D3D12 DRED) captured on device-removed | **Ready** |  |
 | 18 | MSAA render targets on `TextureDesc` | **Ready** |  |

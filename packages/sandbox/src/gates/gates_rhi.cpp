@@ -111,7 +111,8 @@ bool run_dxc_gate(const engine::shaders::ShaderCompileDesc& desc,
 
 bool run_rhi_contract_gate(
     engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler) {
-    auto sampler = device.create_sampler(engine::rhi::shadow_comparison_sampler());
+    auto sampler =
+        device.create_sampler(engine::rhi::shadow_comparison_sampler(device.depth_convention()));
     const bool sampler_ok = sampler != nullptr
         && engine::rhi::GraphicsPipelineDesc::kMaxSamplers >= 2;
 

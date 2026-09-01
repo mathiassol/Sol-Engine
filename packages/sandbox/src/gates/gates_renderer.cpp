@@ -9,6 +9,102 @@
 
 namespace sandbox {
 
+bool run_depth_convention_gate(const engine::rhi::IDevice* device) {
+    using engine::rhi::DepthConvention;
+    if (device == nullptr) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "Depth convention gate: no device (FAIL)");
+        return false;
+    }
+    const DepthConvention live = device->depth_convention();
+
+    // Every site is checked against *both* conventions, not just the live one.
+    // A site that ignores the convention passes a one-sided check trivially -
+    // which is the whole failure this gate exists for, five of six agreeing.
+    auto near_depth = [](DepthConvention c) {
+        const engine::math::Mat4 p = c == DepthConvention::Reversed
+            ? engine::math::Mat4::perspective_reversed_z(1.0f, 1.6f, 0.1f, 100.f)
+            : engine::math::Mat4::perspective(1.0f, 1.6f, 0.1f, 100.f);
+        // A point on the near plane, projected and divided. Computed from the
+        // two columns that matter rather than through transform_point, which
+        // drops w - and w is the whole question for a projection.
+        const engine::f32 view_z = -0.1f;  // right-handed: the camera looks down -Z
+        const engine::f32 clip_z = p.cols[2].z * view_z + p.cols[3].z;
+        const engine::f32 clip_w = p.cols[2].w * view_z + p.cols[3].w;
+        return clip_w != 0.f ? clip_z / clip_w : -1.f;
+    };
+    // Standard puts near at 0, Reversed at 1. Both, or the projection is not
+    // actually reading the convention.
+    const engine::f32 std_near = near_depth(DepthConvention::Standard);
+    const engine::f32 rev_near = near_depth(DepthConvention::Reversed);
+    const bool projection_ok = std_near < 0.01f && rev_near > 0.99f;
+
+    const bool compare_ok =
+        engine::rhi::depth_closer(DepthConvention::Standard) == engine::rhi::DepthTest::Less
+        && engine::rhi::depth_closer(DepthConvention::Reversed) == engine::rhi::DepthTest::Greater
+        && engine::rhi::depth_closer_or_equal(DepthConvention::Standard)
+            == engine::rhi::DepthTest::LessEqual
+        && engine::rhi::depth_closer_or_equal(DepthConvention::Reversed)
+            == engine::rhi::DepthTest::GreaterEqual;
+
+    const bool sampler_ok =
+        engine::rhi::shadow_comparison_sampler(DepthConvention::Standard).compare
+            == engine::rhi::CompareOp::Less
+        && engine::rhi::shadow_comparison_sampler(DepthConvention::Reversed).compare
+            == engine::rhi::CompareOp::Greater;
+
+    const bool bias_ok = engine::rhi::depth_bias_for(1.5f, DepthConvention::Standard) > 0.f
+        && engine::rhi::depth_bias_for(1.5f, DepthConvention::Reversed) < 0.f;
+
+    // The pipelines the frame actually built, against the live convention. This
+    // is what catches a maker that was missed when the convention was threaded.
+    const engine::rhi::DepthTest want_closer = engine::rhi::depth_closer(live);
+    const engine::rhi::DepthTest want_closer_eq = engine::rhi::depth_closer_or_equal(live);
+    const std::span<const engine::u8> none{};
+    const bool pipelines_ok =
+        make_forward_pipeline_desc(none, none, live).depth == want_closer
+        && make_shadow_pipeline_desc(none, live).depth == want_closer
+        && make_sky_pipeline_desc(none, none, live).depth == want_closer_eq
+        && (make_shadow_pipeline_desc(none, live).slope_scaled_depth_bias < 0.f)
+            == (live == DepthConvention::Reversed);
+
+    // The assertion that actually catches a backwards direction: take two
+    // fragments, one near and one far, project both under the live convention,
+    // and check the *nearer* one wins the live compare. Everything above proves
+    // the six sites agree with each other; this proves they agree with reality.
+    auto depth_at = [live](engine::f32 view_z) {
+        const engine::math::Mat4 p = live == DepthConvention::Reversed
+            ? engine::math::Mat4::perspective_reversed_z(1.0f, 1.6f, 0.1f, 100.f)
+            : engine::math::Mat4::perspective(1.0f, 1.6f, 0.1f, 100.f);
+        const engine::f32 z = p.cols[2].z * view_z + p.cols[3].z;
+        const engine::f32 w = p.cols[2].w * view_z + p.cols[3].w;
+        return w != 0.f ? z / w : 0.f;
+    };
+    const engine::f32 depth_near = depth_at(-1.f);
+    const engine::f32 depth_far = depth_at(-50.f);
+    const engine::rhi::DepthTest live_test = engine::rhi::depth_closer(live);
+    const bool nearer_wins = live_test == engine::rhi::DepthTest::Greater
+        ? depth_near > depth_far
+        : depth_near < depth_far;
+
+    const bool passed = projection_ok && compare_ok && sampler_ok && bias_ok && pipelines_ok
+        && nearer_wins;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Depth convention gate: live=%s near_std=%.3f near_rev=%.3f compare=%s sampler=%s "
+        "bias=%s pipelines=%s near=%.3f far=%.3f nearer_wins=%s (%s)",
+        live == DepthConvention::Reversed ? "reversed" : "standard",
+        static_cast<double>(std_near), static_cast<double>(rev_near),
+        compare_ok ? "yes" : "NO", sampler_ok ? "yes" : "NO", bias_ok ? "yes" : "NO",
+        pipelines_ok ? "yes" : "NO", static_cast<double>(depth_near),
+        static_cast<double>(depth_far), nearer_wins ? "yes" : "NO",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
+
 bool run_two_draw_items_gate() {
     engine::renderer::DrawItem draws[2]{};
     draws[0].model = engine::math::Mat4::identity();

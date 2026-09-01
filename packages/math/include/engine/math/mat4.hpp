@@ -14,6 +14,11 @@ struct Mat4 {
     static Mat4 scale(Vec3 s);
     static Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up);
     static Mat4 perspective(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z);
+    // Reversed-Z: near maps to 1, far to 0, which is where a float depth buffer
+    // keeps its precision. Two named functions rather than a flag, so `math`
+    // stays a library with no rendering policy in it - the renderer chooses,
+    // from rhi::DepthConvention.
+    static Mat4 perspective_reversed_z(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z);
     static Mat4 ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z);
 
     static Mat4 inverse_affine(Mat4 m);

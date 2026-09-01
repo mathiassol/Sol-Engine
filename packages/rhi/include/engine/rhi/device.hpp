@@ -67,6 +67,9 @@ class IDevice {
 public:
     virtual ~IDevice() = default;
 
+    // Every depth decision in the frame derives from this. See DepthConvention.
+    virtual DepthConvention depth_convention() const = 0;
+
     virtual ISwapchain& swapchain() = 0;
     virtual ICommandList& command_list() = 0;
 

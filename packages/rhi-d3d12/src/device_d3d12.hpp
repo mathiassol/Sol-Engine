@@ -207,6 +207,9 @@ public:
 
     bool init(const DeviceDesc& desc);
 
+    // Fixed at device creation. Every depth decision in the frame reads this.
+    DepthConvention depth_convention() const override { return depth_convention_; }
+
     ISwapchain& swapchain() override;
     ICommandList& command_list() override;
 
@@ -349,6 +352,7 @@ private:
     // Latched once the device is gone. The frame loop reads this and stops
     // rather than spinning on a dead device.
     bool device_lost_ = false;
+    DepthConvention depth_convention_ = DepthConvention::Standard;
     bool occluded_ = false;
     // False when begin_frame could not open the command list, so submit()
     // must not close or execute it.

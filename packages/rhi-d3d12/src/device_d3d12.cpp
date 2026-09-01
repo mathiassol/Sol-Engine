@@ -569,7 +569,12 @@ void D3D12CommandList::begin_render_pass(const RenderPassInfo& info) {
         cmd->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
     }
     if (depth && info.clear_depth) {
-        cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        // Follows the device's convention, and is the site that makes a
+        // half-applied reversed-Z a black screen: clearing to 1 while the
+        // compare says Greater rejects every fragment, silently.
+        const f32 clear_depth =
+            device_.depth_convention() == DepthConvention::Reversed ? 0.0f : 1.0f;
+        cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, clear_depth, 0, 0, nullptr);
     }
     in_pass_ = true;
 }
@@ -855,6 +860,7 @@ void D3D12Device::report_debug_layer_messages() const {
 }
 
 bool D3D12Device::init(const DeviceDesc& desc) {
+    depth_convention_ = desc.depth_convention;
     width_  = desc.width;
     height_ = desc.height;
     hwnd_   = static_cast<HWND>(desc.window_handle);
@@ -2330,6 +2336,10 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
             depth_func = D3D12_COMPARISON_FUNC_LESS_EQUAL;
         } else if (desc.depth == DepthTest::Equal) {
             depth_func = D3D12_COMPARISON_FUNC_EQUAL;
+        } else if (desc.depth == DepthTest::Greater) {
+            depth_func = D3D12_COMPARISON_FUNC_GREATER;
+        } else if (desc.depth == DepthTest::GreaterEqual) {
+            depth_func = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
         }
         pso_desc.DepthStencilState.DepthFunc = depth_func;
         pso_desc.DSVFormat = to_dxgi(desc.depth_format);

@@ -183,8 +183,11 @@ struct FlyCamera {
         return engine::math::Mat4::look_at(position, position + forward, {0.f, 1.f, 0.f});
     }
 
-    engine::math::Mat4 projection(engine::f32 aspect) const {
-        return engine::math::Mat4::perspective(engine::math::radians(60.f), aspect, 0.1f, 100.f);
+    engine::math::Mat4 projection(engine::f32 aspect, bool reversed_z = false) const {
+        const engine::f32 fov = engine::math::radians(60.f);
+        return reversed_z
+            ? engine::math::Mat4::perspective_reversed_z(fov, aspect, 0.1f, 100.f)
+            : engine::math::Mat4::perspective(fov, aspect, 0.1f, 100.f);
     }
 };
 
@@ -258,7 +261,8 @@ struct SandboxState {
 // closes the other half so adding a pass is one call rather than a paragraph
 // that is easy to paste slightly wrong.
 using MakePipelineDesc = engine::rhi::GraphicsPipelineDesc (*)(
-    std::span<const engine::u8>, std::span<const engine::u8>);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 // ── declarations ──
 extern engine::Cvar cv_gate_bool;
@@ -314,42 +318,55 @@ bool ensure_taa_history(engine::rhi::IDevice& device, engine::renderer::RenderGr
     ForwardDemo& demo, engine::u32 width, engine::u32 height);
 
 engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention);
 
-engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(std::span<const engine::u8> vs);
+engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(
+    std::span<const engine::u8> vs, engine::rhi::DepthConvention convention);
 
 engine::rhi::GraphicsPipelineDesc make_tonemap_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_sky_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention);
 
 engine::rhi::GraphicsPipelineDesc make_bloom_downsample_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_bloom_upsample_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_fxaa_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_smaa_edge_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_smaa_weights_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_smaa_blend_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_motion_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_taa_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 engine::rhi::GraphicsPipelineDesc make_tonemap_aces_pipeline_desc(
-    std::span<const engine::u8> vs, std::span<const engine::u8> ps);
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention);
 
 bool mount_app_content(engine::assets::IAssetLoader& loader,
     const engine::ContentMountPaths& mounts);
