@@ -1194,7 +1194,8 @@ int run_app(int argc, char** argv) {
 
     // Deliberately not short-circuited: each gate must run and report even
     // when an earlier one fails.
-    bool gates_ok = run_mount_gate(*loader);
+    bool gates_ok = run_parser_fuzz_gate();
+    gates_ok = run_mount_gate(*loader) && gates_ok;
     gates_ok = run_mount_containment_gate(*loader) && gates_ok;
     gates_ok = run_build_gate(app.content_layout()) && gates_ok;
     if (!run_gate_registry_gate()) {

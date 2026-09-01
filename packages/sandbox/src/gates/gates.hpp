@@ -12,6 +12,8 @@
 namespace sandbox {
 
 // ── assets ──
+bool run_parser_fuzz_gate();
+
 bool run_mount_gate(engine::assets::IAssetLoader& loader);
 
 bool run_mount_containment_gate(engine::assets::IAssetLoader& loader);

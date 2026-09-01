@@ -295,6 +295,10 @@ extern engine::Cvar cv_quality;
 
 extern engine::Cvar cv_shadow_size;
 
+extern engine::Cvar cv_fuzz_seed;
+
+extern engine::Cvar cv_fuzz_iterations;
+
 bool valid_shadow_size(engine::u32 texels);
 
 bool resolve_quality(std::string_view preset, const engine::renderer::aa::Mode* explicit_aa,

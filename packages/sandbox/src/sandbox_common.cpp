@@ -511,4 +511,10 @@ engine::f32 exposure_from_ev(engine::f32 ev) {
     return std::exp2(clamped);
 }
 
+// Fixed by default so --gates stays deterministic and fast; raise the count
+// for a soak without rebuilding, and quote the seed when a failure is found.
+engine::Cvar cv_fuzz_seed{"gate.fuzz_seed", 1589279043, "Parser fuzz gate: PRNG seed"};
+engine::Cvar cv_fuzz_iterations{
+    "gate.fuzz_iterations", 4000, "Parser fuzz gate: mutations per run"};
+
 } // namespace sandbox

@@ -9,6 +9,8 @@ namespace sandbox {
 // headless run can supply; Gpu entries carry nullptr and are called directly
 // from main.cpp, where the device and the built demo exist.
 const GateEntry kGates[] = {
+    {"run_parser_fuzz_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_parser_fuzz_gate(); }},
     {"run_mount_gate", GateKind::Cpu,
         [](const CpuGateContext& ctx) { return run_mount_gate(*ctx.loader); }},
     {"run_mount_containment_gate", GateKind::Cpu,

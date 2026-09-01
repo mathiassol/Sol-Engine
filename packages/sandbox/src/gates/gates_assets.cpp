@@ -1,5 +1,9 @@
 #include "../sandbox_common.hpp"
 
+#include <engine/assets/cooked.hpp>
+#include <engine/assets/pak.hpp>
+#include <engine/scene/scene_file.hpp>
+
 // Asset, content and glTF gates.
 //
 // Moved out of main.cpp, which held all 72 and was 26% of the engine
@@ -8,6 +12,240 @@
 // in sandbox_common.
 
 namespace sandbox {
+
+bool run_parser_fuzz_gate() {
+    // The four content parsers take untrusted bytes, are reachable from disk
+    // since C1, and diagnose since S1. What nothing checked is that the
+    // diagnostics actually fire - the audit said so: "Scene file gate: ...
+    // reject=yes proves rejection happens; nothing proves a diagnostic is
+    // produced."
+    //
+    // A seeded mutation gate rather than libFuzzer: no framework, it runs
+    // everywhere the engine runs, a failure reproduces from its seed, and
+    // because it is CPU-only the Linux job runs the whole thing under ASan.
+    //
+    // Three assertions per iteration: the parser returns rather than crashing
+    // or hanging; a rejection produces at least one log line; and acceptance is
+    // still possible, so the gate cannot pass by rejecting everything.
+
+    // Counts what the parser said while it said it. Chained to the previous
+    // sink so a real run still sees the output.
+    class CountingLogger final : public engine::ILogger {
+    public:
+        explicit CountingLogger(engine::ILogger* next) : next_(next) {}
+        void log(engine::LogLevel level, engine::LogChannel channel,
+            std::string_view message) override {
+            ++count_;
+            // Not forwarded. Tens of thousands of rejection lines is not a log,
+            // it is a denial of service on whoever reads it.
+            (void)level;
+            (void)channel;
+            (void)message;
+        }
+        engine::u32 take() {
+            const engine::u32 n = count_;
+            count_ = 0;
+            return n;
+        }
+        engine::ILogger* next() const { return next_; }
+
+    private:
+        engine::ILogger* next_ = nullptr;
+        engine::u32 count_ = 0;
+    };
+
+    // xorshift32. Fixed seed and fixed count keep --gates deterministic and
+    // fast; both are cvars so a longer soak is an argument, not a rebuild.
+    engine::u32 state = static_cast<engine::u32>(cv_fuzz_seed.as_int());
+    if (state == 0) {
+        state = 0x5EED1234u;
+    }
+    auto next_random = [&state]() {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return state;
+    };
+
+    const engine::u32 iterations = static_cast<engine::u32>(cv_fuzz_iterations.as_int());
+
+    // Valid seeds to mutate, built the same way the format's own gate builds them.
+    engine::assets::MeshData mesh{};
+    mesh.vertices = {
+        {0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f},
+        {1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f, 0.f},
+        {0.f, 0.f, 1.f, 0.f, 1.f, 0.f, 0.f, 1.f},
+    };
+    mesh.indices = {0, 1, 2};
+    engine::assets::compute_mesh_bounds(mesh);
+    std::vector<engine::u8> mesh_blob;
+    const bool seeded_mesh = engine::assets::write_cooked_mesh(mesh, mesh_blob);
+
+    engine::assets::ImageData image{};
+    image.width = 2;
+    image.height = 2;
+    image.rgba.assign(2 * 2 * 4, 0x80);
+    std::vector<engine::u8> image_blob;
+    const bool seeded_image = engine::assets::write_cooked_image(image, image_blob);
+
+    // Deliberately not minimal. A one-material world serialises to a handful of
+    // lines, and every mutation then lands on the magic or the version - both of
+    // which diagnose - so the parser's interior is never reached. With a
+    // sabotaged reject deep in the keyword loop the gate stayed green, which is
+    // how that was discovered. Four materials and eight instances give the
+    // mutations somewhere to land.
+    engine::scene::World world{};
+    for (engine::u32 m = 0; m < 4; ++m) {
+        engine::scene::Material material{};
+        material.metallic = 0.25f * static_cast<engine::f32>(m);
+        material.roughness = 1.f - 0.2f * static_cast<engine::f32>(m);
+        engine::scene::add_material(world, material);
+    }
+    for (engine::u32 n = 0; n < 8; ++n) {
+        engine::scene::Instance instance{};
+        instance.material = n % 4;
+        instance.model = engine::math::Mat4::translate(
+            {static_cast<engine::f32>(n), 0.f, 0.f});
+        engine::scene::add_instance(world, instance);
+    }
+    std::string scene_text;
+    const bool seeded_scene = engine::scene::write_world(world, scene_text);
+
+    engine::assets::PakEntry entry{};
+    entry.name = "/content/probe.bin";
+    entry.bytes = {1, 2, 3, 4, 5, 6, 7, 8};
+    std::vector<engine::assets::PakEntry> entries{entry};
+    std::vector<engine::u8> pak_blob;
+    const bool seeded_pak = engine::assets::write_pak(entries, pak_blob);
+
+    const bool seeds_ok = seeded_mesh && seeded_image && seeded_scene && seeded_pak;
+
+    // One byte-level mutation, chosen so the corpus reaches the length and count
+    // fields the bound checks guard, not just random payload bytes.
+    auto mutate = [&next_random](std::vector<engine::u8>& bytes) {
+        if (bytes.empty()) {
+            return;
+        }
+        switch (next_random() % 4u) {
+        case 0:  // flip a bit anywhere
+            bytes[next_random() % bytes.size()] ^=
+                static_cast<engine::u8>(1u << (next_random() % 8u));
+            break;
+        case 1:  // truncate
+            bytes.resize(next_random() % bytes.size());
+            break;
+        case 2: {  // corrupt a header word - where the length and count fields live
+            const engine::usize span = bytes.size() < 32u ? bytes.size() : 32u;
+            bytes[next_random() % span] = static_cast<engine::u8>(next_random());
+            break;
+        }
+        default:  // inflate a count field toward the capacity checks
+            if (bytes.size() >= 8) {
+                const engine::usize at = (next_random() % (bytes.size() / 4u)) * 4u;
+                if (at + 4 <= bytes.size()) {
+                    bytes[at] = 0xFFu;
+                    bytes[at + 1] = 0xFFu;
+                    bytes[at + 2] = 0xFFu;
+                    bytes[at + 3] = 0x7Fu;
+                }
+            }
+            break;
+        }
+    };
+
+    CountingLogger counter(engine::logger());
+    engine::u32 rejected = 0;
+    engine::u32 accepted = 0;
+    engine::u32 silent_rejections = 0;
+    // Per format, so a failure names the parser instead of only the count.
+    engine::u32 silent_by_format[4] = {0, 0, 0, 0};
+
+    engine::set_logger(&counter);
+    for (engine::u32 i = 0; i < iterations && seeds_ok; ++i) {
+        const engine::u32 which = next_random() % 4u;
+        bool ok = false;
+        counter.take();
+        if (which == 0) {
+            std::vector<engine::u8> bytes = mesh_blob;
+            mutate(bytes);
+            engine::assets::MeshData out{};
+            ok = engine::assets::read_cooked_mesh(bytes, out);
+        } else if (which == 1) {
+            std::vector<engine::u8> bytes = image_blob;
+            mutate(bytes);
+            engine::assets::ImageData out{};
+            ok = engine::assets::read_cooked_image(bytes, out);
+        } else if (which == 2) {
+            std::vector<engine::u8> bytes(scene_text.begin(), scene_text.end());
+            mutate(bytes);
+            engine::scene::World out{};
+            ok = engine::scene::read_world(
+                std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), out);
+        } else {
+            std::vector<engine::u8> bytes = pak_blob;
+            mutate(bytes);
+            std::vector<engine::u8> out;
+            ok = engine::assets::read_pak_entry(bytes, "/content/probe.bin", out);
+        }
+        const engine::u32 lines = counter.take();
+        if (ok) {
+            ++accepted;
+        } else {
+            ++rejected;
+            if (lines == 0) {
+                ++silent_rejections;
+                ++silent_by_format[which];
+            }
+        }
+    }
+    engine::set_logger(counter.next());
+
+    // A corrupt container must say so. Targeted rather than random, because the
+    // random case below cannot reach this conclusion on its own.
+    engine::u32 magic_lines = 0;
+    {
+        std::vector<engine::u8> broken = pak_blob;
+        if (!broken.empty()) {
+            broken[0] ^= 0xFFu;
+        }
+        std::vector<engine::u8> out;
+        engine::set_logger(&counter);
+        counter.take();
+        const bool ok = engine::assets::read_pak_entry(broken, "/content/probe.bin", out);
+        magic_lines = counter.take();
+        engine::set_logger(counter.next());
+        if (ok) {
+            magic_lines = 0;  // accepting a corrupt magic is itself a failure
+        }
+    }
+
+    // A mutation can leave a blob still valid, so acceptance is expected and is
+    // what proves the corpus is not simply garbage.
+    //
+    // pak is exempt from the diagnostic requirement, and the reasoning is worth
+    // keeping: read_pak_entry answers "is this key in this pak", and a corrupt
+    // *container* logs from parse_pak while a corrupt *TOC name* is an ordinary
+    // miss. Since a parse failure always logs, a silent pak rejection is by
+    // construction the miss case - and a question with a legitimate negative
+    // answer should not shout. The magic-byte check above is what keeps the
+    // parse path covered. Asserting pak at zero was this gate's first version,
+    // and it failed against a correct engine: 239 of 3,058.
+    const bool diagnosed = silent_by_format[0] == 0 && silent_by_format[1] == 0
+        && silent_by_format[2] == 0 && magic_lines > 0;
+    const bool exercised = rejected > 0 && accepted > 0;
+    const bool passed = seeds_ok && diagnosed && exercised;
+
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Parser fuzz gate: seed=%u iterations=%u rejected=%u accepted=%u silent=%u "
+        "(mesh=%u image=%u scene=%u pak=%u/exempt) corrupt_magic_logged=%s (%s)",
+        static_cast<engine::u32>(cv_fuzz_seed.as_int()), iterations, rejected, accepted,
+        silent_rejections, silent_by_format[0], silent_by_format[1], silent_by_format[2],
+        silent_by_format[3], magic_lines > 0 ? "yes" : "NO", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
 
 bool run_mount_gate(engine::assets::IAssetLoader& loader) {
     std::string physical;
