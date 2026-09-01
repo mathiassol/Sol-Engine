@@ -28,7 +28,8 @@ if(CMAKE_HOST_WIN32)
             "Source path is ${ENGINE_SOURCE_PATH_LENGTH} characters, past the ~140 this build "
             "needs to stay inside Windows' 260-character MAX_PATH limit. Configure or build is "
             "likely to fail with an MSB4018 \"exceeds the OS max path limit\" error that does "
-            "not mention this project. Clone somewhere shorter, or enable LongPathsEnabled.")
+            "not mention this project. Clone somewhere shorter, or enable LongPathsEnabled. "
+            "tools/check-prereqs.ps1 reports this alongside every other prerequisite.")
     endif()
     unset(ENGINE_SOURCE_PATH_LENGTH)
 endif()

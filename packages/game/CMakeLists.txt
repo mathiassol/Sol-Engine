@@ -13,7 +13,9 @@ if(ENGINE_RHI_D3D12)
     if(NOT ENGINE_DXC_BIN_DIR)
         message(FATAL_ERROR
             "DXC runtime (dxcompiler.dll + dxil.dll) is required next to game.exe. "
-            "Install the Windows 10 SDK. D3D12 Agility is not shipped.")
+            "Install the Windows 10/11 SDK; it ships with Visual Studio's "
+            "\"Desktop development with C++\" workload. D3D12 Agility is not shipped. "
+            "Run tools/check-prereqs.ps1 to see every prerequisite at once.")
     endif()
     install(FILES
         "${ENGINE_DXC_BIN_DIR}/dxcompiler.dll"

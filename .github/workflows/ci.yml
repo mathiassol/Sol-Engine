@@ -44,6 +44,18 @@ jobs:
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-invariants.ps1
 
+      # check-prereqs.ps1 inspects a machine, so a runner - which has everything -
+      # can only ever see it pass. That is still worth having under both shells:
+      # it catches syntax and 5.1-compatibility regressions, which is exactly how
+      # this job earned its place. The first version of the script threw under 5.1
+      # only, because Windows PowerShell turns a native command's stderr into an
+      # error record and `cmake -P` writes its result there.
+      - name: Prerequisite check runs under both shells
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/check-prereqs.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-prereqs.ps1
+
   # ── Configure and compile both shipping configurations. ──────────────────
   build:
     name: Build (Debug + Release game)

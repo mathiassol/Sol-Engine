@@ -39,6 +39,14 @@ The sandbox is the proving ground, not the product.
 git clone <your-remote-url> Engine
 cd Engine
 
+pwsh -NoProfile -File tools/check-prereqs.ps1
+```
+
+That prints one line per prerequisite — found with its version, or missing with
+its name and where to get it — and exits non-zero if the documented build cannot
+work yet. Run it first; it is faster than reading a CMake error about CMake.
+
+```powershell
 cmake --preset vs2026
 cmake --build --preset debug
 ```

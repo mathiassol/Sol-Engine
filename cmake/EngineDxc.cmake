@@ -37,7 +37,9 @@ function(engine_locate_dxc)
     endif()
 
     if(NOT _bin)
-        message(WARNING "DXC runtime not found (dxcompiler.dll). Shader compile will fail at runtime.")
+        message(WARNING
+            "DXC runtime not found (dxcompiler.dll). Shader compile will fail at runtime. "
+            "Run tools/check-prereqs.ps1.")
         set(ENGINE_DXC_BIN_DIR "" CACHE INTERNAL "Windows SDK DXC bin directory")
         return()
     endif()
@@ -57,7 +59,9 @@ function(engine_copy_dxc_runtime TARGET)
     if(NOT ENGINE_DXC_BIN_DIR)
         message(FATAL_ERROR
             "DXC runtime (dxcompiler.dll + dxil.dll) is required next to ${TARGET}. "
-            "Install the Windows 10 SDK. D3D12 Agility is not shipped.")
+            "Install the Windows 10/11 SDK; it ships with Visual Studio's "
+            "\"Desktop development with C++\" workload. D3D12 Agility is not shipped. "
+            "Run tools/check-prereqs.ps1 to see every prerequisite at once.")
     endif()
     add_custom_command(TARGET ${TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
