@@ -89,6 +89,68 @@ the case where it breaks.
 
 ---
 
+## Two code systems, and the rule for both
+
+Every output uses short codes, and they look alike, so they get confused. There
+are exactly two:
+
+| Shape | Is | Example |
+|-------|-----|---------|
+| **letter + number** — `S1`, `D3`, `P1b` | a **finding**: the dimension's letter plus a number, assigned in the order found | `D1` = the first finding in Developer experience |
+| **G + number** — `G1`…`G6` | a **ceiling**: a rule that caps a grade regardless of everything else | `G3` = a High-severity finding with no check covering it, caps at B+ |
+
+They sit next to each other constantly — `**G3** (finding D1)` means "the
+uncovered-failure ceiling fired, because of Developer-experience finding 1" — so
+neither may appear bare.
+
+**The rule: a code is never written alone the first time it appears in a
+document.**
+
+- A ceiling carries its name: `G3 · uncovered failure`. After the first use in
+  that document, bare `G3` is fine.
+- A finding carries its title, or sits in the section that holds it. `D1` in
+  isolation, in a sentence, with no title anywhere near it, is not acceptable.
+- **Every document that uses any code carries the legend** (below). Not a link
+  to it — the copy. These pages get shared, and a reader who follows a link out
+  of one has left the document.
+- **`LATEST.md` and the hub use no codes at all.** They are the plain-language
+  documents; a grade, a sentence and a consequence, with the codes left in the
+  full report where the evidence is. This is a rule, not an accident.
+
+### The legend to copy
+
+Paste this, verbatim, into the full report and into every metric report:
+
+```markdown
+### Reading the codes
+
+**Findings** are a dimension letter plus a number — `S1`, `D3`. The letters:
+`S` stability · `A` architecture · `C` capabilities · `P` portability ·
+`D` developer setup · `T` AI tooling. So `D3` is the third finding recorded
+against developer setup.
+
+**Ceilings** are `G1`–`G6`. A ceiling is a rule that caps a grade no matter how
+good the rest of the dimension is, so a capped grade is a statement about one
+specific gap rather than an overall impression:
+
+| Code | Name | Fires when | Caps at |
+|------|------|-----------|---------|
+| G1 | unmeasured | it would not build or run, so nothing could be measured | C+ |
+| G2 | doc-sourced | the evidence came from the project's own docs, not the tree | B− |
+| G3 | uncovered failure | a High-severity finding has no gate or check that would catch it | B+ |
+| G4 | no comparison | no external engine or library was compared against | A− |
+| G5 | unfixed critical | a Critical finding is still open | D+ |
+| G6 | better than reference | (the extra bar for A+, not a penalty) | A |
+
+`**G3** (finding D1)` therefore reads: *capped at B+ because developer-setup
+finding 1 is a serious gap that nothing would catch.*
+```
+
+Keep it as one block so it can be lifted whole. A legend that has been
+paraphrased per document drifts.
+
+---
+
 ## The six graded dimensions
 
 Four on the code, two off it. Each gets its own grade — no averaging into a
@@ -275,14 +337,18 @@ however good the impression.
 Ceilings cap a grade regardless of everything else. Check all six, every time,
 and state in the report which ones fired.
 
-| | Ceiling | Cap |
-|---|---------|-----|
-| **G1** | You could not measure the dimension — it would not build, would not run, or produced no tool output. | **C+** |
-| **G2** | The evidence rests on the project's own documentation rather than on the tree. | **B−** |
-| **G3** | A **High**-severity finding in this dimension has no gate, test, or check that would catch it. Name the finding ID when this fires. | **B+** |
-| **G4** | You did not compare against a named external reference and say where this differs. | **A−** |
-| **G5** | A finding you rated Critical is unfixed in this dimension. | **D+** |
-| **G6** | **A+** additionally requires something here that is *better* than every reference you compared against — named, with the reason. If you cannot name it, it is not an A+. | **A** |
+Every ceiling has a **name as well as a number**, and the name travels with it
+everywhere it is written. `G3` on its own tells a reader nothing;
+`G3 · uncovered failure` tells them what happened without a lookup.
+
+| | Name | Ceiling | Cap |
+|---|------|---------|-----|
+| **G1** | unmeasured | You could not measure the dimension — it would not build, would not run, or produced no tool output. | **C+** |
+| **G2** | doc-sourced | The evidence rests on the project's own documentation rather than on the tree. | **B−** |
+| **G3** | uncovered failure | A **High**-severity finding in this dimension has no gate, test, or check that would catch it. Name the finding ID when this fires. | **B+** |
+| **G4** | no comparison | You did not compare against a named external reference and say where this differs. | **A−** |
+| **G5** | unfixed critical | A finding you rated Critical is unfixed in this dimension. | **D+** |
+| **G6** | better than reference | **A+** additionally requires something here that is *better* than every reference you compared against — named, with the reason. If you cannot name it, it is not an A+. | **A** |
 
 Rate every finding **Critical / High / Medium / Low** — the ceilings are bound
 to that vocabulary, so an unrated finding cannot be adjudicated.
@@ -365,16 +431,19 @@ or the system clock).
 No length limit. This is the maximum you can produce. Structure:
 
 1. **Header** — commit, date, build state, gate count, invariant state.
-2. **Grades** — the six, with band, ceilings fired, and both falsification
-   sentences.
-3. **Per dimension** — evidence, findings ranked by consequence (not count),
+2. **Reading the codes** — the legend, verbatim, before the first code appears.
+   It goes near the top precisely because the grade table on the next line is
+   full of them.
+3. **Grades** — the six, with band, ceilings fired (each with its name on first
+   use), and both falsification sentences.
+4. **Per dimension** — evidence, findings ranked by consequence (not count),
    the external comparison with citations, and what is genuinely good.
-4. **Cross-cutting** — anything that appears in more than one dimension.
-5. **Remedies** — only now, and only for surviving findings. Each with a real
+5. **Cross-cutting** — anything that appears in more than one dimension.
+6. **Remedies** — only now, and only for surviving findings. Each with a real
    cost estimate.
-6. **Calibration notes** — distribution check, counter-arguments to the highest
+7. **Calibration notes** — distribution check, counter-arguments to the highest
    and lowest grades.
-7. **Appendix: reproduction** — every command run, verbatim, with its output.
+8. **Appendix: reproduction** — every command run, verbatim, with its output.
    Someone must be able to re-run this and get your numbers. A measurement
    nobody can reproduce is an assertion.
 

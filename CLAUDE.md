@@ -56,6 +56,11 @@ All of it publishes to permanent artifact URLs tracked in
 metric, each linking back, so sharing the scorecard shares the whole set.
 `/analizeMax-repair` creates anything missing and fixes the links.
 
+Reports use two code systems: a dimension letter plus a number is a **finding**
+(`D3` = developer setup, third finding), and `G1`–`G6` are **ceilings** that cap
+a grade. Both are tabulated in [docs/analysis/README.md](docs/analysis/README.md),
+which is also where a `(analizeMax D3)` commit tag can be looked up.
+
 ## Non-negotiables
 
 These outrank convenience every time, regardless of what a session's context

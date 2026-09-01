@@ -64,6 +64,47 @@ whether it is `current`, `behind` (commits landed since), or `superseded` (a
 newer audit exists than the one it derived from). Staleness is computed at
 publish time, never remembered.
 
+## Reading the codes
+
+Every report and several commit messages use short codes. There are two systems
+and they look alike, which is the whole problem.
+
+**Findings** are a dimension letter plus a number, assigned in the order found:
+
+| Letter | Dimension |
+|--------|-----------|
+| `S` | Stability |
+| `A` | Architecture |
+| `C` | Capabilities |
+| `P` | Portability (cross-platform readiness) |
+| `D` | Developer setup |
+| `T` | AI tooling |
+
+So `D3` is the third finding recorded against developer setup, and a commit
+tagged `(analizeMax D3)` fixed it. The commit subject always says what it did in
+words — the tag is a cross-reference, not the explanation.
+
+**Ceilings** are `G1`–`G6`. A ceiling caps a grade no matter how good the rest of
+the dimension is, so a capped grade is a claim about one specific gap rather than
+an overall impression:
+
+| Code | Name | Fires when | Caps at |
+|------|------|-----------|---------|
+| `G1` | unmeasured | it would not build or run, so nothing could be measured | C+ |
+| `G2` | doc-sourced | the evidence came from the project's own docs, not the tree | B− |
+| `G3` | uncovered failure | a High-severity finding has no gate or check that would catch it | B+ |
+| `G4` | no comparison | no external engine or library was compared against | A− |
+| `G5` | unfixed critical | a Critical finding is still open | D+ |
+| `G6` | better than reference | the extra bar for A+ — not a penalty | A |
+
+`**G3** (finding D1)` in a grade table therefore reads: *capped at B+ because
+developer-setup finding 1 is a serious gap that nothing would catch.*
+
+Two rules keep this readable, and they are enforced in the skills rather than
+here: no code is ever written bare on its first appearance in a document, and
+`LATEST.md` and the scorecard use **no codes at all** — they are the
+plain-language pair, and the codes stay in the full report where the evidence is.
+
 ## What CI checks here
 
 Two deliberate and opposite decisions.

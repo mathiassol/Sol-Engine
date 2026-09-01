@@ -139,7 +139,9 @@ Cover, in this order:
    concretely. Not the band's definition; what it *feels like*.
 2. **What is holding it down** — the ceilings that fired and the findings that
    caused them. This is the core of the document. Be specific: name files,
-   numbers, and the failure each one produces.
+   numbers, and the failure each one produces. Every ceiling gets its name on
+   first use — `G3 · uncovered failure`, never bare `G3` — and every finding id
+   sits next to its title.
 3. **What is genuinely good here** — from the report's own credit section.
    Skipping this produces a document that reads like the metric is worthless,
    which mis-sets the work.
@@ -148,6 +150,10 @@ Cover, in this order:
    grade and the list: it tells the user which work actually changes the number
    and which merely tidies.
 5. **What the audit did not look at** — the honest edge of the source document.
+6. **Reading the codes** — the legend from the publishing side of
+   `.claude/skills/analizeMax/SKILL.md`, copied verbatim. This document is full
+   of `D3`- and `G3`-shaped codes and gets read on its own, away from the full
+   report, so it carries its own legend rather than pointing at one.
 
 ### Part 2: the action list
 
