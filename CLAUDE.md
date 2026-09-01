@@ -104,14 +104,19 @@ any debug-layer message as a build-breaking bug, not a warning to skip.
 pwsh -NoProfile -File tools/check-invariants.ps1
 ```
 
-Machine-checks the non-negotiables above plus doc-level drift. Thirteen checks:
+Machine-checks the non-negotiables above plus doc-level drift. Fourteen checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
 the ROADMAP LOC audit, spec statuses, the ENGINE_MAP dependency graph, the
-analizeMax analysis set, and that a
+analizeMax analysis set, that a
 package added under an `if()` is never linked unconditionally (which would fail
-`cmake` at generate time wherever that condition is false). That map check reads
+`cmake` at generate time wherever that condition is false), and
+**format-hygiene** — the tree obeying the `.editorconfig` it ships (no tabs, 100
+columns, no trailing whitespace, a final newline, no BOM, LF for sources and
+CRLF for shell scripts) plus the root `.clang-format` still being the
+`DisableFormat: true` no-op that keeps Visual Studio's format-as-you-type off
+this hand-tuned tree. That map check reads
 ENGINE_MAP.md as a graph: every `Category #N` in a **Finish first** must
 resolve, a Later row whose named blockers are all Done must be flipped to
 Ready, and no two rows may block each other — a loop means neither ever

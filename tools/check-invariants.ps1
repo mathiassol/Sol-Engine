@@ -716,6 +716,110 @@ foreach ($file in $cmakeFiles) {
 Add-Result 'conditional-target-links' `
     "$condLinkCount references to conditional packages, all guarded" $condLinkViolations
 
+# ── 14. The tree obeys the .editorconfig it ships ────────────────────────────
+# .editorconfig is this project's formatting contract and nothing enforced it
+# until now. The root .clang-format cannot: it is `DisableFormat: true`, a
+# deliberate no-op, because Visual Studio applies a discovered .clang-format as
+# you type and this tree is hand-formatted (92 of 123 C++ files diverge from the
+# closest config anyone could write for it, measured 1 Sep 2026). So the rules
+# that ARE universally true here get checked instead — and the no-op itself gets
+# checked, so it cannot quietly stop being one.
+#
+# Trailing whitespace is checked for sources but not for markdown, where two
+# trailing spaces are a hard line break and .editorconfig exempts it.
+# docs/analysis/ is skipped for the same reason doc-links skips it: it is
+# generated output, and a generated file must never be able to turn CI red.
+$fmtViolations = @()
+$fmtColumnLimit = 100
+
+function Add-FmtViolation {
+    param([string]$Path, [int]$Line, [string]$Message)
+    $rel = ((Resolve-Path -LiteralPath $Path -Relative) -replace '\\', '/') -replace '^\./', ''
+    if ($Line -gt 0) {
+        $script:fmtViolations += "${rel}:${Line}: $Message"
+    } else {
+        $script:fmtViolations += "${rel}: $Message"
+    }
+}
+
+# Read once as bytes: a BOM, a missing final newline and a stray CRLF are all
+# invisible to Get-Content, which is exactly why they rot unnoticed.
+function Test-FmtFile {
+    param([string]$Path, [bool]$CheckColumns, [bool]$CheckTrailing)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0) { return }
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        Add-FmtViolation $Path 1 'UTF-8 BOM - .editorconfig sets charset = utf-8, which means no BOM'
+    }
+    if ($bytes[$bytes.Length - 1] -ne 0x0A) {
+        Add-FmtViolation $Path 0 'no final newline - .editorconfig sets insert_final_newline = true'
+    }
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    if ($text.Contains("`r`n")) {
+        Add-FmtViolation $Path 0 'CRLF line endings - .editorconfig sets end_of_line = lf here'
+    }
+    $lineNo = 0
+    foreach ($raw in ($text -split "`n")) {
+        $lineNo++
+        $line = $raw.TrimEnd([char]13)
+        if ($line.Contains([char]9)) {
+            Add-FmtViolation $Path $lineNo 'tab character - .editorconfig sets indent_style = space'
+        }
+        if ($CheckColumns -and $line.Length -gt $fmtColumnLimit) {
+            Add-FmtViolation $Path $lineNo `
+                "$($line.Length) columns - .editorconfig sets max_line_length = $fmtColumnLimit"
+        }
+        if ($CheckTrailing -and $line.Length -gt 0 -and $line -ne $line.TrimEnd()) {
+            Add-FmtViolation $Path $lineNo `
+                'trailing whitespace - .editorconfig sets trim_trailing_whitespace = true'
+        }
+    }
+}
+
+$fmtSources = @(Get-ChildItem -Path 'packages' -Recurse -File -Include $SourceGlobs -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '[\\/]third_party[\\/]' })
+foreach ($f in $fmtSources) { Test-FmtFile $f.FullName $true $true }
+
+$fmtMarkdown = @(Get-ChildItem -Recurse -File -Include '*.md' |
+    Where-Object {
+        $_.FullName -notmatch '[\\/](build|node_modules|\.git)[\\/]' -and
+        $_.FullName -notmatch '[\\/]docs[\\/]analysis[\\/]' -and
+        $_.FullName -notmatch '[\\/]reasarch[\\/]' -and
+        $_.FullName -notmatch '[\\/]third_party[\\/]'
+    })
+foreach ($f in $fmtMarkdown) { Test-FmtFile $f.FullName $false $false }
+
+# The mirror image: .gitattributes pins these to CRLF because cmd.exe mis-parses
+# a multi-line if/for block in an LF-only .bat. A bare LF here is the defect.
+$fmtShell = @(Get-ChildItem -Recurse -File -Include '*.ps1', '*.bat', '*.cmd' |
+    Where-Object { $_.FullName -notmatch '[\\/](build|node_modules|\.git)[\\/]' })
+foreach ($f in $fmtShell) {
+    $text = [System.IO.File]::ReadAllText($f.FullName)
+    $bare = ([regex]::Matches($text, "(?<!`r)`n")).Count
+    if ($bare -gt 0) {
+        Add-FmtViolation $f.FullName 0 `
+            "$bare line(s) end LF - .gitattributes and .editorconfig pin CRLF for shell scripts"
+    }
+}
+
+# The formatter must stay disarmed. Losing this one line re-arms Visual Studio's
+# format-as-you-type over a tree that no clang-format config describes.
+if (-not (Test-Path -LiteralPath '.clang-format')) {
+    $fmtViolations += '.clang-format: missing - it must exist and be a no-op, or editors reformat on save'
+} elseif ((Get-Content -LiteralPath '.clang-format' -Raw) -notmatch '(?m)^\s*DisableFormat:\s*true\s*$') {
+    $fmtViolations += ('.clang-format: DisableFormat: true is missing - Visual Studio applies a ' +
+        'discovered .clang-format as you type, so without it one save rewrites the tree. ' +
+        'Prove it either way with tools/probe-formatter.ps1')
+}
+if (-not (Test-Path -LiteralPath 'tools/house-style.clang-format')) {
+    $fmtViolations += ('tools/house-style.clang-format: missing - .clang-format and ' +
+        '.claude/rules/cpp-conventions.md both send new files there')
+}
+
+Add-Result 'format-hygiene' `
+    ("$($fmtSources.Count) sources, $($fmtMarkdown.Count) markdown, $($fmtShell.Count) shell " +
+     'match .editorconfig; .clang-format still a no-op') $fmtViolations
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 
