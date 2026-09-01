@@ -1201,6 +1201,43 @@ runners are permissive and no CI job can reproduce it.
 
 ---
 
+## Build #14 — `CMakePresets.json` (done)
+
+**Why:** Three configure commands existed and had already diverged. README said
+`-G "Visual Studio 18 2026" -A x64`, CI's build job said `-A x64`, and the
+options matrix spelled each `-D<OPT>=OFF` out again in YAML. Nothing bound them,
+so a change to one was a change to one.
+
+**Choice:** One file the CLI, Visual Studio, VS Code and CI all read. `vs2026` is
+the documented default and reproduces the old README command exactly. `ci-build`
+deliberately sets **no generator** — the dev box pins VS 18 2026, the runner
+image ships whatever it ships, and letting CMake choose is what keeps CI working
+across image updates. That reasoning predates the presets and is preserved in
+both the preset's own `description` and `ci.yml`'s comment. Four option-off
+presets replace the matrix's hand-written flags, so which option each switches
+off is stated once.
+
+`ninja` is a second, secondary preset, and it exists for a defect rather than for
+speed: `CMAKE_EXPORT_COMPILE_COMMANDS` had been set since the beginning and
+produced nothing, because the Visual Studio generator ignores it. There was no
+`compile_commands.json` anywhere and clangd had nothing to read. Ninja
+Multi-Config writes one with 147 entries and builds Debug in about a quarter of
+the time. It needs `cl.exe` on `PATH`, which an IDE or a Developer Command Prompt
+supplies and a plain shell does not — so it stays secondary and README says why.
+
+**Gate (met):** No gate; nothing changes at runtime. Verified end to end instead:
+both presets configure, both produce a `sandbox.exe` whose `--gates` reports
+**74 `(pass)` / 0 `FAIL`**, all four option-off presets configure clean, and
+`build-ninja/compile_commands.json` has 147 entries. `.gitignore`'s `build/`
+widened to `build*/` to cover the two new binary dirs.
+
+**Do not (still):** do not make the Ninja preset the documented default — it
+needs an MSVC environment the VS preset does not. Do not give `ci-build` a
+generator. Do not add a `CMakeUserPresets.json` to the repository; that file is
+for a developer's own machine and is not shared.
+
+---
+
 ## After 14 — engine map (next, pick with a gate)
 
 Still one at a time. Still modular. Still `--gates`.

@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-76 Done · 43 Ready · 102 Later · 60 Far.
+77 Done · 42 Ready · 102 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -469,7 +469,7 @@ file. Not so an inspector can live in the engine.
 
 ## 18. Build and ship a `game.exe`
 
-*6 done · 6 ready · 19 rows.*
+*7 done · 5 ready · 19 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -482,7 +482,7 @@ file. Not so an inspector can live in the engine.
 | 8 | Zip / installer (no Visual Studio on the player machine) | **Ready** |  |
 | 10 | Fullscreen options, quality presets | **Ready** |  |
 | 13 | CI job that configures (and ideally compiles) on Linux | **Ready** |  |
-| 14 | `CMakePresets.json` so the dev box and CI stop configuring differently | **Ready** |  |
+| 14 | `CMakePresets.json` so the dev box and CI stop configuring differently | **Done** |  |
 | 15 | Release workflow: a tag produces a downloadable build | **Ready** |  |
 | 16 | A setup check that names the missing prerequisite instead of failing inside CMake | **Ready** |  |
 | 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | Later | Foundation #7 minidump. Foundation #6 is Done — `default_log_directory()` in `core/log_file.hpp` is the single function this row changes. |

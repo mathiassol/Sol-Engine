@@ -1,7 +1,7 @@
 # Pipeline registry — one identity per pipeline, held honest by the compiler
 
 Date: 31 Aug 2026
-Status: spec
+Status: implemented
 
 Not an ENGINE_MAP row. This is finding **A1** from the 31 Aug 14:11 audit
 (`docs/analysis/2026-08-31-1411-full.md`), the one criterion that report named as
