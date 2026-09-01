@@ -115,6 +115,11 @@ private:
     u32 allocated_width_ = 0;
     u32 allocated_height_ = 0;
     bool swapchain_in_common_ = true;
+    // Passes already reported as skipped. Some predicates are false every frame
+    // by design (AA defaults to Off), so an unlatched message would log at
+    // 60 Hz - the mistake alloc_frame_memory and warn_physics_capacity both
+    // avoid with a latch.
+    std::vector<std::string> skip_reported_;
 };
 
 } // namespace engine::renderer

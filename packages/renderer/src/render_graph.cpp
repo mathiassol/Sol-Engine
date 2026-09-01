@@ -10,6 +10,7 @@
 #include <engine/renderer/tonemap.hpp>
 #include <engine/rhi/device.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <unordered_set>
 
@@ -583,6 +584,7 @@ void RenderGraph::clear() {
     allocated_width_ = 0;
     allocated_height_ = 0;
     swapchain_in_common_ = true;
+    skip_reported_.clear();
 }
 
 bool RenderGraph::compile() {
@@ -819,6 +821,13 @@ void RenderGraph::execute(rhi::IDevice& device, const RenderSnapshot& snapshot) 
 
     for (RenderPassDesc& pass : passes_) {
         if (pass.should_execute && !pass.should_execute(snapshot)) {
+            if (std::find(skip_reported_.begin(), skip_reported_.end(), pass.name)
+                == skip_reported_.end()) {
+                skip_reported_.push_back(pass.name);
+                log(LogLevel::Info, LogChannel::Render,
+                    std::string("Graph: pass '") + pass.name
+                        + "' skipped - its should_execute predicate declined");
+            }
             continue;
         }
         const rhi::GpuDebugEvent pass_event(cmd,
