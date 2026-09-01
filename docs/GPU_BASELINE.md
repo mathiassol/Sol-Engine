@@ -38,7 +38,18 @@ silent warning.
 |------|-----|
 | `D3D12Core.dll` / Agility SDK | Inbox OS D3D12 already covers FL 11_0 + SM 6.0. No `D3D12SDKVersion` export. `agility=os` on the ship gate. |
 | `d3d12.dll`, `dxgi.dll` | OS components. |
-| VC++ redistributable DLLs | MSVC `/MD`. Players without Visual Studio install [vc_redist.x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The zip/installer (Build #8) is the place to bundle that, not the exe directory today. |
+| VC++ redistributable DLLs | Not needed. The CRT is linked **statically** (`CMAKE_MSVC_RUNTIME_LIBRARY` = `MultiThreaded`), so `game.exe` imports no `MSVCP140` / `VCRUNTIME140` and no `api-ms-win-crt-*` at all. Build #8. |
+
+Verify on any build, and on anything about to be released:
+
+```powershell
+dumpbin /dependents build\bin\Release\game.exe
+```
+
+Expected, and nothing else: `ole32.dll`, `VERSION.dll`, `USER32.dll`,
+`XINPUT1_4.dll`, `d3d12.dll`, `dxgi.dll`, `KERNEL32.dll`, `dxcompiler.dll`.
+Every one of those is either an OS component or shipped next to the exe. The
+release workflow asserts this before it uploads.
 
 Do not add Agility until a feature actually needs a newer D3D12 runtime than
 Windows 10 inbox provides (mesh shaders, enhanced barriers, and similar).
