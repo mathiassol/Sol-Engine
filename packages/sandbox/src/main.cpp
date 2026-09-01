@@ -13,6 +13,7 @@
 #include <engine/renderer/render_graph.hpp>
 #include <engine/renderer/render_snapshot.hpp>
 #include <engine/renderer/extract.hpp>
+#include <engine/renderer/frame_pipelines.hpp>
 #include <engine/renderer/ibl.hpp>
 #include <engine/renderer/pbr.hpp>
 #include <engine/renderer/pcf.hpp>
@@ -204,19 +205,26 @@ struct FlyCamera {
 };
 
 struct ForwardDemo {
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> shadow_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> sky_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> bloom_downsample_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> bloom_upsample_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> tonemap_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> fxaa_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> smaa_edge_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> smaa_weights_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> smaa_blend_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> motion_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> taa_pipeline;
-    std::unique_ptr<engine::rhi::IGraphicsPipeline> tonemap_aces_pipeline;
+    engine::renderer::FramePipelines pipelines;
+    std::vector<std::unique_ptr<engine::rhi::IGraphicsPipeline>> owned;
+    // Takes ownership and points `field` at the new pipeline. Replaces that
+    // field's previous owner rather than appending: hot reload fires on every
+    // shader save, and appending would retain every superseded pipeline for the
+    // life of the process. `owned` holds exactly the live set.
+    void adopt(engine::rhi::IGraphicsPipeline* engine::renderer::FramePipelines::*field,
+        std::unique_ptr<engine::rhi::IGraphicsPipeline> p) {
+        engine::rhi::IGraphicsPipeline* const previous = pipelines.*field;
+        pipelines.*field = p.get();
+        if (previous != nullptr) {
+            for (auto& slot : owned) {
+                if (slot.get() == previous) {
+                    slot = std::move(p);
+                    return;
+                }
+            }
+        }
+        owned.push_back(std::move(p));
+    }
     std::unique_ptr<engine::rhi::ITexture> taa_history[2];
     engine::u32 taa_history_w = 0;
     engine::u32 taa_history_h = 0;
@@ -272,19 +280,19 @@ void toggle_walk_mode(SandboxState& state) {
 
 sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo) {
     sandbox::WorldExtractAssets assets{};
-    assets.forward = demo.pipeline.get();
-    assets.shadow = demo.shadow_pipeline.get();
-    assets.sky = demo.sky_pipeline.get();
-    assets.bloom_downsample = demo.bloom_downsample_pipeline.get();
-    assets.bloom_upsample = demo.bloom_upsample_pipeline.get();
-    assets.tonemap = demo.tonemap_pipeline.get();
-    assets.fxaa = demo.fxaa_pipeline.get();
-    assets.smaa_edge = demo.smaa_edge_pipeline.get();
-    assets.smaa_weights = demo.smaa_weights_pipeline.get();
-    assets.smaa_blend = demo.smaa_blend_pipeline.get();
-    assets.motion = demo.motion_pipeline.get();
-    assets.taa = demo.taa_pipeline.get();
-    assets.tonemap_aces = demo.tonemap_aces_pipeline.get();
+    assets.forward = demo.pipelines.forward;
+    assets.shadow = demo.pipelines.shadow;
+    assets.sky = demo.pipelines.sky;
+    assets.bloom_downsample = demo.pipelines.bloom_downsample;
+    assets.bloom_upsample = demo.pipelines.bloom_upsample;
+    assets.tonemap = demo.pipelines.tonemap;
+    assets.fxaa = demo.pipelines.fxaa;
+    assets.smaa_edge = demo.pipelines.smaa_edge;
+    assets.smaa_weights = demo.pipelines.smaa_weights;
+    assets.smaa_blend = demo.pipelines.smaa_blend;
+    assets.motion = demo.pipelines.motion;
+    assets.taa = demo.pipelines.taa;
+    assets.tonemap_aces = demo.pipelines.tonemap_aces;
     assets.taa_history = nullptr;
     assets.taa_sample = demo.taa_frames;
     assets.taa_reset = !demo.taa_history_valid;
@@ -1864,6 +1872,33 @@ bool run_scene_load_gate(engine::assets::IAssetLoader& loader) {
     return passed;
 }
 
+// The safety net for the whole registry: every entry must have been created.
+// A forgotten creation row makes --gates red here instead of producing a frame
+// that is quietly missing a pass, which is what the old hand-copied plumbing
+// did. Iterating kFramePipelines is why the table exists.
+bool run_pipeline_set_gate(const engine::renderer::FramePipelines& pipelines) {
+    engine::u32 present = 0;
+    const char* first_missing = nullptr;
+    for (engine::usize k = 0; k < engine::renderer::kFramePipelineCount; ++k) {
+        const auto& entry = engine::renderer::kFramePipelines[k];
+        if (pipelines.*(entry.field) != nullptr) {
+            present += 1;
+        } else if (!first_missing) {
+            first_missing = entry.name;
+        }
+    }
+    const bool passed = present == engine::renderer::kFramePipelineCount;
+    char message[160];
+    std::snprintf(message, sizeof(message),
+        "Pipeline set gate: present=%u/%zu missing=%s (%s)",
+        present, engine::renderer::kFramePipelineCount,
+        first_missing ? first_missing : "none",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 // Filling the world to its cap used to be untestable: add_instance asserted, and
 // no gate can exercise a path that calls std::abort(). It returns a sentinel and
 // logs now, so the degradation can be asserted like anything else.
@@ -2832,7 +2867,7 @@ bool run_sky_gate(const ForwardDemo& demo) {
     const engine::math::Vec3 up = direction_from_ndc({0.f, 1.f}, constants);
     const bool ray_ok = forward.z > 0.9f && std::abs(forward.x) < 0.05f && up.y > forward.y;
 
-    const bool cube_ok = demo.sky_pipeline && demo.sky_cubemap
+    const bool cube_ok = demo.pipelines.sky && demo.sky_cubemap
         && demo.sky_cubemap->dimension() == engine::rhi::TextureDimension::Cube
         && demo.sky_cubemap->mip_levels() == 1
         && demo.sky_cubemap->width() == kCubemapSize
@@ -2882,8 +2917,8 @@ bool run_bloom_gate(const ForwardDemo& demo) {
 
     const bool intensity_ok = kCompositeBeforeTonemap && kIntensity > 0.f && kIntensity <= 0.15f
         && kMips == 5;
-    const bool pipeline_ok = demo.bloom_downsample_pipeline && demo.bloom_upsample_pipeline
-        && demo.tonemap_pipeline;
+    const bool pipeline_ok = demo.pipelines.bloom_downsample && demo.pipelines.bloom_upsample
+        && demo.pipelines.tonemap;
 
     const bool passed = knee_ok && karis_ok && mode_ok && intensity_ok && pipeline_ok;
     char message[224];
@@ -2916,10 +2951,10 @@ bool run_aa_gate(const ForwardDemo& demo) {
     const engine::f32 edge = luma({1.f, 1.f, 1.f}) - luma({0.f, 0.f, 0.f});
     const bool luma_ok = edge > 0.9f && luma({0.2f, 0.2f, 0.2f}) < 0.3f;
 
-    const bool fxaa_ok = demo.fxaa_pipeline != nullptr;
-    const bool smaa_ok = demo.smaa_edge_pipeline && demo.smaa_weights_pipeline
-        && demo.smaa_blend_pipeline;
-    const bool taa_ok = demo.taa_pipeline && demo.tonemap_aces_pipeline;
+    const bool fxaa_ok = demo.pipelines.fxaa != nullptr;
+    const bool smaa_ok = demo.pipelines.smaa_edge && demo.pipelines.smaa_weights
+        && demo.pipelines.smaa_blend;
+    const bool taa_ok = demo.pipelines.taa && demo.pipelines.tonemap_aces;
     const bool exclusive_ok = effective_mode(Mode::Taa, fxaa_ok, smaa_ok, taa_ok) == Mode::Taa
         && effective_mode(Mode::Taa, fxaa_ok, smaa_ok, false) == Mode::Smaa
         && effective_mode(Mode::Smaa, fxaa_ok, smaa_ok, taa_ok) == Mode::Smaa
@@ -3038,7 +3073,7 @@ bool run_taa_gate(const ForwardDemo& demo) {
 
     const bool hdr_ok = kBeforeTonemap && engine::renderer::aa::kTaaBeforeTonemap
         && engine::renderer::aa::kDefault == Mode::Off
-        && demo.taa_pipeline != nullptr && demo.tonemap_aces_pipeline != nullptr
+        && demo.pipelines.taa != nullptr && demo.pipelines.tonemap_aces != nullptr
         && effective_mode(Mode::Taa, true, true, true) == Mode::Taa
         && effective_mode(Mode::Smaa, true, true, true) == Mode::Smaa;
 
@@ -3339,7 +3374,7 @@ bool run_motion_gate(const ForwardDemo& demo) {
         }
     }
     const bool pass_ok = compiled && forward_i >= 0 && motion_i > forward_i && sky_i > motion_i;
-    const bool equal_ok = demo.motion_pipeline != nullptr
+    const bool equal_ok = demo.pipelines.motion != nullptr
         && static_cast<engine::u8>(engine::rhi::DepthTest::Equal)
             != static_cast<engine::u8>(engine::rhi::DepthTest::Less);
 
@@ -4745,7 +4780,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return;
     }
 
-    demo.pipeline = std::move(pipeline);
+    demo.adopt(&engine::renderer::FramePipelines::forward, std::move(pipeline));
     engine::log(engine::LogLevel::Info, engine::LogChannel::Render, "Shader hot-reload applied");
 }
 
@@ -5154,11 +5189,15 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     auto demo = std::make_unique<ForwardDemo>();
     vs_desc.file_path = shader_path;
     ps_desc.file_path = shader_path;
-    demo->pipeline = device->create_graphics_pipeline(
-        make_forward_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
-    if (!demo->pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Forward pipeline creation failed");
-        return false;
+    {
+        auto p = device->create_graphics_pipeline(
+            make_forward_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
+        if (!p) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+                "Forward pipeline creation failed");
+            return false;
+        }
+        demo->adopt(&engine::renderer::FramePipelines::forward, std::move(p));
     }
 
     engine::shaders::ShaderCompileDesc shadow_vs = vs_desc;
@@ -5168,10 +5207,15 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Shadow vertex shader compile failed");
         return false;
     }
-    demo->shadow_pipeline = device->create_graphics_pipeline(make_shadow_pipeline_desc(shadow_bytecode.data));
-    if (!demo->shadow_pipeline) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Shadow pipeline creation failed");
-        return false;
+    {
+        auto p = device->create_graphics_pipeline(
+            make_shadow_pipeline_desc(shadow_bytecode.data));
+        if (!p) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+                "Shadow pipeline creation failed");
+            return false;
+        }
+        demo->adopt(&engine::renderer::FramePipelines::shadow, std::move(p));
     }
 
     // Eleven passes, one shape: compile vs_main/ps_main out of one .hlsl,
@@ -5179,40 +5223,42 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     // near-identical sixteen-line blocks - six of which already went through
     // compile_fullscreen_hlsl while five hand-rolled the same thing.
     const struct {
-        std::unique_ptr<engine::rhi::IGraphicsPipeline> ForwardDemo::*field;
+        engine::rhi::IGraphicsPipeline* engine::renderer::FramePipelines::*field;
         const std::string& path;
         const char* name;
         MakePipelineDesc make_desc;
-    } pipelines[] = {
-        {&ForwardDemo::tonemap_pipeline, tonemap_path, "Tonemap",
+    } fullscreen_builds[] = {
+        {&engine::renderer::FramePipelines::tonemap, tonemap_path, "Tonemap",
          make_tonemap_pipeline_desc},
-        {&ForwardDemo::sky_pipeline, sky_path, "Sky",
+        {&engine::renderer::FramePipelines::sky, sky_path, "Sky",
          make_sky_pipeline_desc},
-        {&ForwardDemo::bloom_downsample_pipeline, bloom_down_path, "Bloom downsample",
+        {&engine::renderer::FramePipelines::bloom_downsample, bloom_down_path, "Bloom downsample",
          make_bloom_downsample_pipeline_desc},
-        {&ForwardDemo::bloom_upsample_pipeline, bloom_up_path, "Bloom upsample",
+        {&engine::renderer::FramePipelines::bloom_upsample, bloom_up_path, "Bloom upsample",
          make_bloom_upsample_pipeline_desc},
-        {&ForwardDemo::fxaa_pipeline, fxaa_path, "FXAA",
+        {&engine::renderer::FramePipelines::fxaa, fxaa_path, "FXAA",
          make_fxaa_pipeline_desc},
-        {&ForwardDemo::smaa_edge_pipeline, smaa_edge_path, "SMAA edge",
+        {&engine::renderer::FramePipelines::smaa_edge, smaa_edge_path, "SMAA edge",
          make_smaa_edge_pipeline_desc},
-        {&ForwardDemo::smaa_weights_pipeline, smaa_weights_path, "SMAA weights",
+        {&engine::renderer::FramePipelines::smaa_weights, smaa_weights_path, "SMAA weights",
          make_smaa_weights_pipeline_desc},
-        {&ForwardDemo::smaa_blend_pipeline, smaa_blend_path, "SMAA blend",
+        {&engine::renderer::FramePipelines::smaa_blend, smaa_blend_path, "SMAA blend",
          make_smaa_blend_pipeline_desc},
-        {&ForwardDemo::motion_pipeline, motion_path, "Motion vector",
+        {&engine::renderer::FramePipelines::motion, motion_path, "Motion vector",
          make_motion_pipeline_desc},
-        {&ForwardDemo::taa_pipeline, taa_path, "TAA",
+        {&engine::renderer::FramePipelines::taa, taa_path, "TAA",
          make_taa_pipeline_desc},
-        {&ForwardDemo::tonemap_aces_pipeline, tonemap_aces_path, "ACES tonemap",
+        {&engine::renderer::FramePipelines::tonemap_aces, tonemap_aces_path, "ACES tonemap",
          make_tonemap_aces_pipeline_desc},
     };
 
-    for (const auto& entry : pipelines) {
+    for (const auto& entry : fullscreen_builds) {
+        std::unique_ptr<engine::rhi::IGraphicsPipeline> p;
         if (!build_fullscreen_pipeline(*device, compiler, entry.path, entry.name,
-                entry.make_desc, (*demo).*entry.field)) {
+                entry.make_desc, p)) {
             return false;
         }
+        demo->adopt(entry.field, std::move(p));
     }
 
     if (!run_handle_gate(demo->meshes, *device, cube_data)) {
@@ -5397,6 +5443,9 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     if (!run_scene_load_gate(loader) && fail_on_gate) {
         return false;
     }
+    if (!run_pipeline_set_gate(demo->pipelines) && fail_on_gate) {
+        return false;
+    }
     if (!run_scene_name_gate() && fail_on_gate) {
         return false;
     }
@@ -5412,10 +5461,10 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     if (!run_light_gate(demo->world) && fail_on_gate) {
         return false;
     }
-    if (!run_shadow_gate(demo->world, demo->meshes, demo->shadow_pipeline.get()) && fail_on_gate) {
+    if (!run_shadow_gate(demo->world, demo->meshes, demo->pipelines.shadow) && fail_on_gate) {
         return false;
     }
-    if (!run_hdr_gate(demo->world, demo->tonemap_pipeline.get()) && fail_on_gate) {
+    if (!run_hdr_gate(demo->world, demo->pipelines.tonemap) && fail_on_gate) {
         return false;
     }
     if (!run_frustum_gate(demo->world, demo->camera, make_extract_assets(*demo)) && fail_on_gate) {
@@ -5694,7 +5743,7 @@ int run_app(int argc, char** argv) {
         }
     };
     callbacks.on_extract = [&app, &state](engine::renderer::RenderSnapshot& snapshot, engine::Arena& arena) {
-        if (!state.forward || !state.forward->pipeline) {
+        if (!state.forward || !state.forward->pipelines.forward) {
             return;
         }
         auto& world = state.forward->world;
