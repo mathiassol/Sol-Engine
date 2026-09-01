@@ -2,6 +2,11 @@
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Only the Ninja and Makefile generators honour this; the Visual Studio
+# generator ignores it and writes no compile_commands.json at all. So the
+# `vs2026` preset produces no compile database and the `ninja` preset does —
+# that is the reason the ninja preset exists, and what clangd wants pointing at.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Warnings

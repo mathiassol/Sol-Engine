@@ -1,0 +1,105 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+
+  "configurePresets": [
+    {
+      "name": "vs2026",
+      "displayName": "Visual Studio 18 2026 (default)",
+      "description": "The documented build. Same as: cmake -B build -G \"Visual Studio 18 2026\" -A x64",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "ninja",
+      "displayName": "Ninja Multi-Config (IDE or Developer Command Prompt only)",
+      "description": "Faster, and the only preset that produces compile_commands.json for clangd. Needs cl.exe on PATH: Visual Studio and VS Code arrange that when they open the folder; from a terminal you need a Developer Command Prompt or vcvars64.bat. Ninja itself ships with Visual Studio, so it is not an extra prerequisite.",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build-ninja"
+    },
+
+    {
+      "name": "ci",
+      "hidden": true,
+      "description": "No generator on purpose. The dev box pins Visual Studio 18 2026; the runner image ships whatever it ships, and letting CMake pick its default keeps CI working across image updates instead of breaking the day the image moves.",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build"
+    },
+    { "name": "ci-build", "inherits": "ci", "hidden": false, "displayName": "CI: configure both shipping configurations" },
+
+    {
+      "name": "options-off",
+      "hidden": true,
+      "inherits": "ci",
+      "description": "The modularity claim, kept honest. Configure only: with a backend switched off the sandbox does not compile, because its DXC and PNG includes are unguarded. That is a real gap and a separate one - these presets check that the CMake graph stays coherent.",
+      "binaryDir": "${sourceDir}/build-off"
+    },
+    {
+      "name": "no-d3d12",
+      "inherits": "options-off",
+      "displayName": "ENGINE_RHI_D3D12=OFF (configure only)",
+      "cacheVariables": { "ENGINE_RHI_D3D12": "OFF" }
+    },
+    {
+      "name": "no-win32",
+      "inherits": "options-off",
+      "displayName": "ENGINE_PLATFORM_WIN32=OFF (configure only)",
+      "cacheVariables": { "ENGINE_PLATFORM_WIN32": "OFF" }
+    },
+    {
+      "name": "no-sandbox",
+      "inherits": "options-off",
+      "displayName": "ENGINE_BUILD_SANDBOX=OFF (configure only)",
+      "cacheVariables": { "ENGINE_BUILD_SANDBOX": "OFF" }
+    },
+    {
+      "name": "no-game",
+      "inherits": "options-off",
+      "displayName": "ENGINE_BUILD_GAME=OFF (configure only)",
+      "cacheVariables": { "ENGINE_BUILD_GAME": "OFF" }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "debug",
+      "displayName": "Debug (sandbox + everything)",
+      "configurePreset": "vs2026",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release-game",
+      "displayName": "Release game.exe (player build)",
+      "configurePreset": "vs2026",
+      "configuration": "Release",
+      "targets": [ "game" ]
+    },
+    {
+      "name": "ninja-debug",
+      "displayName": "Debug via Ninja",
+      "configurePreset": "ninja",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-release-game",
+      "displayName": "Release game.exe via Ninja",
+      "configurePreset": "ninja",
+      "configuration": "Release",
+      "targets": [ "game" ]
+    },
+    {
+      "name": "ci-debug",
+      "displayName": "CI: Debug",
+      "configurePreset": "ci-build",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ci-release-game",
+      "displayName": "CI: Release game.exe",
+      "configurePreset": "ci-build",
+      "configuration": "Release",
+      "targets": [ "game" ]
+    }
+  ]
+}

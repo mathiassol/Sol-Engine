@@ -1,5 +1,7 @@
 # Build
-build/
+# build*/ rather than build/: CMakePresets.json puts the ninja preset in
+# build-ninja/ and the option-off presets in build-off/.
+build*/
 out/
 # `cmake --install --prefix dist` is the documented player-build layout in
 # README.md. Its content (PNG, glTF, WAV, HLSL) is not covered by the binary

@@ -34,9 +34,41 @@ The sandbox is the proving ground, not the product.
 git clone <your-remote-url> Engine
 cd Engine
 
+cmake --preset vs2026
+cmake --build --preset debug
+```
+
+`CMakePresets.json` is the one build definition — the CLI, Visual Studio, VS
+Code and CI all read it, so they cannot drift apart. `cmake --list-presets`
+shows all of them. The raw equivalent still works if you would rather not use
+presets:
+
+```powershell
 cmake -B build -G "Visual Studio 18 2026" -A x64
 cmake --build build --config Debug
 ```
+
+Clone somewhere short. A source path over about **140 characters** breaks
+configure on Windows: the build generates paths up to 119 characters of its own,
+and CMake's try-compile goes deeper still, so MSBuild hits the 260-character
+`MAX_PATH` limit and fails with an error that names nothing about this project.
+`cmake` warns at configure time if you are close. Enabling
+[long paths](https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation)
+also works.
+
+**Cold clone to running**, measured 1 Sep 2026 on a Windows 11 desktop at a
+42-character path: configure 4.7 s, Debug build 68 s, Release `game` 75 s,
+no-op rebuild 8.6 s. `build/` reaches 279 MB with both configurations present;
+the working tree is 13.6 MB.
+
+**Ninja preset** (optional). `cmake --preset ninja` builds the same tree ~2.6×
+faster — 26 s cold Debug against 68 s — and is the only preset that produces
+`build-ninja/compile_commands.json`, which clangd and other compile-database
+tools need; the Visual Studio generator does not write one. Ninja ships with
+Visual Studio, so it is not an extra prerequisite, but it needs `cl.exe` on
+`PATH`: Visual Studio and VS Code arrange that when they open the folder, and
+from a terminal you need a Developer Command Prompt. The Visual Studio preset
+stays the documented default because it needs none of that.
 
 **Run sandbox** — content mounts are resolved next to the executable
 (`build/bin/Debug`, layout `install`), which CMake refreshes on every build;
@@ -56,7 +88,7 @@ exists and tells you how to build it if not, then prints the exit code.
 D3D12 comes from Windows; Agility is not shipped.
 
 ```powershell
-cmake --build build --config Release --target game
+cmake --build --preset release-game
 .\build\bin\Release\game.exe
 ```
 
