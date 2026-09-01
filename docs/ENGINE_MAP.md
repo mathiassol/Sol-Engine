@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-82 Done · 39 Ready · 101 Later · 60 Far.
+82 Done · 40 Ready · 100 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -123,7 +123,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 
 Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 
-*8 done · 4 ready · 23 rows.*
+*8 done · 5 ready · 23 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -139,7 +139,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 16 | PSO disk cache keyed on the pipeline desc, so a cold start stops recompiling | **Ready** |  |
 | 17 | GPU crash breadcrumbs (D3D12 DRED) captured on device-removed | **Ready** |  |
 | 18 | MSAA render targets on `TextureDesc` | **Ready** |  |
-| 9 | UAV textures (compute write) | Later | A compute pass that **writes** a texture — GPU particles or compute bloom would be the first. Buffer UAVs already work. |
+| 9 | UAV textures (compute write) | **Ready** | |
 | 19 | Copy queue: uploads off the graphics timeline | Later | Uploads big enough to stall the graphics queue. Async loading is what would keep a copy queue busy, and it can start on the graphics queue. |
 | 20 | Transient memory pool / resource aliasing for graph transients | Later | Renderer #18 depth+normals — enough transients that peak VRAM is the wall. |
 | 21 | Indirect draw (`ExecuteIndirect`) on the contract | Later | A pass submitting more draws than the CPU can afford to record. Instanced draws already cut that cost a long way. |

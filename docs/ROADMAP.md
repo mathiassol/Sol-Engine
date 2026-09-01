@@ -1390,6 +1390,61 @@ for something the renderer does not actually expose.
 
 ---
 
+## Architecture — gates by domain, compute in the graph, a neutral RHI (done)
+
+**Why:** The 31 Aug audit graded Architecture B+ and named A1 — the eight-file
+pass-addition path — as "the single criterion separating this dimension from
+Exemplary". A1 shipped the same day. What remained were A4 (`main.cpp` at 26% of
+the engine, and growing), A2 (a D3D12 root-parameter model in a
+backend-agnostic header) and A3 (compute could not be a graph pass).
+
+**Choice:** Three, in the order their dependencies allowed.
+
+*A4.* The plan said "change 72 gate signatures, then move them". That could not
+start: `main.cpp` was one `namespace {` from line 105 to 5737, and an anonymous
+namespace is translation-unit local. So the shared surface came out first
+(`sandbox_common.hpp/.cpp`, 25 constants, 17 cvars, the three app types, the
+pipeline-desc family), then the gates moved to `gates/gates_<domain>.cpp` by
+name — assignment by name, not line range, so a private helper lands with its
+callers as a decision rather than an accident. Six helpers were measured as used
+from outside the region and handled individually. main.cpp: **6,189 → 1,351**.
+
+Then a registry rather than 72 signature changes: `kGates` classifies each gate
+`Cpu` or `Gpu`, with Cpu entries carrying a lambda that adapts the gate's own
+signature. Same guarantee, a fraction of the churn, and the stability plan's
+headless run filters on that kind instead of maintaining a second sequence.
+
+*A3.* `PassKind::Compute`. The dependency model needed nothing — the reads and
+writes arrays were already kind-agnostic — so ordering, missing-producer
+detection and cycle detection covered compute the moment the enumerator existed.
+Only `execute` needed a branch, which skips `begin_render_pass` and transitions
+declared writes as well as reads, so the ordering model and the state model
+cannot disagree.
+
+*A2.* The counts renamed to what they mean, and a binding contract at the top of
+`resources.hpp` saying what each one costs a backend. Not a bind-group redesign:
+Dawn chose the Vulkan model because Vulkan → D3D12 is the cheap direction, and
+that is the expected answer — but `rhi-vulkan` is Far, and designing against the
+one backend that exists is how abstractions get the wrong seams.
+
+**Gate (met):** **76 (pass) / 0 FAIL** in Debug and Release, debug layer 0/0/0.
+Three new invariants' worth of machine-checking, each watched failing:
+**gate-registry** (15) on five ways a gate can fall out of a sequence, and
+**rhi-vocabulary** (16) on a `register space` put back in a comment. The compute
+gate's first version was worthless and the fail-watch caught it — it asserted
+`compile()` returned true, which was true whether or not compute participated;
+it now asserts the pass is **rejected** when inserted before its producer.
+
+**Do not (still):** do not put gates back in `main.cpp`; add a file under
+`gates/` and a `kGates` entry, or invariant 15 fails. Do not raise `kMaxRefs`
+without a pass that needs it — the highest in use is 3 and `add_pass` clamps.
+Do not redesign the binding model to bind groups until `rhi-vulkan` exists to
+validate it. Do not read "compute participates" as "compute can write a graph
+texture": a declared write is ordering-only until RHI #9, which is why bloom is
+still fullscreen triangles.
+
+---
+
 ## After 14 — engine map (next, pick with a gate)
 
 Still one at a time. Still modular. Still `--gates`.
