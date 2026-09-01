@@ -123,7 +123,7 @@ rhi::GraphicsPipelineDesc overlay_pipeline_desc(std::span<const u8> vs, std::spa
     desc.pixel_shader = ps;
     desc.attributes[0] = {rhi::VertexSemantic::Position, 0, rhi::VertexFormat::Float3, 0};
     desc.attribute_count = 1;
-    desc.constant_buffer_count = 1;
+    desc.uniform_buffer_count = 1;
     desc.depth = rhi::DepthTest::Disabled;
     desc.cull = rhi::CullMode::None;
     desc.blend = rhi::BlendMode::Alpha;

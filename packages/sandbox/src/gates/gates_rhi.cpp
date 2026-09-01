@@ -198,7 +198,7 @@ bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::rhi::ComputePipelineDesc compute{};
     compute.compute_shader = compiled ? std::span<const engine::u8>(cs_bytecode.data)
                                       : std::span<const engine::u8>{};
-    compute.unordered_access_count = 1;
+    compute.storage_texture_count = 1;
     compute.debug_name = "srgb_gate";
     auto pso = compiled ? device.create_compute_pipeline(compute) : nullptr;
 
@@ -264,7 +264,7 @@ bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCom
     engine::rhi::ComputePipelineDesc compute{};
     compute.compute_shader = compiled ? std::span<const engine::u8>(cs_bytecode.data)
                                       : std::span<const engine::u8>{};
-    compute.unordered_access_count = 1;
+    compute.storage_texture_count = 1;
     compute.debug_name = "compute_gate";
     auto compute_pso = compiled ? device.create_compute_pipeline(compute) : nullptr;
     const bool pso_ok = compute_pso != nullptr;

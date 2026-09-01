@@ -55,11 +55,11 @@ public:
     virtual void set_unordered_access(u32 slot, IBuffer& buffer) = 0;
     // Bind a buffer as a shader-readable array, visible to every stage.
     //
-    // Backed by a *root* SRV, not a descriptor table: no descriptor is copied,
-    // no heap is set, and it costs 2 DWORDs of root signature. That is what
-    // makes it usable from a vertex shader - the texture SRV tables above are
-    // pixel-visible only. Lives in register space 1 so it never collides with
-    // the t0.. texture registers.
+    // Visible to every shader stage, where a sampled texture is not. That
+    // asymmetry is real and portable - it comes from how each backend binds a
+    // storage buffer versus a texture table - and shaders depend on it, so a
+    // backend must preserve it. resources.hpp's binding contract has the
+    // per-backend detail.
     virtual void set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes = 0) = 0;
     // Samplers are bound as static samplers on GraphicsPipelineDesc, not per
     // draw. There is deliberately no set_sampler: a dynamic sampler table has

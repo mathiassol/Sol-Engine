@@ -109,6 +109,44 @@ struct VertexAttribute {
     u32 offset = 0;
 };
 
+// ── The binding contract ─────────────────────────────────────────────────────
+//
+// A pipeline declares *how many* of each resource kind it uses, not where they
+// sit. Backends allocate the layout. These four counts are the whole contract,
+// and this table is what a second backend implements against - it exists so the
+// interface can stay in neutral vocabulary while the translation stays written
+// down rather than rediscovered.
+//
+//   count                   | D3D12 today                  | Vulkan would need
+//   ------------------------|------------------------------|-------------------------
+//   uniform_buffer_count    | root CBVs, b0..bN            | UNIFORM_BUFFER
+//                           |                              | descriptors, or push
+//                           |                              | constants for small ones
+//   sampled_texture_count   | one SRV descriptor table,    | COMBINED_IMAGE_SAMPLER or
+//                           | t0..tN, pixel-stage-visible  | SAMPLED_IMAGE in a set,
+//                           |                              | stage flags narrowed to
+//                           |                              | fragment to match
+//   storage_buffer_count    | root SRVs in a second        | STORAGE_BUFFER descriptors
+//                           | register space, all stages   | visible to all stages
+//   storage_texture_count   | UAV descriptor table         | STORAGE_IMAGE descriptors
+//                           | (compute pipelines only)     |
+//   sampler_count           | static samplers baked into   | immutable samplers in the
+//                           | the layout from SamplerDesc  | descriptor set layout
+//
+// Two asymmetries a backend has to preserve, because shaders depend on them:
+// storage buffers are visible to every stage while sampled textures are not,
+// and samplers are immutable - fixed at pipeline creation from SamplerDesc,
+// never bound per draw.
+//
+// Counts rather than an explicit layout is the debt, and it is the D3D12 shape:
+// WebGPU/Dawn chose the Vulkan binding model for the opposite reason, that
+// Vulkan -> D3D12 is the cheap translation direction and D3D12 -> Vulkan the
+// expensive one. Moving to bind groups is the expected answer, and the right
+// time is when rhi-vulkan exists to validate it (ENGINE_MAP RHI #12, Far) -
+// designing it against the one backend that exists is how abstractions get the
+// wrong seams. Until then the debt is bounded by this table and the
+// rhi-vocabulary invariant, which fails the build if D3D12 terms creep back in.
+
 struct GraphicsPipelineDesc {
     static constexpr u32 kMaxAttributes = 8;
     static constexpr u32 kMaxSamplers = 8;
@@ -117,10 +155,11 @@ struct GraphicsPipelineDesc {
     std::span<const u8> pixel_shader;
     VertexAttribute attributes[kMaxAttributes]{};
     u32 attribute_count = 0;
-    u32 constant_buffer_count = 0;
-    u32 shader_resource_count = 0;
-    // Root SRVs in register space 1, visible to all stages (t0..tN, space1).
-    u32 structured_buffer_count = 0;
+    u32 uniform_buffer_count = 0;
+    u32 sampled_texture_count = 0;
+    // Visible to every stage, unlike sampled_texture_count. See the binding
+    // contract above for why that asymmetry exists and what it costs a backend.
+    u32 storage_buffer_count = 0;
     SamplerDesc samplers[kMaxSamplers]{};
     u32 sampler_count = 0;
     DepthTest depth = DepthTest::Disabled;
@@ -136,9 +175,9 @@ struct GraphicsPipelineDesc {
 
 struct ComputePipelineDesc {
     std::span<const u8> compute_shader;
-    u32 constant_buffer_count = 0;
-    u32 shader_resource_count = 0;
-    u32 unordered_access_count = 0;
+    u32 uniform_buffer_count = 0;
+    u32 sampled_texture_count = 0;
+    u32 storage_texture_count = 0;
     u32 sampler_count = 0;
     std::string_view debug_name;
 };

@@ -912,6 +912,65 @@ if (Test-Path $gateDir) {
 
 Add-Result 'gate-registry' $gateSummary $gateViolations
 
+# ── 16. The RHI interface speaks no backend's vocabulary ─────────────────────
+# graphics-api-isolation already stops a d3d12.h from being *included* outside
+# its backend. This stops the vocabulary leaking instead of the header, which is
+# what actually happened: GraphicsPipelineDesc's counts were named after D3D12
+# root parameters and a comment read "Root SRVs in register space 1 ... (t0..tN,
+# space1)". Register spaces are HLSL, and a Vulkan backend reading that header
+# learns the wrong model (analizeMax A2).
+#
+# Two allowances, both deliberate. rhi.hpp's Backend enumerator names D3D12
+# because it names backends. The binding contract in resources.hpp names both
+# D3D12 and Vulkan on purpose - it is the translation table, and a table that
+# cannot say "D3D12" is useless.
+$vocabViolations = @()
+$vocabSummary = 'packages/rhi/include not present'
+$vocabRoot = 'packages/rhi/include'
+
+if (Test-Path $vocabRoot) {
+    # Word-boundary anchored, so `describe` does not match `SRV` and
+    # `unordered_map` does not match `UAV`.
+    $banned = @(
+        @{ Pattern = '\bD3D12\b'; Why = 'names a backend' },
+        @{ Pattern = '\bDXGI\b'; Why = 'names a backend' },
+        @{ Pattern = '\bSRV\b|\bUAV\b|\bCBV\b|\bRTV\b|\bDSV\b'; Why = 'is a D3D descriptor kind' },
+        @{ Pattern = 'root signature|root parameter|descriptor table'; Why = 'is a D3D12 layout concept' },
+        @{ Pattern = 'register space'; Why = 'is HLSL register syntax' },
+        @{ Pattern = '\b[tbsu][0-9]+\.\.'; Why = 'is HLSL register syntax' }
+    )
+    $scanned = 0
+    foreach ($f in Get-ChildItem $vocabRoot -Recurse -File -Include '*.hpp', '*.h') {
+        $scanned++
+        $rel = ((Resolve-Path -LiteralPath $f.FullName -Relative) -replace '\\', '/') -replace '^\./', ''
+        $inContract = $false
+        $lineNo = 0
+        foreach ($line in Get-Content -LiteralPath $f.FullName) {
+            $lineNo++
+            # The contract block runs from its banner to the first line that is
+            # not a comment, so it cannot silently grow to cover real code.
+            if ($line -match 'The binding contract') { $inContract = $true }
+            elseif ($inContract -and $line.Trim() -notmatch '^//') { $inContract = $false }
+            if ($inContract) { continue }
+            # rhi.hpp's Backend enumerator.
+            if ($rel.EndsWith('rhi.hpp') -and $line.Trim() -match '^(D3D12|Vulkan|Metal|None),?$') {
+                continue
+            }
+            foreach ($b in $banned) {
+                if ($line -match $b.Pattern) {
+                    $vocabViolations += ("${rel}:${lineNo}: '" + $Matches[0] + "' " + $b.Why +
+                        " - the RHI interface is backend-agnostic. Say it in neutral terms, or " +
+                        "put the per-backend detail in resources.hpp's binding contract.")
+                    break
+                }
+            }
+        }
+    }
+    $vocabSummary = "$scanned public RHI headers, no backend vocabulary outside the binding contract"
+}
+
+Add-Result 'rhi-vocabulary' $vocabSummary $vocabViolations
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 

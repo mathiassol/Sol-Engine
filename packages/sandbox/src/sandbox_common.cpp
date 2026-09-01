@@ -202,8 +202,8 @@ engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     desc.attributes[2] = {engine::rhi::VertexSemantic::TexCoord, 0,
         engine::rhi::VertexFormat::Float2, 24};
     desc.attribute_count = 3;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 7;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 7;
     desc.samplers[0] = engine::rhi::linear_wrap_sampler();
     desc.samplers[1] = engine::rhi::shadow_comparison_sampler();
     desc.samplers[2] = engine::rhi::linear_clamp_sampler();
@@ -214,7 +214,7 @@ engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     desc.color_format = engine::rhi::Format::RGBA16_FLOAT;
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
     // One root SRV (t0, space1) holding the frame's per-instance array.
-    desc.structured_buffer_count = 1;
+    desc.storage_buffer_count = 1;
     desc.debug_name = "forward";
     return desc;
 }
@@ -225,7 +225,7 @@ engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(std::span<const engi
     desc.attributes[0] = {engine::rhi::VertexSemantic::Position, 0,
         engine::rhi::VertexFormat::Float3, 0};
     desc.attribute_count = 1;
-    desc.constant_buffer_count = 1;
+    desc.uniform_buffer_count = 1;
     desc.depth = engine::rhi::DepthTest::Less;
     desc.cull = engine::rhi::CullMode::Front;
     desc.blend = engine::rhi::BlendMode::Opaque;
@@ -233,7 +233,7 @@ engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(std::span<const engi
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
     desc.slope_scaled_depth_bias = 1.5f;
     // One root SRV (t0, space1) holding the frame's per-instance array.
-    desc.structured_buffer_count = 1;
+    desc.storage_buffer_count = 1;
     desc.debug_name = "shadow";
     return desc;
 }
@@ -243,8 +243,8 @@ engine::rhi::GraphicsPipelineDesc make_tonemap_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 2;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 2;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
     desc.depth = engine::rhi::DepthTest::Disabled;
@@ -260,8 +260,8 @@ engine::rhi::GraphicsPipelineDesc make_sky_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 1;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 1;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
     desc.depth = engine::rhi::DepthTest::LessEqual;
@@ -279,8 +279,8 @@ engine::rhi::GraphicsPipelineDesc make_bloom_downsample_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 1;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 1;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
     desc.depth = engine::rhi::DepthTest::Disabled;
@@ -296,8 +296,8 @@ engine::rhi::GraphicsPipelineDesc make_bloom_upsample_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 2;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 2;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
     desc.depth = engine::rhi::DepthTest::Disabled;
@@ -313,8 +313,8 @@ engine::rhi::GraphicsPipelineDesc make_fxaa_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 1;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 1;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
     desc.depth = engine::rhi::DepthTest::Disabled;
@@ -343,7 +343,7 @@ engine::rhi::GraphicsPipelineDesc make_smaa_weights_pipeline_desc(
 engine::rhi::GraphicsPipelineDesc make_smaa_blend_pipeline_desc(
     std::span<const engine::u8> vs, std::span<const engine::u8> ps) {
     engine::rhi::GraphicsPipelineDesc desc = make_fxaa_pipeline_desc(vs, ps);
-    desc.shader_resource_count = 2;
+    desc.sampled_texture_count = 2;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.samplers[1] = engine::rhi::point_clamp_sampler();
     desc.sampler_count = 2;
@@ -363,7 +363,7 @@ engine::rhi::GraphicsPipelineDesc make_motion_pipeline_desc(
     desc.attributes[2] = {engine::rhi::VertexSemantic::TexCoord, 0,
         engine::rhi::VertexFormat::Float2, 24};
     desc.attribute_count = 3;
-    desc.constant_buffer_count = 1;
+    desc.uniform_buffer_count = 1;
     desc.depth = engine::rhi::DepthTest::Equal;
     desc.depth_write = false;
     desc.cull = engine::rhi::CullMode::Back;
@@ -371,7 +371,7 @@ engine::rhi::GraphicsPipelineDesc make_motion_pipeline_desc(
     desc.color_format = engine::renderer::motion::kFormat;
     desc.depth_format = engine::rhi::Format::D32_FLOAT;
     // One root SRV (t0, space1) holding the frame's per-instance array.
-    desc.structured_buffer_count = 1;
+    desc.storage_buffer_count = 1;
     desc.debug_name = "motion_vectors";
     return desc;
 }
@@ -381,8 +381,8 @@ engine::rhi::GraphicsPipelineDesc make_taa_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.constant_buffer_count = 1;
-    desc.shader_resource_count = 4;
+    desc.uniform_buffer_count = 1;
+    desc.sampled_texture_count = 4;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.samplers[1] = engine::rhi::point_clamp_sampler();
     desc.sampler_count = 2;
@@ -399,7 +399,7 @@ engine::rhi::GraphicsPipelineDesc make_tonemap_aces_pipeline_desc(
     engine::rhi::GraphicsPipelineDesc desc{};
     desc.vertex_shader = vs;
     desc.pixel_shader = ps;
-    desc.shader_resource_count = 1;
+    desc.sampled_texture_count = 1;
     desc.samplers[0] = engine::rhi::linear_clamp_sampler();
     desc.sampler_count = 1;
     desc.depth = engine::rhi::DepthTest::Disabled;

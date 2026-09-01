@@ -20,7 +20,7 @@ rhi::GraphicsPipelineDesc lines_pipeline_desc(std::span<const u8> vs, std::span<
     desc.attributes[0] = {rhi::VertexSemantic::Position, 0, rhi::VertexFormat::Float3, 0};
     desc.attributes[1] = {rhi::VertexSemantic::Color, 0, rhi::VertexFormat::Float3, 12};
     desc.attribute_count = 2;
-    desc.constant_buffer_count = 1;
+    desc.uniform_buffer_count = 1;
     desc.depth = rhi::DepthTest::Less;
     desc.cull = rhi::CullMode::None;
     desc.blend = rhi::BlendMode::Opaque;

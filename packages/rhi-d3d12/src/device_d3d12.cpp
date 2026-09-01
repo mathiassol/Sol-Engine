@@ -706,7 +706,7 @@ void D3D12CommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
 void D3D12CommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
     ENGINE_ASSERT(bound_pipeline_ != nullptr);
     ENGINE_ASSERT_MSG(bound_pipeline_->structured_root() != ~0u,
-        "pipeline declares no structured buffers (GraphicsPipelineDesc::structured_buffer_count)");
+        "pipeline declares no structured buffers (GraphicsPipelineDesc::storage_buffer_count)");
     auto& d3d_buffer = static_cast<D3D12Buffer&>(buffer);
     ENGINE_ASSERT(d3d_buffer.resource() != nullptr);
     // A root SRV takes a raw GPU virtual address - no descriptor, no heap, no
@@ -2189,26 +2189,26 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
     // this was one texture away from a 16-byte stack overwrite carrying a
     // pointer, immediately before a driver call.
     ENGINE_ASSERT_MSG(
-        desc.constant_buffer_count + desc.shader_resource_count
-            + desc.structured_buffer_count <= kMaxRootParams,
+        desc.uniform_buffer_count + desc.sampled_texture_count
+            + desc.storage_buffer_count <= kMaxRootParams,
         "graphics pipeline exceeds the root parameter budget "
-        "(constant_buffer_count + shader_resource_count + structured_buffer_count)");
-    ENGINE_ASSERT_MSG(desc.shader_resource_count <= kMaxRootRanges,
+        "(uniform_buffer_count + sampled_texture_count + storage_buffer_count)");
+    ENGINE_ASSERT_MSG(desc.sampled_texture_count <= kMaxRootRanges,
         "graphics pipeline exceeds the SRV descriptor-range budget");
 
     D3D12_ROOT_PARAMETER root_params[kMaxRootParams]{};
-    for (u32 i = 0; i < desc.constant_buffer_count; ++i) {
+    for (u32 i = 0; i < desc.uniform_buffer_count; ++i) {
         root_params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         root_params[i].Descriptor.ShaderRegister = i;
         root_params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
     D3D12_DESCRIPTOR_RANGE srv_ranges[kMaxRootRanges]{};
-    u32 root_count = desc.constant_buffer_count;
+    u32 root_count = desc.uniform_buffer_count;
     u32 srv_table_root = ~0u;
-    if (desc.shader_resource_count > 0) {
+    if (desc.sampled_texture_count > 0) {
         srv_table_root = root_count;
-        for (u32 i = 0; i < desc.shader_resource_count; ++i) {
+        for (u32 i = 0; i < desc.sampled_texture_count; ++i) {
             srv_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
             srv_ranges[i].NumDescriptors = 1;
             srv_ranges[i].BaseShaderRegister = i;
@@ -2226,9 +2226,9 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
     // clear of the t0.. texture registers, and ALL visibility is the whole
     // point - a vertex shader cannot read the pixel-visible tables above.
     u32 structured_root = ~0u;
-    if (desc.structured_buffer_count > 0) {
+    if (desc.storage_buffer_count > 0) {
         structured_root = root_count;
-        for (u32 i = 0; i < desc.structured_buffer_count; ++i) {
+        for (u32 i = 0; i < desc.storage_buffer_count; ++i) {
             root_params[root_count].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
             root_params[root_count].Descriptor.ShaderRegister = i;
             root_params[root_count].Descriptor.RegisterSpace = 1;
@@ -2384,19 +2384,19 @@ std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(
         log(LogLevel::Error, LogChannel::Render, "D3D12 create_compute_pipeline: empty bytecode");
         return nullptr;
     }
-    ENGINE_ASSERT_MSG(desc.constant_buffer_count + desc.shader_resource_count
-            + desc.unordered_access_count <= kMaxRootParams,
+    ENGINE_ASSERT_MSG(desc.uniform_buffer_count + desc.sampled_texture_count
+            + desc.storage_texture_count <= kMaxRootParams,
         "compute pipeline exceeds the root parameter budget "
-        "(constant_buffer_count + shader_resource_count + unordered_access_count)");
-    ENGINE_ASSERT_MSG(desc.shader_resource_count <= kMaxRootRanges
-            && desc.unordered_access_count <= kMaxRootRanges,
+        "(uniform_buffer_count + sampled_texture_count + storage_texture_count)");
+    ENGINE_ASSERT_MSG(desc.sampled_texture_count <= kMaxRootRanges
+            && desc.storage_texture_count <= kMaxRootRanges,
         "compute pipeline exceeds the descriptor-range budget");
 
     D3D12_ROOT_PARAMETER root_params[kMaxRootParams]{};
     D3D12_DESCRIPTOR_RANGE uav_ranges[kMaxRootRanges]{};
     D3D12_DESCRIPTOR_RANGE srv_ranges[kMaxRootRanges]{};
     u32 root_count = 0;
-    for (u32 i = 0; i < desc.constant_buffer_count; ++i) {
+    for (u32 i = 0; i < desc.uniform_buffer_count; ++i) {
         root_params[root_count].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         root_params[root_count].Descriptor.ShaderRegister = i;
         root_params[root_count].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -2404,9 +2404,9 @@ std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(
     }
 
     u32 uav_table_root = ~0u;
-    if (desc.unordered_access_count > 0) {
+    if (desc.storage_texture_count > 0) {
         uav_table_root = root_count;
-        for (u32 i = 0; i < desc.unordered_access_count; ++i) {
+        for (u32 i = 0; i < desc.storage_texture_count; ++i) {
             uav_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
             uav_ranges[i].NumDescriptors = 1;
             uav_ranges[i].BaseShaderRegister = i;
@@ -2421,9 +2421,9 @@ std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(
     }
 
     u32 srv_table_root = ~0u;
-    if (desc.shader_resource_count > 0) {
+    if (desc.sampled_texture_count > 0) {
         srv_table_root = root_count;
-        for (u32 i = 0; i < desc.shader_resource_count; ++i) {
+        for (u32 i = 0; i < desc.sampled_texture_count; ++i) {
             srv_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
             srv_ranges[i].NumDescriptors = 1;
             srv_ranges[i].BaseShaderRegister = i;

@@ -20,7 +20,7 @@ struct GpuMemoryStats {
 };
 
 // Per-frame upload ring occupancy. Separate from GpuMemoryStats because that
-// one is a DXGI adapter query about video memory, while this is the backend's
+// one is an adapter query about video memory, while this is the backend's
 // own bump-allocator bookkeeping - one struct fed by two sources of truth is
 // how a stats accessor starts lying.
 //
@@ -38,7 +38,8 @@ struct FrameRingStats {
     u64 exhausted_frames = 0;
 };
 
-// Packed like the D3D12 enums (no graphics API in this header).
+// Packed to match the common backend encoding, so a backend can cast rather
+// than switch. No graphics API in this header.
 // Feature Level 11_0 = 0xB000. Shader Model 6.0 = 0x60.
 inline constexpr u32 kGpuFeatureLevel_11_0 = 0xB000;
 inline constexpr u32 kGpuShaderModel_6_0 = 0x60;

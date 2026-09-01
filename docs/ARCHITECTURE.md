@@ -145,7 +145,13 @@ What a second backend would still have to deal with, in rough order of cost:
 - **Descriptor sets.** `set_constant_buffer` / `set_shader_resource` are a flat
   per-slot model with no set concept, so a Vulkan backend must synthesize one
   (push descriptors, or per-frame pools with a dirty-slot cache). Metal's
-  argument tables map to it almost directly.
+  argument tables map to it almost directly. **The binding contract at the top
+  of `packages/rhi/include/engine/rhi/resources.hpp` is the table** — what each
+  of the four counts means, what D3D12 makes of it, and what Vulkan must
+  synthesise — and the `rhi-vocabulary` invariant fails the build if backend
+  terms return to those headers. Counts rather than an explicit layout is the
+  known debt; bind groups are the expected answer, and the time to design them
+  is when `rhi-vulkan` exists to validate one (RHI #12, Far).
 - **Barriers.** `transition()` takes the old state explicitly, D3D12-style.
   That works because `RenderGraph` centralizes the tracking — exactly one
   `transition()` call escapes it, in a compute gate. The gap is that

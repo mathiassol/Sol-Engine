@@ -110,7 +110,7 @@ is what sets `RemoteSigned`. Under 5.1 the command needs
 `-ExecutionPolicy Bypass`. The script itself is compatible with both, and CI
 runs it under both.
 
-Machine-checks the non-negotiables above plus doc-level drift. Fifteen checks:
+Machine-checks the non-negotiables above plus doc-level drift. Sixteen checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
@@ -124,8 +124,10 @@ CRLF for shell scripts) plus the root `.clang-format` still being the
 `DisableFormat: true` no-op that keeps Visual Studio's format-as-you-type off
 this hand-tuned tree, and **gate-registry** — every gate defined under
 `packages/sandbox/src/gates/` being declared in `gates.hpp` and classified `Cpu`
-or `Gpu` in `kGates`, so a gate cannot exist and run in no sequence. That map
-check reads
+or `Gpu` in `kGates`, so a gate cannot exist and run in no sequence, and
+**rhi-vocabulary** — no `D3D12`/`DXGI`/`SRV`/`UAV`/register-space terms in the
+public `rhi` headers outside the binding contract that exists to name them.
+That map check reads
 ENGINE_MAP.md as a graph: every `Category #N` in a **Finish first** must
 resolve, a Later row whose named blockers are all Done must be flipped to
 Ready, and no two rows may block each other — a loop means neither ever
