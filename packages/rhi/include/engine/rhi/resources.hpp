@@ -201,6 +201,10 @@ struct GraphicsPipelineDesc {
     Format color_format = Format::RGBA8_UNORM;
     Format depth_format = Format::Unknown;
     f32 slope_scaled_depth_bias = 0.f;
+    // Must equal the sample count of every target this pipeline draws into.
+    // The backend rejects a mismatch by name rather than returning null,
+    // because a null pipeline reads as "feature off" further up.
+    u32 sample_count = 1;
     std::string_view debug_name;
 };
 
@@ -228,6 +232,10 @@ struct TextureDesc {
     TextureDimension dimension = TextureDimension::Tex2D;
     Format format = Format::RGBA8_UNORM;
     TextureUsage usage = TextureUsage::RenderTarget;
+    // 1 is no multisampling. A multisampled target cannot be sampled directly -
+    // it is resolved into a single-sample texture first, which is what
+    // RenderPassInfo::resolve does.
+    u32 sample_count = 1;
 };
 
 inline u32 texture_array_size(const TextureDesc& desc) {
@@ -255,6 +263,9 @@ public:
     virtual u32 array_size() const = 0;
     virtual TextureDimension dimension() const = 0;
     virtual Format format() const = 0;
+    // 1 when not multisampled. A pipeline's sample count must match the
+    // target it draws into, or pipeline creation fails.
+    virtual u32 sample_count() const = 0;
 };
 
 } // namespace engine::rhi

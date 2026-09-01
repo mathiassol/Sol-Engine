@@ -505,6 +505,7 @@ ResourceHandle RenderGraph::create_transient(const TransientDesc& desc) {
     record.width = desc.width;
     record.height = desc.height;
     record.extent_div = desc.extent_div == 0 ? 1u : desc.extent_div;
+    record.sample_count = desc.sample_count == 0 ? 1u : desc.sample_count;
     record.is_depth = desc.usage == rhi::TextureUsage::DepthStencil
         || desc.usage == rhi::TextureUsage::DepthShaderResource
         || desc.format == rhi::Format::D32_FLOAT;
@@ -765,6 +766,7 @@ void RenderGraph::ensure_transients(rhi::IDevice& device) {
         }
         desc.format = record.format;
         desc.usage = record.usage;
+        desc.sample_count = record.sample_count;
         record.texture = device.create_texture(desc);
         if (record.texture) {
             device.set_debug_name(*record.texture, record.name);

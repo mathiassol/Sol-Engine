@@ -543,6 +543,12 @@ void D3D12CommandList::begin_render_pass(const RenderPassInfo& info) {
     const u32 w = color ? color->width() : (depth ? depth->width() : device_.width());
     const u32 h = color ? color->height() : (depth ? depth->height() : device_.height());
 
+    pass_color_ = color;
+    pass_resolve_ = info.resolve ? static_cast<D3D12Texture*>(info.resolve) : nullptr;
+    // Depth carries the count when a pass is depth-only, which is how a shadow
+    // pass would be multisampled.
+    pass_samples_ = color ? color->sample_count() : (depth ? depth->sample_count() : 1u);
+
     D3D12_VIEWPORT viewport{};
     viewport.Width    = static_cast<f32>(w);
     viewport.Height   = static_cast<f32>(h);
@@ -579,7 +585,65 @@ void D3D12CommandList::begin_render_pass(const RenderPassInfo& info) {
     in_pass_ = true;
 }
 
-void D3D12CommandList::end_render_pass() { in_pass_ = false; }
+void D3D12CommandList::end_render_pass() {
+    resolve_pass_target();
+    in_pass_ = false;
+    pass_color_ = nullptr;
+    pass_resolve_ = nullptr;
+    pass_samples_ = 1;
+}
+
+// RenderPassInfo::resolve says *what*, not *how*: D3D12 resolves with an
+// explicit call once the pass is over, Vulkan hangs pResolveAttachments off the
+// subpass and never issues one. Doing it here keeps that difference inside the
+// backend, which is the whole reason the field is not a `resolve_texture()`
+// command on the interface.
+void D3D12CommandList::resolve_pass_target() {
+    if (pass_resolve_ == nullptr) {
+        return;
+    }
+
+    // Every one of these is a debug-layer error and a removed device if it
+    // reaches the API. Naming the numbers beats reading a HRESULT.
+    const char* problem = nullptr;
+    if (pass_color_ == nullptr) {
+        problem = "a pass with no color target cannot resolve";
+    } else if (pass_samples_ <= 1) {
+        problem = "the source is single-sample, so there is nothing to resolve";
+    } else if (pass_resolve_->sample_count() != 1) {
+        problem = "the destination is itself multisampled";
+    } else if (pass_color_->width() != pass_resolve_->width()
+        || pass_color_->height() != pass_resolve_->height()) {
+        problem = "source and destination extents differ";
+    } else if (pass_color_->format() != pass_resolve_->format()) {
+        problem = "source and destination formats differ";
+    }
+    if (problem != nullptr) {
+        char message[224];
+        std::snprintf(message, sizeof(message),
+            "Resolve skipped: %s (src %ux%u x%u fmt=%d, dst %ux%u x%u fmt=%d)", problem,
+            pass_color_ ? pass_color_->width() : 0u, pass_color_ ? pass_color_->height() : 0u,
+            pass_samples_, pass_color_ ? static_cast<int>(pass_color_->format()) : -1,
+            pass_resolve_->width(), pass_resolve_->height(), pass_resolve_->sample_count(),
+            static_cast<int>(pass_resolve_->format()));
+        log(LogLevel::Error, LogChannel::Render, message);
+        return;
+    }
+
+    // Both textures arrive and leave as RENDER_TARGET, so the render graph's
+    // own transitions stay correct and know nothing about the resolve.
+    auto* cmd = device_.d3d12_cmd_list();
+    d3d_barrier(cmd, pass_color_->resource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+    d3d_barrier(cmd, pass_resolve_->resource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_RESOLVE_DEST);
+    cmd->ResolveSubresource(pass_resolve_->resource(), 0, pass_color_->resource(), 0,
+        to_dxgi(pass_color_->format()));
+    d3d_barrier(cmd, pass_resolve_->resource(), D3D12_RESOURCE_STATE_RESOLVE_DEST,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+    d3d_barrier(cmd, pass_color_->resource(), D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+}
 
 void D3D12CommandList::transition(ITexture& texture, ResourceState from, ResourceState to) {
     if (from == to) {
@@ -640,6 +704,16 @@ void D3D12CommandList::set_viewport(u32 width, u32 height) {
 
 void D3D12CommandList::set_pipeline(IGraphicsPipeline& pipeline) {
     auto& d3d_pipeline = static_cast<D3D12Pipeline&>(pipeline);
+    if (in_pass_ && d3d_pipeline.sample_count() != pass_samples_) {
+        // The draw would be dropped by the runtime with a debug-layer line that
+        // names neither the pipeline nor the target. Say both numbers instead.
+        char message[224];
+        std::snprintf(message, sizeof(message),
+            "Pipeline sample count %u does not match the %u-sample target it is bound "
+            "against; the draw will be rejected",
+            d3d_pipeline.sample_count(), pass_samples_);
+        log(LogLevel::Error, LogChannel::Render, message);
+    }
     bound_pipeline_ = &d3d_pipeline;
     bound_compute_ = nullptr;
     auto* cmd = device_.d3d12_cmd_list();
@@ -690,11 +764,18 @@ void D3D12CommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize offs
 }
 
 void D3D12CommandList::set_shader_resource(u32 slot, ITexture& texture) {
-    ENGINE_ASSERT(bound_pipeline_ != nullptr);
-    ENGINE_ASSERT_MSG(bound_pipeline_->srv_table_root() != ~0u,
-        "pipeline has no shader-resource table");
+    ENGINE_ASSERT_MSG(bound_pipeline_ != nullptr || bound_compute_ != nullptr,
+        "set_shader_resource with no pipeline bound");
     auto& d3d_texture = static_cast<D3D12Texture&>(texture);
     ENGINE_ASSERT_MSG(d3d_texture.srv_cpu().ptr != 0, "texture has no shader-resource view");
+    if (bound_compute_ != nullptr) {
+        ENGINE_ASSERT_MSG(bound_compute_->srv_table_root() != ~0u,
+            "compute pipeline has no shader-resource table");
+        device_.bind_compute_srv(slot, d3d_texture.srv_cpu(), bound_compute_->srv_table_root());
+        return;
+    }
+    ENGINE_ASSERT_MSG(bound_pipeline_->srv_table_root() != ~0u,
+        "pipeline has no shader-resource table");
     device_.bind_shader_srv(slot, d3d_texture.srv_cpu(), bound_pipeline_->srv_table_root());
 }
 
@@ -1592,7 +1673,10 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
     resource_desc.DepthOrArraySize = 1;
     resource_desc.MipLevels = 1;
     resource_desc.Format = dxgi;
-    resource_desc.SampleDesc.Count = 1;
+    // The only creation path that can be multisampled. A sampled, storage, cube
+    // or array texture stays single-sample: multisampling one of those means
+    // resolving it first, which is what RenderPassInfo::resolve is for.
+    resource_desc.SampleDesc.Count = desc.sample_count == 0 ? 1u : desc.sample_count;
     resource_desc.Flags = is_depth
         ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
         : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -1619,22 +1703,37 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
         return nullptr;
     }
 
+    const u32 samples = desc.sample_count == 0 ? 1u : desc.sample_count;
+    const bool multisampled = samples > 1;
+
     D3D12_CPU_DESCRIPTOR_HANDLE view = view_heap->GetCPUDescriptorHandleForHeapStart();
     if (is_depth) {
         D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
         dsv_desc.Format = dxgi;
-        dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        // A multisampled view is a different dimension, not a flag on the same
+        // one. Getting this wrong is a debug-layer error, not a wrong picture.
+        dsv_desc.ViewDimension = multisampled ? D3D12_DSV_DIMENSION_TEXTURE2DMS
+                                              : D3D12_DSV_DIMENSION_TEXTURE2D;
         device_->CreateDepthStencilView(resource, &dsv_desc, view);
         set_object_name(resource, "engine/transient_depth");
         set_object_name(view_heap, "engine/transient_dsv");
+    } else if (multisampled) {
+        D3D12_RENDER_TARGET_VIEW_DESC rtv_desc{};
+        rtv_desc.Format = dxgi;
+        rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMS;
+        device_->CreateRenderTargetView(resource, &rtv_desc, view);
+        set_object_name(resource, "engine/transient_color_ms");
+        set_object_name(view_heap, "engine/transient_rtv_ms");
     } else {
         device_->CreateRenderTargetView(resource, nullptr, view);
         set_object_name(resource, "engine/transient_color");
         set_object_name(view_heap, "engine/transient_rtv");
     }
 
-    return std::make_unique<D3D12Texture>(this, resource, desc.width, desc.height,
+    auto texture = std::make_unique<D3D12Texture>(this, resource, desc.width, desc.height,
         desc.format, view_heap, view, is_depth, true);
+    texture->set_sample_count(samples);
+    return texture;
 }
 
 void D3D12Device::write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) {
@@ -2085,10 +2184,19 @@ std::unique_ptr<ITexture> D3D12Device::create_color_shader_resource_texture(
     resource_desc.SampleDesc.Count = 1;
     resource_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
+    // Same opaque black the plain render-target path bakes, and for the same
+    // reason: this texture is a render target that happens to be sampled
+    // afterwards, so clearing it is normal and a null clear value costs the
+    // driver its fast clear and emits a debug-layer warning every time.
+    // Color4's default alpha is 1, so the two agree by construction.
+    D3D12_CLEAR_VALUE clear_value{};
+    clear_value.Format = dxgi;
+    clear_value.Color[3] = 1.f;
+
     ID3D12Resource* resource = nullptr;
     if (FAILED(device_->CreateCommittedResource(
             &heap_props, D3D12_HEAP_FLAG_NONE, &resource_desc,
-            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&resource)))) {
+            D3D12_RESOURCE_STATE_COMMON, &clear_value, IID_PPV_ARGS(&resource)))) {
         rtv_heap->Release();
         srv_heap->Release();
         return nullptr;
@@ -2171,6 +2279,26 @@ std::unique_ptr<ITexture> D3D12Device::create_storage_shader_resource_texture(
         desc.format, nullptr, D3D12_CPU_DESCRIPTOR_HANDLE{}, false, true);
     texture->set_srv(srv_heap, srv_cpu);
     return texture;
+}
+
+// The compute twin of bind_shader_srv. Same descriptor copy, different root
+// setter - the two are separate root-argument spaces in D3D12, so binding
+// through the graphics one from a dispatch silently binds nothing.
+void D3D12Device::bind_compute_srv(u32 slot, D3D12_CPU_DESCRIPTOR_HANDLE src, u32 table_root) {
+    ENGINE_ASSERT(shader_heap_.get() != nullptr);
+    ENGINE_ASSERT(src.ptr != 0);
+    const u32 index = next_shader_descriptor();
+
+    D3D12_CPU_DESCRIPTOR_HANDLE dest = shader_cpu_;
+    dest.ptr += static_cast<SIZE_T>(index) * shader_descriptor_size_;
+    device_->CopyDescriptorsSimple(1, dest, src, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+    ID3D12DescriptorHeap* heaps[] = {shader_heap_.get()};
+    cmd_list_->SetDescriptorHeaps(1, heaps);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu = shader_gpu_;
+    gpu.ptr += static_cast<UINT64>(index) * shader_descriptor_size_;
+    cmd_list_->SetComputeRootDescriptorTable(table_root + slot, gpu);
 }
 
 void D3D12Device::bind_compute_storage_texture(u32 slot, ID3D12Resource* resource,
@@ -2468,7 +2596,11 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
         pso_desc.NumRenderTargets = 1;
         pso_desc.RTVFormats[0] = to_dxgi(desc.color_format);
     }
-    pso_desc.SampleDesc.Count = 1;
+    // Must equal the sample count of every target this pipeline is bound
+    // against; D3D12 rejects the draw otherwise. The command list checks that
+    // at bind time so the mismatch names both numbers instead of appearing as
+    // a debug-layer line about a pipeline nobody can identify.
+    pso_desc.SampleDesc.Count = desc.sample_count == 0 ? 1u : desc.sample_count;
 
     ID3D12PipelineState* pso = nullptr;
     if (FAILED(device_->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pso)))) {
@@ -2489,8 +2621,10 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
     std::snprintf(pso_name, sizeof(pso_name), "engine/pso_%s", name);
     set_object_name(root_sig, root_name);
     set_object_name(pso, pso_name);
-    return std::make_unique<D3D12Pipeline>(pso, root_sig, srv_table_root, structured_root,
+    auto pipeline = std::make_unique<D3D12Pipeline>(pso, root_sig, srv_table_root, structured_root,
         ia_topology);
+    pipeline->set_sample_count(pso_desc.SampleDesc.Count);
+    return pipeline;
 }
 
 std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(

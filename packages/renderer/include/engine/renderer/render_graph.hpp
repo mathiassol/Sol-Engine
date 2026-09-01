@@ -60,6 +60,10 @@ struct TransientDesc {
     // because every call site uses positional aggregate initialisation - a new
     // field in the middle silently rebinds all of them.
     bool storage = false;
+    // 1 is single-sample. A multisampled transient is never sampled directly;
+    // it is the source of a RenderPassInfo::resolve into a single-sample one.
+    // Appended for the same reason `storage` is last.
+    u32 sample_count = 1;
 };
 
 struct RenderPassDesc {
@@ -111,6 +115,7 @@ private:
         u32 width = 0;
         u32 height = 0;
         u32 extent_div = 1;
+        u32 sample_count = 1;
     };
 
     rhi::ITexture* resolve(rhi::IDevice& device, ResourceHandle handle);

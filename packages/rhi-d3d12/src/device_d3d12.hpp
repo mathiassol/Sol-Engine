@@ -61,6 +61,8 @@ public:
     u32 array_size() const override;
     TextureDimension dimension() const override;
     Format format() const override;
+    u32 sample_count() const override { return sample_count_; }
+    void set_sample_count(u32 count) { sample_count_ = count; }
 
     ID3D12Resource* resource() const;
     D3D12_CPU_DESCRIPTOR_HANDLE view() const;
@@ -82,6 +84,7 @@ private:
     u32 width_ = 0;
     u32 height_ = 0;
     u32 mip_levels_ = 1;
+    u32 sample_count_ = 1;
     u32 array_size_ = 1;
     TextureDimension dimension_ = TextureDimension::Tex2D;
     Format format_ = Format::Unknown;
@@ -115,12 +118,15 @@ public:
     u32 srv_table_root() const;
     u32 structured_root() const;
     D3D12_PRIMITIVE_TOPOLOGY topology() const;
+    u32 sample_count() const { return sample_count_; }
+    void set_sample_count(u32 count) { sample_count_ = count; }
 
 private:
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_sig_;
     u32 srv_table_root_ = ~0u;
     u32 structured_root_ = ~0u;
+    u32 sample_count_ = 1;
     D3D12_PRIMITIVE_TOPOLOGY topology_ = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 };
 
@@ -177,6 +183,8 @@ public:
     std::string_view last_debug_marker() const override;
 
 private:
+    void resolve_pass_target();
+
     static constexpr u32 kMaxDebugEvents = 16;
     static constexpr u32 kDebugNameBytes = 64;
 
@@ -185,6 +193,11 @@ private:
     D3D12ComputePipeline* bound_compute_ = nullptr;
     bool recording_ = false;
     bool in_pass_   = false;
+    // What the pass in flight is drawing into, kept so end_render_pass can
+    // resolve and set_pipeline can check the sample count against it.
+    D3D12Texture* pass_color_ = nullptr;
+    D3D12Texture* pass_resolve_ = nullptr;
+    u32 pass_samples_ = 1;
     u32 event_depth_ = 0;
     char event_stack_[kMaxDebugEvents][kDebugNameBytes]{};
     char last_marker_[kDebugNameBytes]{};
@@ -267,6 +280,7 @@ private:
     bool create_shader_heap();
     void bind_shader_srv(u32 slot, D3D12_CPU_DESCRIPTOR_HANDLE src, u32 table_root);
     void bind_compute_uav(u32 slot, ID3D12Resource* resource, usize size, u32 table_root);
+    void bind_compute_srv(u32 slot, D3D12_CPU_DESCRIPTOR_HANDLE src, u32 table_root);
     void bind_compute_storage_texture(u32 slot, ID3D12Resource* resource, Format format,
         u32 table_root);
     std::unique_ptr<ITexture> create_sampled_texture(const TextureDesc& desc, const void* data);

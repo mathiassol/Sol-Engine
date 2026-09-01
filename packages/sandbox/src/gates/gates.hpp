@@ -156,6 +156,12 @@ bool run_rhi_contract_gate(
 bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path);
 
+// RHI #18: a 4x target reports its count, a mismatched pipeline is diagnosed by
+// name, the resolve lands single-sample, and the resolved edge has the partial
+// coverage a single-sample raster cannot produce.
+bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
+    const std::string& shader_path);
+
 bool run_storage_texture_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
 

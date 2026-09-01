@@ -69,7 +69,11 @@ declines.
    `{Graphics, Copy, Compute}`; a compute pass is ordered, missing-producer
    checked and cycle-checked like any other, and since RHI #9 it can write a
    transient too — create it with `storage = true` and declare
-   `Access::StorageWrite`.
+   `Access::StorageWrite`. Since RHI #18 a transient can also carry
+   `sample_count > 1`; a multisampled one is never sampled directly, it is the
+   source of a `RenderPassInfo::resolve` into a single-sample transient, and
+   the pass's pipeline must declare the same `sample_count` or the backend
+   rejects the bind by name.
 5. **Record** → declare the recorder in `render_snapshot.hpp`, define it in
    `render_graph.cpp`.
 6. **Gate** → a `run_<name>_gate()` in

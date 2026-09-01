@@ -533,6 +533,17 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
+    std::string msaa_path;
+    if (!resolve_content(loader, kMsaaGateShader, msaa_path)) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "msaa_gate.hlsl missing");
+        if (fail_on_gate) {
+            return false;
+        }
+    } else if (!run_msaa_gate(*device, compiler, msaa_path) && fail_on_gate) {
+        return false;
+    }
+
     std::string srgb_gate_path;
     if (!resolve_content(loader, kSrgbGateShader, srgb_gate_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,

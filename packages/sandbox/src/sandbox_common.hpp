@@ -102,6 +102,7 @@ constexpr const char* kTonemapAcesShader = "/shaders/tonemap_aces.hlsl";
 constexpr const char* kComputeGateShader = "/shaders/compute_gate.hlsl";
 constexpr const char* kSrgbGateShader = "/shaders/srgb_gate.hlsl";
 constexpr const char* kStorageTextureGateShader = "/shaders/storage_texture_gate.hlsl";
+constexpr const char* kMsaaGateShader = "/shaders/msaa_gate.hlsl";
 constexpr engine::u32 kComputeGateMagic = 0xC0DE0001u;
 constexpr const char* kCubeMesh = "/content/meshes/cube.obj";
 constexpr const char* kHuskyMesh = "/content/meshes/cartoon_husky.gltf";

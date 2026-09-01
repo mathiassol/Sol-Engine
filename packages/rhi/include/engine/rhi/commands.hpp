@@ -25,6 +25,12 @@ struct Color4 {
 struct RenderPassInfo {
     ITexture* color = nullptr;
     ITexture* depth = nullptr;
+    // Where a multisampled `color` is resolved when the pass ends. Null means no
+    // resolve. Declaring the intent rather than the mechanism lets each backend
+    // use what it wants - a resolve at end-of-pass here, an attachment on the
+    // render pass elsewhere - and keeps the graph declaring what it wants rather
+    // than how.
+    ITexture* resolve = nullptr;
     Color4 clear_color{};
     bool clear_color_target = true;
     bool clear_depth = true;

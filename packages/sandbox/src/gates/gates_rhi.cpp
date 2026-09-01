@@ -90,6 +90,223 @@ bool run_storage_texture_gate(engine::rhi::IDevice& device,
 }
 
 
+bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
+    const std::string& shader_path) {
+    // RHI #18. Multisampling is the first RHI feature whose shape differs
+    // between D3D12 and Vulkan - one resolves with a call after the pass, the
+    // other with an attachment on it - so the contract had to say *what*
+    // (`RenderPassInfo::resolve`) and let the backend pick *how*. This gate is
+    // what makes that claim checkable before a second backend exists.
+    //
+    // Four assertions, none of which is "it did not crash":
+    //   1. a 4x target reports 4 and its resolve target reports 1
+    //   2. binding a 1x pipeline inside a 4x pass is diagnosed by name
+    //   3. the resolve lands at the destination's single-sample extent
+    //   4. the resolved edge has partial-coverage texels and the 1x edge has
+    //      none - the actual difference multisampling exists to make
+
+    constexpr engine::u32 kExtent = 64;
+    constexpr engine::u32 kSamples = 4;
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = engine::shaders::ShaderTarget::Dxil;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    engine::shaders::ShaderBytecode cs{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps)
+        && compile("cs_count", "cs_6_0", cs);
+
+    engine::rhi::TextureDesc multisampled{};
+    multisampled.width = kExtent;
+    multisampled.height = kExtent;
+    multisampled.format = engine::rhi::Format::RGBA8_UNORM;
+    multisampled.usage = engine::rhi::TextureUsage::RenderTarget;
+    multisampled.sample_count = kSamples;
+    auto ms_target = device.create_texture(multisampled, nullptr);
+
+    engine::rhi::TextureDesc single{};
+    single.width = kExtent;
+    single.height = kExtent;
+    single.format = engine::rhi::Format::RGBA8_UNORM;
+    single.usage = engine::rhi::TextureUsage::ColorShaderResource;
+    auto resolved = device.create_texture(single, nullptr);
+    auto reference = device.create_texture(single, nullptr);
+
+    // 1. The count survives creation and the resolve target stays single.
+    const bool counts_reported = ms_target && resolved && reference
+        && ms_target->sample_count() == kSamples && resolved->sample_count() == 1
+        && reference->sample_count() == 1;
+
+    auto make_pipeline = [&](engine::u32 samples, const char* name) {
+        engine::rhi::GraphicsPipelineDesc desc{};
+        desc.vertex_shader = std::span<const engine::u8>(vs.data);
+        desc.pixel_shader = std::span<const engine::u8>(ps.data);
+        desc.color_format = engine::rhi::Format::RGBA8_UNORM;
+        desc.depth = engine::rhi::DepthTest::Disabled;
+        desc.depth_write = false;
+        desc.cull = engine::rhi::CullMode::None;
+        desc.sample_count = samples;
+        desc.debug_name = name;
+        return device.create_graphics_pipeline(desc);
+    };
+    auto pso_4x = compiled ? make_pipeline(kSamples, "msaa_gate_4x") : nullptr;
+    auto pso_1x = compiled ? make_pipeline(1, "msaa_gate_1x") : nullptr;
+
+    constexpr engine::usize kCountBytes = 4 * sizeof(engine::u32);
+    auto make_buffer = [&](engine::rhi::BufferUsage usage) {
+        engine::rhi::BufferDesc desc{};
+        desc.size = kCountBytes;
+        desc.usage = usage;
+        return device.create_buffer(desc);
+    };
+    auto resolved_counts = make_buffer(engine::rhi::BufferUsage::Storage);
+    auto reference_counts = make_buffer(engine::rhi::BufferUsage::Storage);
+    auto resolved_readback = make_buffer(engine::rhi::BufferUsage::Readback);
+    auto reference_readback = make_buffer(engine::rhi::BufferUsage::Readback);
+
+    engine::rhi::ComputePipelineDesc count_desc{};
+    count_desc.compute_shader
+        = compiled ? std::span<const engine::u8>(cs.data) : std::span<const engine::u8>{};
+    count_desc.storage_texture_count = 1;  // the count buffer at u0
+    count_desc.sampled_texture_count = 1;  // the image at t0
+    count_desc.debug_name = "msaa_gate_count";
+    auto count_pso = compiled ? device.create_compute_pipeline(count_desc) : nullptr;
+
+    // 2. Swap in a logger that watches for the mismatch diagnostic while the
+    // wrong pipeline is deliberately bound. Everything else still reaches the
+    // real sink, so a genuine error during the frame is not swallowed.
+    class MismatchWatcher final : public engine::ILogger {
+    public:
+        explicit MismatchWatcher(engine::ILogger* next) : next_(next) {}
+        void log(engine::LogLevel level, engine::LogChannel channel,
+            std::string_view message) override {
+            if (message.find("sample count") != std::string_view::npos) {
+                ++hits_;
+                return;
+            }
+            if (next_ != nullptr) {
+                next_->log(level, channel, message);
+            }
+        }
+        engine::u32 hits() const { return hits_; }
+        engine::ILogger* next() const { return next_; }
+
+    private:
+        engine::ILogger* next_ = nullptr;
+        engine::u32 hits_ = 0;
+    };
+
+    engine::u32 resolved_probe[4]{};
+    engine::u32 reference_probe[4]{};
+    engine::u32 mismatch_hits = 0;
+    const bool ready = counts_reported && pso_4x && pso_1x && count_pso && resolved_counts
+        && reference_counts && resolved_readback && reference_readback;
+
+    if (ready) {
+        MismatchWatcher watcher(engine::logger());
+        engine::set_logger(&watcher);
+
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+
+        using State = engine::rhi::ResourceState;
+        cmd.transition(*ms_target, State::Common, State::RenderTarget);
+        cmd.transition(*resolved, State::Common, State::RenderTarget);
+        cmd.transition(*reference, State::Common, State::RenderTarget);
+
+        engine::rhi::RenderPassInfo ms_pass{};
+        ms_pass.color = ms_target.get();
+        ms_pass.resolve = resolved.get();
+        ms_pass.clear_color_target = true;
+        ms_pass.clear_depth = false;
+        cmd.begin_render_pass(ms_pass);
+        // The mismatch check, inside the pass and before the real pipeline. No
+        // draw follows it, so the runtime never sees an invalid one - the point
+        // is the diagnostic, not the failure it would otherwise become.
+        cmd.set_pipeline(*pso_1x);
+        cmd.set_pipeline(*pso_4x);
+        cmd.draw(3, 0);
+        cmd.end_render_pass();
+
+        engine::rhi::RenderPassInfo single_pass{};
+        single_pass.color = reference.get();
+        single_pass.clear_color_target = true;
+        single_pass.clear_depth = false;
+        cmd.begin_render_pass(single_pass);
+        cmd.set_pipeline(*pso_1x);
+        cmd.draw(3, 0);
+        cmd.end_render_pass();
+
+        cmd.transition(*resolved, State::RenderTarget, State::ShaderRead);
+        cmd.transition(*reference, State::RenderTarget, State::ShaderRead);
+
+        const engine::u32 groups = kExtent / 8;
+        cmd.set_compute_pipeline(*count_pso);
+        cmd.set_unordered_access(0, *resolved_counts);
+        cmd.set_shader_resource(0, *resolved);
+        cmd.dispatch(groups, groups, 1);
+        cmd.set_unordered_access(0, *reference_counts);
+        cmd.set_shader_resource(0, *reference);
+        cmd.dispatch(groups, groups, 1);
+
+        cmd.transition(*resolved_counts, State::Storage, State::CopySrc);
+        cmd.transition(*reference_counts, State::Storage, State::CopySrc);
+        cmd.copy_buffer(*resolved_counts, *resolved_readback, kCountBytes);
+        cmd.copy_buffer(*reference_counts, *reference_readback, kCountBytes);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        device.read_buffer(*resolved_readback, 0, resolved_probe, kCountBytes);
+        device.read_buffer(*reference_readback, 0, reference_probe, kCountBytes);
+
+        mismatch_hits = watcher.hits();
+        engine::set_logger(watcher.next());
+    }
+
+    const engine::u32 resolved_blend = resolved_probe[0];
+    const engine::u32 resolved_lit = resolved_probe[1];
+    const engine::u32 reference_blend = reference_probe[0];
+    const engine::u32 reference_lit = reference_probe[1];
+
+    // 3. The resolve wrote the destination at its own extent, so roughly half
+    // the 4,096 texels are lit either way - the triangle covers half the target.
+    constexpr engine::u32 kHalf = (kExtent * kExtent) / 2;
+    const bool extent_ok = resolved_lit > kHalf / 2 && resolved_lit < kHalf * 3 / 2
+        && reference_lit > kHalf / 2 && reference_lit < kHalf * 3 / 2;
+
+    // 4. A single-sample raster cannot produce a partial-coverage texel; the
+    // resolved one produces roughly one per row the diagonal crosses.
+    const bool smoother = reference_blend == 0 && resolved_blend >= kExtent / 2;
+
+    const bool diagnosed = mismatch_hits > 0;
+    const bool passed = ready && extent_ok && smoother && diagnosed;
+
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "MSAA gate: samples=%u/%u resolved=(blend=%u lit=%u) single=(blend=%u lit=%u) "
+        "mismatch_diagnosed=%u (%s)",
+        ms_target ? ms_target->sample_count() : 0u, resolved ? resolved->sample_count() : 0u,
+        resolved_blend, resolved_lit, reference_blend, reference_lit, mismatch_hits,
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_pix_gate(engine::rhi::IDevice* device) {
     if (!device) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
