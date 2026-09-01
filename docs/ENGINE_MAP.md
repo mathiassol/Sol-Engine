@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-85 Done · 40 Ready · 98 Later · 60 Far.
+86 Done · 39 Ready · 98 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -124,7 +124,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 
 Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 
-*10 done · 3 ready · 23 rows.*
+*11 done · 2 ready · 23 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -139,7 +139,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 15 | Reversed-Z depth on the contract (near-plane precision, one flag) | **Done** |  |
 | 16 | PSO disk cache keyed on the pipeline desc, so a cold start stops recompiling | **Ready** |  |
 | 17 | GPU crash breadcrumbs (D3D12 DRED) captured on device-removed | **Ready** |  |
-| 18 | MSAA render targets on `TextureDesc` | **Ready** |  |
+| 18 | MSAA render targets on `TextureDesc` | **Done** |  |
 | 9 | UAV textures (compute write) | **Done** |  |
 | 19 | Copy queue: uploads off the graphics timeline | Later | Uploads big enough to stall the graphics queue. Async loading is what would keep a copy queue busy, and it can start on the graphics queue. |
 | 20 | Transient memory pool / resource aliasing for graph transients | Later | Renderer #18 depth+normals — enough transients that peak VRAM is the wall. |
@@ -149,7 +149,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 8 | Dynamic sampler tables (`set_sampler` actually binds) | Later | A shader that **cannot** use static `SamplerDesc` on the PSO — many unique samplers, bindless-ish materials. `set_sampler` is a stub on purpose. |
 | 10 | Timestamp queries already exist; expose them on `IRHI` if a second backend needs them | Far | RHI #12 (`rhi-vulkan`). D3D12 already timestamps for F3. |
 | 11 | Mesh shaders / bindless heaps | Far |  |
-| 12 | `rhi-vulkan` (SPIR-V compiler + this contract; D3D12 stays daily driver) | Far | Shaders #5 SPIR-V path, then Platform #9 a non-Windows platform package. |
+| 12 | `rhi-vulkan` (SPIR-V compiler + this contract; D3D12 stays daily driver) | Far | Shaders #5 SPIR-V path. **Platform #9 was dropped from this list on 1 Sep 2026** — Vulkan runs on Windows, so a non-Windows platform package is not a prerequisite, and doing the second backend on Windows first validates the contract against one new variable instead of two. RHI #15, #9 and #18 went in ahead of it deliberately: each changes the contract and is API-neutral, so it costs one implementation now and two later. |
 | 13 | Metal / console backends | Far | RHI #12 proves the contract survives a second backend first. |
 
 ---

@@ -47,13 +47,13 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 1 Sep 2026: **26,532 lines** of C++/HLSL in **160 files**, **26
+Measured 1 Sep 2026: **26,997 lines** of C++/HLSL in **161 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is still
-the largest at 7,609 — 31% — but it is no longer one file: `main.cpp` is 1,351
-lines, the seven `gates/gates_*.cpp` hold the 72 gates, and its
-`content/shaders/*.hlsl` (1,040 lines) counts here too. `renderer` is 3,028
-(12%); `rhi-d3d12` is 3,016 (12%); `physics-cpu` is 1,435; `core` is 1,382;
-`math` is 674. `game.exe` reuses sandbox sources (install layout, no extra
+the largest at 9,445 — 35% — but it is no longer one file: `main.cpp` is 1,424
+lines, the seven `gates/gates_*.cpp` hold the 79 registered gates, and its
+`content/shaders/*.hlsl` (1,126 lines) counts here too. `rhi-d3d12` is 3,287
+(12%); `renderer` is 3,087 (11%); `core` is 1,436; `physics-cpu` is 1,435;
+`scene` is 902. `game.exe` reuses sandbox sources (install layout, no extra
 .cpp).
 
 Every per-package figure above was recounted on 31 Aug and every one had
@@ -1387,6 +1387,98 @@ real graph used — the shadow gate runs against its own probe. Verified across
 the render-graph transient rebuild. Do not persist them: `config.cfg` is read and
 never written, and the cvar writer is Foundation #17. Do not add a preset knob
 for something the renderer does not actually expose.
+
+---
+
+## RHI #15 / #9 / #18 — the contract pass before a second backend (done)
+
+**Why:** The question was whether `rhi-vulkan` could start now. The answer was
+yes, but three rows would be cheaper to do first — not because Vulkan is far
+off, but because each one *changes the contract* and is API-neutral. Reversed-Z,
+UAV textures and MSAA all add vocabulary to `rhi`'s public headers. Adding
+vocabulary to a one-backend contract costs one implementation; adding it to a
+two-backend contract costs two, plus the argument about which backend's shape
+wins. So they went first, together, as one pass.
+
+**Choice:** Three rows, in dependency order, each one an enum or a field rather
+than a mechanism.
+
+*#15 — reversed-Z.* One flag on `DeviceDesc`, not a per-pipeline knob. A depth
+direction that can differ between two pipelines in the same frame is a bug
+generator, and the near-plane precision argument applies to the whole device or
+to none of it. The flag flips three things that must agree — the compare
+function, the clear value, and the sign of the slope-scaled bias — so the
+contract exposes `depth_closer()`, `depth_closer_or_equal()`,
+`depth_bias_for()` and `shadow_comparison_sampler()` rather than leaving four
+call sites to remember. `DepthTest` gained `Greater` and `GreaterEqual` so the
+reversed comparisons are sayable at all. The trap this pass actually removed was
+the baked one: D3D12 stores a clear value at *creation*, and three sites still
+hard-coded `1.0f`. A half-applied reversed-Z is not a wrong picture, it is a
+black one — clear to 1, compare `Greater`, and every fragment is rejected in
+silence.
+
+*#9 — UAV textures.* `TextureUsage::StorageShaderResource`, `ResourceState`'s
+`UnorderedAccess` renamed to `Storage` (the D3D12 word for a state every API
+has), `set_unordered_access(u32, ITexture&)`, and `TransientDesc::storage` so
+the graph can create one. This is the row that finished `PassKind::Compute`:
+before it, a compute pass could be *ordered* against a graph resource but could
+not write one, so `Access` had no storage mapping and the enumerator carried
+half a feature.
+
+*#18 — MSAA.* `sample_count` on `TextureDesc` and on `GraphicsPipelineDesc`, and
+`RenderPassInfo::resolve`. The resolve is where the two APIs genuinely disagree:
+D3D12 issues `ResolveSubresource` after the pass, Vulkan hangs
+`pResolveAttachments` off the subpass and never issues a call. So the contract
+declares *what* — this multisampled target lands in that single-sample one when
+the pass ends — and each backend picks *how*. The D3D12 side does its own
+barriers around the resolve and leaves both textures in the state the graph
+believes they are in, so the graph never learns the resolve happened. A
+pipeline whose sample count disagrees with the target it is bound against is a
+draw the runtime drops with a debug-layer line naming neither; the backend now
+says both numbers at bind time instead.
+
+Two things fell out of building the gate rather than being planned. Compute
+could not read an SRV — `set_shader_resource` only ever bound through the
+graphics root, which silently binds nothing from a dispatch — so the compute
+twin was added alongside the UAV path #9 had already opened. And
+`create_color_shader_resource_texture` passed a null clear value, which costs
+the driver its fast clear and warns on every clear; it now bakes the same
+opaque black the plain render-target path does, which `Color4`'s default alpha
+of 1 agrees with by construction.
+
+**Gate (met):** **82 (pass) / 0 FAIL** in Debug and Release, debug layer
+**0/0/0**, 16/16 invariants. Three gates, each watched failing first or
+falsified after the fact. `run_msaa_gate` asserts four things: a 4× target
+reports 4 and its resolve target reports 1; a 1× pipeline bound inside a 4×
+pass is diagnosed by name; the resolve lands at the destination's extent
+(2,016 lit texels of 4,096, the triangle's half); and the resolved diagonal
+carries **64** partial-coverage texels where the single-sample one carries
+**0** — one per row the edge crosses, which is the difference multisampling
+exists to make. Deleting the `ResolveSubresource` call turns it red at
+`resolved=(blend=0 lit=0)`, measured.
+
+**Do not (still):** do not add a second way to select depth direction — it is
+`DeviceDesc::depth_convention` and nothing else, and a per-pipeline override
+would let two passes in one frame disagree about which way is nearer. Do not
+switch the standard frame to MSAA without a reason TAA cannot cover: TAA and
+SMAA both ship, MSAA costs memory in proportion to the sample count, and it
+does nothing for the shading aliasing the temporal path is there for. Do not
+let `TextureUsage` grow into a flags enum without checking every `switch` over
+it — the backend dispatches creation on that single value, and a bitmask turns
+six exhaustive switches into six wrong ones. Do not read
+`RenderPassInfo::resolve` as "the backend will fix my states": the D3D12 path
+assumes both textures arrive as render targets, which is what a resolve
+destination is in a real frame.
+
+**Left for the second backend on purpose:** RHI #17 (DRED breadcrumbs) and #16
+(PSO disk cache) are both backend-shaped — DRED is a D3D12 feature with a
+Vulkan counterpart of a different shape (`VK_NV_device_diagnostic_checkpoints`),
+and a PSO cache keyed on the pipeline desc has to serialise a blob whose format
+each API owns. Doing either with one backend present is how the interface ends
+up describing D3D12 in neutral words. The same goes for A2's binding model:
+Dawn chose the Vulkan bind-group model because Vulkan → D3D12 is the cheap
+translation direction, and that is the expected answer — but it stays a comment
+in `resources.hpp` until there is a second backend to validate it against.
 
 ---
 
