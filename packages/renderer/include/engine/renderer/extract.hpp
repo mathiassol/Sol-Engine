@@ -4,6 +4,7 @@
 #include <engine/math/aabb.hpp>
 #include <engine/math/mat4.hpp>
 #include <engine/math/vec3.hpp>
+#include <engine/renderer/frame_pipelines.hpp>
 #include <engine/renderer/motion.hpp>
 #include <engine/renderer/render_snapshot.hpp>
 
@@ -39,18 +40,7 @@ struct ExtractDesc {
     math::Mat4 projection{};
     Lighting lighting{};
     math::Vec3 sun_direction{0.f, 1.f, 0.f};
-    rhi::IGraphicsPipeline* shadow_pipeline = nullptr;
-    rhi::IGraphicsPipeline* sky_pipeline = nullptr;
-    rhi::IGraphicsPipeline* bloom_downsample_pipeline = nullptr;
-    rhi::IGraphicsPipeline* bloom_upsample_pipeline = nullptr;
-    rhi::IGraphicsPipeline* tonemap_pipeline = nullptr;
-    rhi::IGraphicsPipeline* fxaa_pipeline = nullptr;
-    rhi::IGraphicsPipeline* smaa_edge_pipeline = nullptr;
-    rhi::IGraphicsPipeline* smaa_weights_pipeline = nullptr;
-    rhi::IGraphicsPipeline* smaa_blend_pipeline = nullptr;
-    rhi::IGraphicsPipeline* motion_pipeline = nullptr;
-    rhi::IGraphicsPipeline* taa_pipeline = nullptr;
-    rhi::IGraphicsPipeline* tonemap_aces_pipeline = nullptr;
+    FramePipelines pipelines;
     motion::MotionHistory* history = nullptr;
     rhi::ITexture* sky_cubemap = nullptr;
     rhi::ITexture* taa_history = nullptr;

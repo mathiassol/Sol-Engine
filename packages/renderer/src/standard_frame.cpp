@@ -111,7 +111,7 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
     velocity.clear_color_target = true;
     velocity.clear_depth = false;
     velocity.should_execute = [](const RenderSnapshot& snapshot) {
-        return snapshot.motion_pipeline != nullptr;
+        return snapshot.pipelines.motion != nullptr;
     };
     velocity.execute = record_motion_draws;
     graph.add_pass(std::move(velocity));
@@ -124,7 +124,7 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
     sky.clear_color_target = false;
     sky.clear_depth = false;
     sky.should_execute = [](const RenderSnapshot& snapshot) {
-        return snapshot.sky_pipeline != nullptr && snapshot.sky_cubemap != nullptr;
+        return snapshot.pipelines.sky != nullptr && snapshot.sky_cubemap != nullptr;
     };
     sky.execute = record_sky;
     graph.add_pass(std::move(sky));
@@ -139,7 +139,7 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
         down.read_count = 1;
         down.clear_color_target = false;
         down.should_execute = [](const RenderSnapshot& snapshot) {
-            return snapshot.bloom_downsample_pipeline != nullptr;
+            return snapshot.pipelines.bloom_downsample != nullptr;
         };
         down.execute = [first](PassContext& ctx) {
             record_bloom_downsample(ctx, first);
@@ -160,17 +160,17 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
         up.read_count = 2;
         up.clear_color_target = false;
         up.should_execute = [](const RenderSnapshot& snapshot) {
-            return snapshot.bloom_upsample_pipeline != nullptr;
+            return snapshot.pipelines.bloom_upsample != nullptr;
         };
         up.execute = record_bloom_upsample;
         graph.add_pass(std::move(up));
     }
 
     auto snapshot_aa = [](const RenderSnapshot& snapshot) {
-        const bool smaa = snapshot.smaa_edge_pipeline && snapshot.smaa_weights_pipeline
-            && snapshot.smaa_blend_pipeline;
-        const bool taa = snapshot.taa_pipeline && snapshot.tonemap_aces_pipeline;
-        return aa::effective_mode(snapshot.aa_mode, snapshot.fxaa_pipeline != nullptr, smaa, taa);
+        const bool smaa = snapshot.pipelines.smaa_edge && snapshot.pipelines.smaa_weights
+            && snapshot.pipelines.smaa_blend;
+        const bool taa = snapshot.pipelines.taa && snapshot.pipelines.tonemap_aces;
+        return aa::effective_mode(snapshot.aa_mode, snapshot.pipelines.fxaa != nullptr, smaa, taa);
     };
     auto taa_on = [snapshot_aa](const RenderSnapshot& snapshot) {
         return snapshot_aa(snapshot) == aa::Mode::Taa;

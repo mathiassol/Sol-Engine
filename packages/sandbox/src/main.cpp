@@ -280,19 +280,7 @@ void toggle_walk_mode(SandboxState& state) {
 
 sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo) {
     sandbox::WorldExtractAssets assets{};
-    assets.forward = demo.pipelines.forward;
-    assets.shadow = demo.pipelines.shadow;
-    assets.sky = demo.pipelines.sky;
-    assets.bloom_downsample = demo.pipelines.bloom_downsample;
-    assets.bloom_upsample = demo.pipelines.bloom_upsample;
-    assets.tonemap = demo.pipelines.tonemap;
-    assets.fxaa = demo.pipelines.fxaa;
-    assets.smaa_edge = demo.pipelines.smaa_edge;
-    assets.smaa_weights = demo.pipelines.smaa_weights;
-    assets.smaa_blend = demo.pipelines.smaa_blend;
-    assets.motion = demo.pipelines.motion;
-    assets.taa = demo.pipelines.taa;
-    assets.tonemap_aces = demo.pipelines.tonemap_aces;
+    assets.pipelines = demo.pipelines;
     assets.taa_history = nullptr;
     assets.taa_sample = demo.taa_frames;
     assets.taa_reset = !demo.taa_history_valid;
@@ -5773,8 +5761,8 @@ int run_app(int argc, char** argv) {
             state.overlay.visible(),
             state.debug_lines.visible() ? &state.debug_lines : nullptr, arena, snapshot,
             &state.forward->motion_history);
-        if (snapshot.aa_mode == engine::renderer::aa::Mode::Taa && snapshot.taa_pipeline
-            && snapshot.tonemap_aces_pipeline) {
+        if (snapshot.aa_mode == engine::renderer::aa::Mode::Taa && snapshot.pipelines.taa
+            && snapshot.pipelines.tonemap_aces) {
             state.forward->taa_frames += 1;
             state.forward->taa_history_valid = true;
         } else {

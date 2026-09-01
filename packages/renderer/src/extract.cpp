@@ -49,18 +49,7 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
     out.view = desc.view;
     out.projection = desc.projection;
     out.lighting = desc.lighting;
-    out.shadow_pipeline = desc.shadow_pipeline;
-    out.sky_pipeline = desc.sky_pipeline;
-    out.bloom_downsample_pipeline = desc.bloom_downsample_pipeline;
-    out.bloom_upsample_pipeline = desc.bloom_upsample_pipeline;
-    out.tonemap_pipeline = desc.tonemap_pipeline;
-    out.fxaa_pipeline = desc.fxaa_pipeline;
-    out.smaa_edge_pipeline = desc.smaa_edge_pipeline;
-    out.smaa_weights_pipeline = desc.smaa_weights_pipeline;
-    out.smaa_blend_pipeline = desc.smaa_blend_pipeline;
-    out.motion_pipeline = desc.motion_pipeline;
-    out.taa_pipeline = desc.taa_pipeline;
-    out.tonemap_aces_pipeline = desc.tonemap_aces_pipeline;
+    out.pipelines = desc.pipelines;
     out.sky_cubemap = desc.sky_cubemap;
     out.taa_history = desc.taa_history;
     out.ibl_irradiance = desc.ibl_irradiance;
@@ -72,10 +61,10 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
     out.exposure = desc.exposure;
     out.taa_reset = desc.taa_reset;
     out.taa_odd = (desc.taa_sample & 1u) != 0;
-    const bool smaa = desc.smaa_edge_pipeline && desc.smaa_weights_pipeline
-        && desc.smaa_blend_pipeline;
-    const bool taa_on = aa::effective_mode(desc.aa_mode, desc.fxaa_pipeline != nullptr, smaa,
-        desc.taa_pipeline && desc.tonemap_aces_pipeline) == aa::Mode::Taa;
+    const bool smaa = desc.pipelines.smaa_edge && desc.pipelines.smaa_weights
+        && desc.pipelines.smaa_blend;
+    const bool taa_on = aa::effective_mode(desc.aa_mode, desc.pipelines.fxaa != nullptr, smaa,
+        desc.pipelines.taa && desc.pipelines.tonemap_aces) == aa::Mode::Taa;
     out.taa_jitter = taa_on ? taa::jitter_ndc(desc.taa_sample, desc.width, desc.height)
                             : math::Vec2{};
     if (!taa_on) {

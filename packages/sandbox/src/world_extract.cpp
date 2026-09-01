@@ -94,7 +94,7 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
         }
 
         auto& item = storage[count];
-        item.pipeline = assets.forward;
+        item.pipeline = assets.pipelines.forward;
         item.vertex_buffer = mesh->vertex_buffer.get();
         item.index_buffer = mesh->index_buffer.get();
         item.texture = texture;
@@ -116,18 +116,7 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
     desc.projection = world.camera.projection;
     extract_lighting(world, camera_pos, desc.lighting);
     desc.sun_direction = world.sun.direction;
-    desc.shadow_pipeline = assets.shadow;
-    desc.sky_pipeline = assets.sky;
-    desc.bloom_downsample_pipeline = assets.bloom_downsample;
-    desc.bloom_upsample_pipeline = assets.bloom_upsample;
-    desc.tonemap_pipeline = assets.tonemap;
-    desc.fxaa_pipeline = assets.fxaa;
-    desc.smaa_edge_pipeline = assets.smaa_edge;
-    desc.smaa_weights_pipeline = assets.smaa_weights;
-    desc.smaa_blend_pipeline = assets.smaa_blend;
-    desc.motion_pipeline = assets.motion;
-    desc.taa_pipeline = assets.taa;
-    desc.tonemap_aces_pipeline = assets.tonemap_aces;
+    desc.pipelines = assets.pipelines;
     desc.history = history;
     desc.sky_cubemap = assets.sky_cubemap;
     desc.taa_history = assets.taa_history;

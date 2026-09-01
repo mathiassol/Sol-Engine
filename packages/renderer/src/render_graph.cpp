@@ -235,20 +235,20 @@ void record_opaque_draws(PassContext& ctx) {
 }
 
 void record_shadow_draws(PassContext& ctx) {
-    if (!ctx.snapshot.shadow_pipeline) {
+    if (!ctx.snapshot.pipelines.shadow) {
         return;
     }
 
     ShadowConstants constants{};
     constants.view_proj = ctx.snapshot.sun_view_proj;
 
-    record_draws(ctx, ctx.snapshot.shadow_pipeline, constants,
+    record_draws(ctx, ctx.snapshot.pipelines.shadow, constants,
         [](ShadowConstants&, const DrawBatch&) {},
         [](PassContext&, const DrawBatch&) {});
 }
 
 void record_motion_draws(PassContext& ctx) {
-    if (!ctx.snapshot.motion_pipeline) {
+    if (!ctx.snapshot.pipelines.motion) {
         return;
     }
 
@@ -257,13 +257,13 @@ void record_motion_draws(PassContext& ctx) {
     constants.prev_view_proj = ctx.snapshot.prev_view_proj;
     constants.jitter = {ctx.snapshot.taa_jitter.x, ctx.snapshot.taa_jitter.y, 0.f, 0.f};
 
-    record_draws(ctx, ctx.snapshot.motion_pipeline, constants,
+    record_draws(ctx, ctx.snapshot.pipelines.motion, constants,
         [](motion::Constants&, const DrawBatch&) {},
         [](PassContext&, const DrawBatch&) {});
 }
 
 void record_sky(PassContext& ctx) {
-    if (!ctx.snapshot.sky_pipeline || !ctx.snapshot.sky_cubemap) {
+    if (!ctx.snapshot.pipelines.sky || !ctx.snapshot.sky_cubemap) {
         return;
     }
 
@@ -275,14 +275,14 @@ void record_sky(PassContext& ctx) {
         return;  // constant ring exhausted this frame; skip the pass
     }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-    ctx.cmd.set_pipeline(*ctx.snapshot.sky_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.sky);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     ctx.cmd.set_shader_resource(0, *ctx.snapshot.sky_cubemap);
     ctx.cmd.draw(3);
 }
 
 void record_bloom_downsample(PassContext& ctx, bool first_mip) {
-    if (!ctx.snapshot.bloom_downsample_pipeline || ctx.shader_read_count == 0
+    if (!ctx.snapshot.pipelines.bloom_downsample || ctx.shader_read_count == 0
         || !ctx.shader_reads[0]) {
         return;
     }
@@ -294,14 +294,14 @@ void record_bloom_downsample(PassContext& ctx, bool first_mip) {
         return;  // constant ring exhausted this frame; skip the pass
     }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-    ctx.cmd.set_pipeline(*ctx.snapshot.bloom_downsample_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.bloom_downsample);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.draw(3);
 }
 
 void record_bloom_upsample(PassContext& ctx) {
-    if (!ctx.snapshot.bloom_upsample_pipeline || ctx.shader_read_count < 2
+    if (!ctx.snapshot.pipelines.bloom_upsample || ctx.shader_read_count < 2
         || !ctx.shader_reads[0] || !ctx.shader_reads[1]) {
         return;
     }
@@ -312,7 +312,7 @@ void record_bloom_upsample(PassContext& ctx) {
         return;  // constant ring exhausted this frame; skip the pass
     }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-    ctx.cmd.set_pipeline(*ctx.snapshot.bloom_upsample_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.bloom_upsample);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.set_shader_resource(1, *ctx.shader_reads[1]);
@@ -320,7 +320,7 @@ void record_bloom_upsample(PassContext& ctx) {
 }
 
 void record_tonemap(PassContext& ctx) {
-    if (!ctx.snapshot.tonemap_pipeline || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
+    if (!ctx.snapshot.pipelines.tonemap || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
         return;
     }
     // This pass had no constants until exposure needed one. Bail out of the
@@ -332,7 +332,7 @@ void record_tonemap(PassContext& ctx) {
         return;  // constant ring exhausted this frame; skip the pass
     }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-    ctx.cmd.set_pipeline(*ctx.snapshot.tonemap_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.tonemap);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     if (ctx.shader_read_count > 1 && ctx.shader_reads[1]) {
@@ -360,10 +360,10 @@ namespace {
 } // namespace
 
 void record_fxaa(PassContext& ctx) {
-    if (!ctx.snapshot.fxaa_pipeline || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
+    if (!ctx.snapshot.pipelines.fxaa || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
         return;
     }
-    ctx.cmd.set_pipeline(*ctx.snapshot.fxaa_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.fxaa);
     if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
         return;
     }
@@ -372,10 +372,11 @@ void record_fxaa(PassContext& ctx) {
 }
 
 void record_smaa_edge(PassContext& ctx) {
-    if (!ctx.snapshot.smaa_edge_pipeline || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
+    if (!ctx.snapshot.pipelines.smaa_edge || ctx.shader_read_count == 0
+        || !ctx.shader_reads[0]) {
         return;
     }
-    ctx.cmd.set_pipeline(*ctx.snapshot.smaa_edge_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.smaa_edge);
     if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
         return;
     }
@@ -384,10 +385,11 @@ void record_smaa_edge(PassContext& ctx) {
 }
 
 void record_smaa_weights(PassContext& ctx) {
-    if (!ctx.snapshot.smaa_weights_pipeline || ctx.shader_read_count == 0 || !ctx.shader_reads[0]) {
+    if (!ctx.snapshot.pipelines.smaa_weights || ctx.shader_read_count == 0
+        || !ctx.shader_reads[0]) {
         return;
     }
-    ctx.cmd.set_pipeline(*ctx.snapshot.smaa_weights_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.smaa_weights);
     if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
         return;
     }
@@ -396,11 +398,11 @@ void record_smaa_weights(PassContext& ctx) {
 }
 
 void record_smaa_blend(PassContext& ctx) {
-    if (!ctx.snapshot.smaa_blend_pipeline || ctx.shader_read_count < 2
+    if (!ctx.snapshot.pipelines.smaa_blend || ctx.shader_read_count < 2
         || !ctx.shader_reads[0] || !ctx.shader_reads[1]) {
         return;
     }
-    ctx.cmd.set_pipeline(*ctx.snapshot.smaa_blend_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.smaa_blend);
     if (!bind_aa_constants(ctx, *ctx.shader_reads[0])) {
         return;
     }
@@ -410,7 +412,7 @@ void record_smaa_blend(PassContext& ctx) {
 }
 
 void record_taa(PassContext& ctx) {
-    if (!ctx.snapshot.taa_pipeline || ctx.shader_read_count < 3 || !ctx.shader_reads[0]
+    if (!ctx.snapshot.pipelines.taa || ctx.shader_read_count < 3 || !ctx.shader_reads[0]
         || !ctx.shader_reads[1] || !ctx.shader_reads[2]) {
         return;
     }
@@ -426,7 +428,7 @@ void record_taa(PassContext& ctx) {
         return;  // constant ring exhausted this frame; skip the pass
     }
     ctx.device.write_buffer(*slice.buffer, slice.offset, &constants, sizeof(constants));
-    ctx.cmd.set_pipeline(*ctx.snapshot.taa_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.taa);
     ctx.cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.set_shader_resource(1, *ctx.shader_reads[1]);
@@ -436,11 +438,11 @@ void record_taa(PassContext& ctx) {
 }
 
 void record_tonemap_aces(PassContext& ctx) {
-    if (!ctx.snapshot.tonemap_aces_pipeline || ctx.shader_read_count == 0
+    if (!ctx.snapshot.pipelines.tonemap_aces || ctx.shader_read_count == 0
         || !ctx.shader_reads[0]) {
         return;
     }
-    ctx.cmd.set_pipeline(*ctx.snapshot.tonemap_aces_pipeline);
+    ctx.cmd.set_pipeline(*ctx.snapshot.pipelines.tonemap_aces);
     ctx.cmd.set_shader_resource(0, *ctx.shader_reads[0]);
     ctx.cmd.draw(3);
 }

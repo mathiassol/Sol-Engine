@@ -1,7 +1,10 @@
 #pragma once
 
 #include <engine/core/types.hpp>
-#include <engine/rhi/resources.hpp>
+// commands.hpp, not resources.hpp: IGraphicsPipeline is defined there, and this
+// header is included *before* rhi/commands.hpp by render_snapshot.hpp, so it
+// cannot rely on a consumer having pulled the definition in first.
+#include <engine/rhi/commands.hpp>
 
 namespace engine::renderer {
 

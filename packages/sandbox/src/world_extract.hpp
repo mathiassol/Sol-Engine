@@ -5,6 +5,7 @@
 #include <engine/debug/debug_lines.hpp>
 #include <engine/math/vec3.hpp>
 #include <engine/renderer/extract.hpp>
+#include <engine/renderer/frame_pipelines.hpp>
 #include <engine/renderer/render_snapshot.hpp>
 #include <engine/rhi/commands.hpp>
 #include <engine/rhi/resources.hpp>
@@ -16,19 +17,7 @@ constexpr engine::u32 kHuskyVariantCount = 4;
 constexpr engine::u32 kFloorAlbedoIndex = 4;
 
 struct WorldExtractAssets {
-    engine::rhi::IGraphicsPipeline* forward = nullptr;
-    engine::rhi::IGraphicsPipeline* shadow = nullptr;
-    engine::rhi::IGraphicsPipeline* sky = nullptr;
-    engine::rhi::IGraphicsPipeline* bloom_downsample = nullptr;
-    engine::rhi::IGraphicsPipeline* bloom_upsample = nullptr;
-    engine::rhi::IGraphicsPipeline* tonemap = nullptr;
-    engine::rhi::IGraphicsPipeline* fxaa = nullptr;
-    engine::rhi::IGraphicsPipeline* smaa_edge = nullptr;
-    engine::rhi::IGraphicsPipeline* smaa_weights = nullptr;
-    engine::rhi::IGraphicsPipeline* smaa_blend = nullptr;
-    engine::rhi::IGraphicsPipeline* motion = nullptr;
-    engine::rhi::IGraphicsPipeline* taa = nullptr;
-    engine::rhi::IGraphicsPipeline* tonemap_aces = nullptr;
+    engine::renderer::FramePipelines pipelines;
     engine::rhi::ITexture* taa_history = nullptr;
     engine::u32 taa_sample = 0;
     bool taa_reset = true;

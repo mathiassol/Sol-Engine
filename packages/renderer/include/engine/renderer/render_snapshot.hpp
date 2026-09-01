@@ -6,6 +6,7 @@
 #include <engine/math/vec4.hpp>
 #include <engine/math/vec2.hpp>
 #include <engine/renderer/aa.hpp>
+#include <engine/renderer/frame_pipelines.hpp>
 #include <engine/renderer/taa.hpp>
 #include <engine/rhi/commands.hpp>
 #include <engine/rhi/device.hpp>
@@ -133,18 +134,7 @@ struct RenderSnapshot {
     // `instances` is indexed by DrawBatch::first_instance + SV_InstanceID.
     std::span<const DrawBatch> batches;
     std::span<const InstanceData> instances;
-    rhi::IGraphicsPipeline* shadow_pipeline = nullptr;
-    rhi::IGraphicsPipeline* sky_pipeline = nullptr;
-    rhi::IGraphicsPipeline* bloom_downsample_pipeline = nullptr;
-    rhi::IGraphicsPipeline* bloom_upsample_pipeline = nullptr;
-    rhi::IGraphicsPipeline* tonemap_pipeline = nullptr;
-    rhi::IGraphicsPipeline* fxaa_pipeline = nullptr;
-    rhi::IGraphicsPipeline* smaa_edge_pipeline = nullptr;
-    rhi::IGraphicsPipeline* smaa_weights_pipeline = nullptr;
-    rhi::IGraphicsPipeline* smaa_blend_pipeline = nullptr;
-    rhi::IGraphicsPipeline* motion_pipeline = nullptr;
-    rhi::IGraphicsPipeline* taa_pipeline = nullptr;
-    rhi::IGraphicsPipeline* tonemap_aces_pipeline = nullptr;
+    FramePipelines pipelines;
     rhi::ITexture* sky_cubemap = nullptr;
     rhi::ITexture* taa_history = nullptr;
     rhi::ITexture* ibl_irradiance = nullptr;
