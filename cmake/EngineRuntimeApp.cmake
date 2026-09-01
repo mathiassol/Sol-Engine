@@ -18,6 +18,7 @@ function(engine_add_runtime_app TARGET)
 
     add_executable(${TARGET}
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/main.cpp"
+        "${PROJECT_SOURCE_DIR}/packages/sandbox/src/sandbox_common.cpp"
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/world_extract.cpp"
     )
 
