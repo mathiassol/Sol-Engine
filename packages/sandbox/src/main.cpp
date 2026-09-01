@@ -1275,6 +1275,9 @@ int run_app(int argc, char** argv) {
     if (!run_graph_gate()) {
         gates_ok = false;
     }
+    if (!run_compute_pass_gate()) {
+        gates_ok = false;
+    }
     if (!run_swap_gate()) {
         gates_ok = false;
     }

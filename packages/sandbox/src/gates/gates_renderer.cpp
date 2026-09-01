@@ -922,6 +922,116 @@ bool run_pcf_gate() {
     return passed;
 }
 
+bool run_compute_pass_gate() {
+    using engine::renderer::Access;
+    using engine::renderer::PassKind;
+    using engine::renderer::RenderPassDesc;
+
+    // 1. Ordering, asserted in both directions. The graph enforces order by
+    //    insertion: a pass reading a transient no earlier pass has written fails
+    //    the missing-producer check. So the compute pass must compile *after*
+    //    its producer and must fail *before* it. Asserting only the first half
+    //    would pass even if compute were exempt from the check entirely - which
+    //    is exactly what the first version of this gate did.
+    auto build = [](bool compute_first) {
+        engine::renderer::RenderGraph probe;
+        const auto scene = probe.create_transient({
+            "compute_src",
+            engine::rhi::Format::RGBA16_FLOAT,
+            engine::rhi::TextureUsage::RenderTarget,
+        });
+        RenderPassDesc producer{};
+        producer.name = "produce";
+        producer.writes[0] = {scene, Access::ColorWrite};
+        producer.write_count = 1;
+
+        RenderPassDesc consumer{};
+        consumer.name = "reduce";
+        consumer.kind = PassKind::Compute;
+        consumer.reads[0] = {scene, Access::ShaderRead};
+        consumer.read_count = 1;
+        consumer.writes[0] = {probe.swapchain_color(), Access::ColorWrite};
+        consumer.write_count = 1;
+
+        if (compute_first) {
+            probe.add_pass(std::move(consumer));
+            probe.add_pass(std::move(producer));
+        } else {
+            probe.add_pass(std::move(producer));
+            probe.add_pass(std::move(consumer));
+        }
+        return probe.compile();
+    };
+    const bool after_ok = build(false);
+    const bool before_rejected = !build(true);
+    const bool ordered = after_ok && before_rejected;
+
+    // 2. A compute pass reading a resource nobody writes is reported, by name,
+    //    the same way a graphics pass is. Kind must not buy an exemption.
+    bool orphan_detected = false;
+    {
+        engine::renderer::RenderGraph probe;
+        const auto orphan = probe.create_transient({
+            "compute_orphan",
+            engine::rhi::Format::RGBA16_FLOAT,
+            engine::rhi::TextureUsage::RenderTarget,
+        });
+        RenderPassDesc bad{};
+        bad.name = "compute_orphan_read";
+        bad.kind = PassKind::Compute;
+        bad.reads[0] = {orphan, Access::ShaderRead};
+        bad.read_count = 1;
+        bad.writes[0] = {probe.swapchain_color(), Access::ColorWrite};
+        bad.write_count = 1;
+        probe.add_pass(std::move(bad));
+        orphan_detected = !probe.compile();
+    }
+
+    // 3. A cycle through a compute pass is a cycle. Two passes each reading what
+    //    the other writes - the detector is kind-agnostic and must stay so.
+    bool cycle_detected = false;
+    {
+        engine::renderer::RenderGraph probe;
+        const auto a = probe.create_transient({
+            "cycle_a", engine::rhi::Format::RGBA16_FLOAT,
+            engine::rhi::TextureUsage::RenderTarget,
+        });
+        const auto b = probe.create_transient({
+            "cycle_b", engine::rhi::Format::RGBA16_FLOAT,
+            engine::rhi::TextureUsage::RenderTarget,
+        });
+        RenderPassDesc compute{};
+        compute.name = "compute_half";
+        compute.kind = PassKind::Compute;
+        compute.reads[0] = {b, Access::ShaderRead};
+        compute.read_count = 1;
+        compute.writes[0] = {a, Access::ColorWrite};
+        compute.write_count = 1;
+        probe.add_pass(std::move(compute));
+
+        RenderPassDesc gfx{};
+        gfx.name = "graphics_half";
+        gfx.reads[0] = {a, Access::ShaderRead};
+        gfx.read_count = 1;
+        gfx.writes[0] = {b, Access::ColorWrite};
+        gfx.write_count = 1;
+        probe.add_pass(std::move(gfx));
+        cycle_detected = !probe.compile();
+    }
+
+    const bool passed = ordered && orphan_detected && cycle_detected;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Compute pass gate: after_producer=%s before_producer_rejected=%s "
+        "orphan_read_detected=%s cycle_through_compute_detected=%s (%s)",
+        after_ok ? "ok" : "NO", before_rejected ? "yes" : "NO",
+        orphan_detected ? "yes" : "NO", cycle_detected ? "yes" : "NO",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 [[maybe_unused]] bool run_graph_gate() {
     bool ok = true;
 

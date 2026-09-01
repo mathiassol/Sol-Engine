@@ -87,6 +87,8 @@ const GateEntry kGates[] = {
     {"run_motion_gate", GateKind::Gpu, nullptr},
     {"run_pcf_gate", GateKind::Cpu,
         [](const CpuGateContext&) { return run_pcf_gate(); }},
+    {"run_compute_pass_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_compute_pass_gate(); }},
     {"run_graph_gate", GateKind::Cpu,
         [](const CpuGateContext&) { return run_graph_gate(); }},
     {"run_pix_gate", GateKind::Gpu, nullptr},

@@ -26,7 +26,14 @@ enum class Access : u8 {
     ShaderRead,
 };
 
-enum class PassKind : u8 { Graphics, Copy };
+// Compute participates in ordering exactly as Graphics does - the reads and
+// writes arrays below are kind-agnostic, so a compute pass is scheduled after
+// whatever produced the resources it reads, and a missing producer is reported
+// against it by name. What it cannot yet do is *write* a graph resource: that
+// needs UAV textures on the RHI contract (ENGINE_MAP RHI #9). Until then a
+// compute pass reads graph textures and writes buffers of its own, which is why
+// bloom is still fullscreen triangles rather than dispatches.
+enum class PassKind : u8 { Graphics, Copy, Compute };
 
 struct ResourceHandle {
     u32 id = 0;

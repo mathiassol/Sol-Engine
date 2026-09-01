@@ -844,6 +844,32 @@ void RenderGraph::execute(rhi::IDevice& device, const RenderSnapshot& snapshot) 
             continue;
         }
 
+        // No render pass for compute: begin_render_pass would bind targets a
+        // dispatch has no use for, and the D3D12 debug layer objects to a
+        // dispatch inside one. Transitions still happen, which is what makes the
+        // resources it reads correct rather than merely ordered.
+        if (pass.kind == PassKind::Compute) {
+            // Writes as well as reads. compile() already treats a compute pass's
+            // declared writes as edges, so leaving them untransitioned here would
+            // let the ordering model and the resource-state model disagree - and
+            // that disagreement is invisible until a barrier is wrong.
+            //
+            // A declared write is ordering-only until RHI #9 puts UAV textures on
+            // the contract: there is no Access value that maps to an unordered
+            // access, so a compute pass cannot yet bind one to write.
+            for (u32 i = 0; i < pass.write_count; ++i) {
+                transition_to(cmd, device, pass.writes[i].handle, state_for(pass.writes[i].access));
+            }
+            for (u32 i = 0; i < pass.read_count; ++i) {
+                transition_to(cmd, device, pass.reads[i].handle, state_for(pass.reads[i].access));
+            }
+            if (pass.execute) {
+                PassContext ctx{device, cmd, snapshot, instance_slice};
+                pass.execute(ctx);
+            }
+            continue;
+        }
+
         rhi::ITexture* color = nullptr;
         rhi::ITexture* depth = nullptr;
         for (u32 i = 0; i < pass.write_count; ++i) {

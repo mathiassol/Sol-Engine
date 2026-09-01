@@ -129,6 +129,8 @@ bool run_motion_gate(const ForwardDemo& demo);
 
 bool run_pcf_gate();
 
+bool run_compute_pass_gate();
+
 bool run_graph_gate();
 
 // ── rhi ──
