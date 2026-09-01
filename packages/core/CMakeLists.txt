@@ -5,6 +5,7 @@ engine_add_package(core
         src/log.cpp
         src/log_file.cpp
         src/assert.cpp
+        src/crash.cpp
         src/clock.cpp
         src/frame.cpp
         src/arena.cpp

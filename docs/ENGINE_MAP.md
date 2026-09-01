@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-82 Done · 40 Ready · 100 Later · 60 Far.
+83 Done · 42 Ready · 97 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -68,7 +68,7 @@ Phases 0–14 are **Done**. Next work is any **Ready** row you choose.
 
 Core loop, memory, math, diagnostics. Mostly shipped.
 
-*8 done · 5 ready · 17 rows.*
+*9 done · 4 ready · 17 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -80,7 +80,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 | 8 | Config / cvars (named knobs without recompile) | **Done** |  |
 | 9 | Deterministic fixed-step gameplay clock (already sketched; prove it with a sim) | **Done** |  |
 | 6 | File logger (not only stderr) | **Done** |  |
-| 7 | Crash dump / minidump on unhandled exception | **Ready** |  |
+| 7 | Crash dump / minidump on unhandled exception | **Done** |  |
 | 10 | Interned string ids (`StringId`) with a debug-only reverse table | **Ready** |  |
 | 11 | Versioned binary reader/writer primitives, shared by every cooked format | **Ready** |  |
 | 12 | Tracked allocators: tag every arena, report live bytes and leaks at shutdown | **Ready** |  |
@@ -96,7 +96,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 
 Window, OS services, input devices. Win32 is the daily driver.
 
-*4 done · 4 ready · 16 rows.*
+*4 done · 5 ready · 16 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -107,7 +107,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 | 10 | Relative mouse mode: capture, hide, unbounded delta for FPS look | **Ready** |  |
 | 11 | Monitor enumeration: list outputs, refresh rate, work area | **Ready** |  |
 | 12 | Filesystem watch on the interface (shaders already poll; generalise it) | **Ready** |  |
-| 13 | Install the crash handler through `IPlatform`, not in the app | Later | Foundation #7 minidump — this is where that row's OS hook belongs. |
+| 13 | Install the crash handler through `IPlatform`, not in the app | **Ready** | |
 | 8 | High-precision timer already via `Clock`; expose QPC if a system needs it | Later | A system `Clock` is too coarse for — audio latency or a net tick. Do not wrap QPC twice for its own sake. |
 | 4 | Text input / IME (chat, name fields) | Later | UI #2 fonts — a caret needs a widget, not F3. Not an inspector. |
 | 14 | System locale / preferred language query | Later | Localization #3 string tables. Nothing reads a locale yet. |
@@ -470,7 +470,7 @@ file. Not so an inspector can live in the engine.
 
 ## 18. Build and ship a `game.exe`
 
-*12 done · 0 ready · 19 rows.*
+*12 done · 2 ready · 19 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -486,10 +486,10 @@ file. Not so an inspector can live in the engine.
 | 14 | `CMakePresets.json` so the dev box and CI stop configuring differently | **Done** |  |
 | 15 | Release workflow: a tag produces a downloadable build | **Done** |  |
 | 16 | A setup check that names the missing prerequisite instead of failing inside CMake | **Done** |  |
-| 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | Later | Foundation #7 minidump. Foundation #6 is Done — `default_log_directory()` in `core/log_file.hpp` is the single function this row changes. |
+| 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | **Ready** | |
 | 6 | Startup splash / loading that does not hitch the first frame silently | Later | A first-frame hitch worth hiding (many assets, or Assets #14 async load). Current load is tiny. |
 | 17 | Non-Windows packaging (AppImage, .app bundle) | Later | Platform #9 a non-Windows platform package. |
-| 18 | Symbol archiving, so a shipped crash dump can still be read | Later | Foundation #7 minidump. |
+| 18 | Symbol archiving, so a shipped crash dump can still be read | **Ready** | |
 | 11 | Code signing | Far |  |
 | 19 | Delta patching for updates | Far | Build #8 an installer to patch. |
 | 12 | Store SDKs (Steam, etc.) | Far |  |

@@ -1,4 +1,5 @@
 #include <engine/core/assert.hpp>
+#include <engine/core/crash.hpp>
 #include <engine/core/log.hpp>
 
 #include <cstdio>
@@ -29,6 +30,12 @@ namespace engine {
     // The file sink flushes every line, so no explicit flush is needed here for
     // the record to survive the abort below.
     log(LogLevel::Fatal, LogChannel::General, message);
+
+    // After the log line, so the log names the failure even if the dump write
+    // is what goes wrong. 76 assert sites are live in Release - ENGINE_ASSERT
+    // has no NDEBUG guard - which makes an assert the most likely way this
+    // process dies, and the most valuable place to have a stack.
+    write_crash_dump("assert");
 
     std::abort();
 }

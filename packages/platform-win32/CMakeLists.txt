@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 engine_add_package(platform-win32
     SOURCES
+        src/crash_win32.cpp
         src/platform_win32.cpp
         src/window_win32.cpp
     PUBLIC_DEPS
@@ -9,6 +10,7 @@ engine_add_package(platform-win32
         version
     PRIVATE_DEPS
         user32
+        dbghelp
         gdi32
         xinput
 )

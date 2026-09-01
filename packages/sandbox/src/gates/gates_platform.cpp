@@ -1,5 +1,15 @@
 #include "../sandbox_common.hpp"
 
+#include <engine/core/crash.hpp>
+
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+
+#ifdef ENGINE_HAS_WIN32_PLATFORM
+#include <engine/platform/win32/crash_win32.hpp>
+#endif
+
 // Platform and input gates.
 //
 // Moved out of main.cpp, which held all 72 and was 26% of the engine
@@ -8,6 +18,67 @@
 // in sandbox_common.
 
 namespace sandbox {
+
+bool run_minidump_gate() {
+#ifdef ENGINE_HAS_WIN32_PLATFORM
+    // MiniDumpWriteDump can capture a *running* process, so this drives the
+    // writer directly against a temp directory rather than staging a real
+    // crash - the same shape run_file_log_gate uses for create_file_logger.
+    const auto dir = std::filesystem::temp_directory_path() / "sol-minidump-gate";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    const auto path = dir / "probe.dmp";
+
+    const bool wrote = engine::platform::win32::write_minidump(path.generic_string());
+    const bool exists = std::filesystem::exists(path, ec);
+    const engine::u64 size = exists
+        ? static_cast<engine::u64>(std::filesystem::file_size(path, ec)) : 0u;
+
+    // "MDMP" is the minidump signature. Asserting the magic and not just a
+    // non-zero size is the difference between "a file appeared" and "a debugger
+    // can open it".
+    char magic[5] = {};
+    if (exists) {
+        std::ifstream in(path, std::ios::binary);
+        in.read(magic, 4);
+    }
+    const bool magic_ok = magic[0] == 'M' && magic[1] == 'D' && magic[2] == 'M' && magic[3] == 'P';
+    // A dump with no stack in it is not worth attaching to a bug report.
+    const bool sized_ok = size > 4096u;
+
+    // The hook core calls on a failed assert must be installed, or 76 live
+    // assert sites produce nothing. Checked by installing into a scratch
+    // directory and confirming write_crash_dump lands a file there.
+    const auto hook_dir = dir / "hook";
+    const std::string installed
+        = engine::platform::win32::install_crash_dumps(hook_dir.generic_string());
+    engine::write_crash_dump("gate");
+    const bool hook_ok = !installed.empty()
+        && std::filesystem::exists(hook_dir / "crash-gate.dmp", ec);
+    // Leave nothing installed: this is a gate run, and Foundation #6 made the
+    // same call for the file logger.
+    engine::set_crash_dump_handler(nullptr);
+    std::filesystem::remove_all(dir, ec);
+
+    const bool passed = wrote && exists && magic_ok && sized_ok && hook_ok;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Minidump gate: wrote=%s magic=%s bytes=%llu assert_hook=%s (%s)",
+        wrote ? "yes" : "no", magic_ok ? "MDMP" : "BAD",
+        static_cast<unsigned long long>(size), hook_ok ? "yes" : "no",
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
+#else
+    // Minidumps are a Windows API. The gate exists on every platform so the
+    // registry stays uniform; there is nothing to assert off Windows.
+    engine::log(engine::LogLevel::Info, engine::LogChannel::General,
+        "Minidump gate: not applicable off Windows (pass)");
+    return true;
+#endif
+}
+
 
 bool run_window_gate(engine::platform::IWindow* window, engine::rhi::IDevice* device) {
     using engine::platform::WindowMode;

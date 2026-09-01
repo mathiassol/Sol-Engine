@@ -60,6 +60,7 @@
 #include "gates/gate_registry.hpp"
 
 #ifdef ENGINE_HAS_WIN32_PLATFORM
+#include <engine/platform/win32/crash_win32.hpp>
 #include <engine/platform/win32/platform_win32.hpp>
 #endif
 
@@ -954,6 +955,18 @@ int run_app(int argc, char** argv) {
                 log_dir.c_str());
             engine::log(engine::LogLevel::Warn, engine::LogChannel::General, warning);
         }
+#ifdef ENGINE_HAS_WIN32_PLATFORM
+        // After install_file_logger, not before: this logs where dumps will go,
+        // and that line is worth more in the log than on a stderr nobody kept.
+        // Beside the log for the same reason it is installed here - earliest
+        // point the executable directory is known. Not under --gates, matching
+        // Foundation #6: two gate runs must not push a real crash out.
+        const std::string dump_dir = engine::platform::win32::install_crash_dumps(log_dir);
+        if (!dump_dir.empty()) {
+            engine::log(engine::LogLevel::Info, engine::LogChannel::General,
+                std::string("Crash dumps will be written to ") + dump_dir);
+        }
+#endif
     }
 
     char start_message[64];
@@ -1202,6 +1215,9 @@ int run_app(int argc, char** argv) {
         gates_ok = false;
     }
     if (!run_file_log_gate()) {
+        gates_ok = false;
+    }
+    if (!run_minidump_gate()) {
         gates_ok = false;
     }
     if (!run_arena_gate()) {

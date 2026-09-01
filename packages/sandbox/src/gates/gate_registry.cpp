@@ -66,6 +66,8 @@ const GateEntry kGates[] = {
         [](const CpuGateContext& ctx) { return run_physics_raycast_gate(ctx.physics); }},
     {"run_character_gate", GateKind::Cpu,
         [](const CpuGateContext& ctx) { return run_character_gate(ctx.physics); }},
+    {"run_minidump_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_minidump_gate(); }},
     {"run_window_gate", GateKind::Gpu, nullptr},
     {"run_audio_gate", GateKind::Gpu, nullptr},
     {"run_gamepad_gate", GateKind::Gpu, nullptr},

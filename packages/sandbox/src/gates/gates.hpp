@@ -86,6 +86,8 @@ bool run_physics_raycast_gate(engine::physics::IPhysics* physics);
 bool run_character_gate(engine::physics::IPhysics* physics);
 
 // ── platform ──
+bool run_minidump_gate();
+
 bool run_window_gate(engine::platform::IWindow* window, engine::rhi::IDevice* device);
 
 bool run_audio_gate(engine::audio::IAudio* audio);
