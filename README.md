@@ -25,10 +25,13 @@ The sandbox is the proving ground, not the product.
 - Git
 - [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)
   (`pwsh`) — not part of a base Windows install, and what the documented
-  invariant command below uses. The script also runs unchanged under the
-  built-in Windows PowerShell 5.1, so
-  `powershell -NoProfile -File tools/check-invariants.ps1` works if you would
-  rather not install it.
+  invariant command below uses. Installing it is also what makes that command
+  *work*: PowerShell 7 sets the machine execution policy to `RemoteSigned`,
+  while Windows PowerShell 5.1 leaves it `Undefined`, which resolves to
+  `Restricted` on client Windows and refuses to run a local unsigned script at
+  all. The script itself is 5.1-compatible — and faster there, 3.2 s against
+  9.1 s — but under 5.1 it needs the policy spelled out:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-invariants.ps1`.
 
 **Clone and build**
 
@@ -147,9 +150,13 @@ Exits `0` on pass, `1` on fail.
 pwsh -NoProfile -File tools/check-invariants.ps1
 ```
 
+Without PowerShell 7, add the policy the shipped shell does not grant itself:
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-invariants.ps1`.
+
 CI compiles Debug and Release `game`, configures with each `ENGINE_*` option
-off, and runs the invariant checks. It does **not** run `--gates`: the D3D12
-backend skips software adapters, and hosted runners have no hardware one.
+off, and runs the invariant checks under both shells. It does **not** run
+`--gates`: the D3D12 backend skips software adapters, and hosted runners have no
+hardware one.
 Run the gates locally before pushing.
 
 **Optional:** in **Debug**, `ENGINE_GPU_DEBUG=1` enables the D3D12 debug layer and shader debug flags. Release `game.exe` ignores it.

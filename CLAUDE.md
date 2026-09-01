@@ -104,6 +104,12 @@ any debug-layer message as a build-breaking bug, not a warning to skip.
 pwsh -NoProfile -File tools/check-invariants.ps1
 ```
 
+Use `pwsh`, not `powershell`. Windows PowerShell 5.1's execution policy is
+`Restricted` by default and refuses to run the script; installing PowerShell 7
+is what sets `RemoteSigned`. Under 5.1 the command needs
+`-ExecutionPolicy Bypass`. The script itself is compatible with both, and CI
+runs it under both.
+
 Machine-checks the non-negotiables above plus doc-level drift. Fourteen checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no

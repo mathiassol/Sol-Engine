@@ -31,6 +31,19 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tools/check-invariants.ps1
 
+      # README documents a Windows PowerShell 5.1 fallback for anyone who has
+      # not installed PowerShell 7. This keeps the script *compatible* with 5.1
+      # as it grows — no `??`, no ternary, no 7-only cmdlets.
+      #
+      # It does NOT cover the reason 5.1 actually bites a contributor: 5.1's
+      # default execution policy is Restricted and refuses to run a local
+      # unsigned script, whereas a hosted runner is permissive. That is a
+      # machine-configuration fact CI cannot reproduce, so README carries
+      # `-ExecutionPolicy Bypass` in the documented fallback instead.
+      - name: Check invariants under Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-invariants.ps1
+
   # ── Configure and compile both shipping configurations. ──────────────────
   build:
     name: Build (Debug + Release game)
