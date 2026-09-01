@@ -1,0 +1,41 @@
+# House style for NEW files only. Not auto-discovered, on purpose.
+#
+# clang-format walks up from a source file looking for a file literally named
+# `.clang-format`, so anything with that name in the repo root is applied by
+# Visual Studio and by the VS Code C/C++ extension as you type. The root config
+# is therefore a deliberate no-op (see `.clang-format`), and this file - which
+# no tool discovers - holds the style itself.
+#
+# Use it explicitly, and only on a file you have just created:
+#
+#     clang-format --style=file:tools/house-style.clang-format -i <newfile>
+#
+# Never run it over an existing file. Measured 31 Aug 2026 with clang-format
+# 20.1.8 and re-measured 1 Sep 2026: even with the settings below tuned toward
+# the house style, 92 of 123 C++ files and 1,961 sites still differ. The tree's
+# formatting is hand-tuned per site - aligned `case` returns, line breaks chosen
+# for readability, grouped initialiser lists - and a formatter destroys that
+# information rather than normalising it. See
+# `.claude/rules/cpp-conventions.md` for the rule.
+#
+# Settings below the base style were chosen by measuring the tree, not by
+# preference: BreakBeforeBinaryOperators and AlignAfterOpenBracket each cut
+# divergence materially (2,885 -> 2,012 sites together). Two were tried and
+# rejected: SpacesBeforeTrailingComments: 2 made 30 more files diverge, because
+# the tree uses one space; AlignConsecutiveShortCaseStatements looked like it
+# would rescue the aligned `case` returns and moved only 16 of 1,961 sites.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+SortIncludes: CaseInsensitive
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Operators lead the continuation line: `... \n || cond` not `... || \n cond`.
+BreakBeforeBinaryOperators: NonAssignment
+# Continuation indents by one level rather than aligning to the open bracket.
+AlignAfterOpenBracket: DontAlign
+# `case LogLevel::Info: return "INFO";` stays on one line.
+AllowShortCaseLabelsOnASingleLine: true

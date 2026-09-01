@@ -1,34 +1,28 @@
-# DESCRIPTIVE, NOT ENFORCED. Read this before running the formatter.
+# A DELIBERATE NO-OP. This file exists to disarm formatters, not to run one.
 #
-# This file is a starting point for a *new* file, so it lands near the house
-# style. It does not describe the existing tree and nothing checks it.
+# Why a comment was not enough. Visual Studio enables ClangFormat support by
+# default and shells out to clang-format.exe as you type whenever a
+# `.clang-format` file is present; the VS Code C/C++ extension does the same on
+# format-on-save. Neither reads comments. An earlier version of this file said
+# "DESCRIPTIVE, NOT ENFORCED" at the top and was still applied by both, so one
+# save could reformat three quarters of the tree and bury whatever the
+# contributor came to change.
 #
-# Do not bulk-reformat. Measured 31 Aug 2026 with clang-format 20.1.8: even with
-# the settings below tuned toward the house style, 108 of 141 files and 2,012
-# sites still differ. The tree's formatting is hand-tuned per site - aligned
-# `case` returns, line breaks chosen for readability, grouped initialiser lists -
-# and a formatter destroys that information rather than normalising it. Running
-# clang-format over an existing file produces a large diff that buries whatever
-# you came to change, so format the lines you touch, by hand, to match what is
-# around them.
+# `DisableFormat: true` makes clang-format return its input unchanged. Verified
+# 1 Sep 2026 against clang-format 20.1.8 (the copy Visual Studio 18 ships and
+# invokes) and 22.1.1: byte-identical output on a probe file that both versions
+# reformat without it. Because the IDEs drive the same binary, disabling it here
+# disables them. `tools/probe-formatter.ps1` re-runs that proof, and the
+# `format-hygiene` invariant fails if this line ever goes missing.
 #
-# Settings below the base style were chosen by measuring the tree, not by
-# preference: BreakBeforeBinaryOperators and AlignAfterOpenBracket each cut
-# divergence materially (2,885 -> 2,012 sites together). SpacesBeforeTrailingComments: 2
-# was tried and rejected - it made 30 more files diverge, because the tree uses
-# one space.
-BasedOnStyle: LLVM
-IndentWidth: 4
-ColumnLimit: 100
-BreakBeforeBraces: Attach
-AllowShortFunctionsOnASingleLine: Inline
-SortIncludes: CaseInsensitive
-PointerAlignment: Left
-ReferenceAlignment: Left
-
-# Operators lead the continuation line: `... \n || cond` not `... || \n cond`.
-BreakBeforeBinaryOperators: NonAssignment
-# Continuation indents by one level rather than aligning to the open bracket.
-AlignAfterOpenBracket: DontAlign
-# `case LogLevel::Info: return "INFO";` stays on one line.
-AllowShortCaseLabelsOnASingleLine: true
+# The house style still exists, at `tools/house-style.clang-format`. It is not
+# named `.clang-format` precisely so that nothing discovers it, and it is
+# applied by hand to a NEW file:
+#
+#     clang-format --style=file:tools/house-style.clang-format -i <newfile>
+#
+# What actually governs formatting here: `.editorconfig`, which every editor
+# honours and which the `format-hygiene` invariant enforces on every push, and
+# `.claude/rules/cpp-conventions.md`, which says to match the lines around the
+# ones you touch, by hand.
+DisableFormat: true

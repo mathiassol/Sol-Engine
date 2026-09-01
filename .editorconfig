@@ -12,10 +12,14 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
-; Indent width and column limit match .clang-format, but that file is
-; DESCRIPTIVE ONLY - the tree is not formatter-clean and must not be
-; bulk-reformatted. See the header of .clang-format for the measurement, and
-; .claude/rules/cpp-conventions.md for the rule.
+; This file is the formatting contract, and the `format-hygiene` invariant
+; enforces it on every push - indent, column limit, final newline, trailing
+; whitespace and line endings are all checked against what is declared here.
+;
+; The root .clang-format is a deliberate no-op (`DisableFormat: true`) so that
+; no editor reformats this hand-tuned tree on save. The house style for a *new*
+; file lives at tools/house-style.clang-format, which nothing auto-discovers and
+; whose header carries the measurement. See .claude/rules/cpp-conventions.md.
 [*.{cpp,hpp,h,hlsl,hlsli}]
 indent_size = 4
 max_line_length = 100

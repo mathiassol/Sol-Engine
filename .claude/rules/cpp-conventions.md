@@ -18,13 +18,21 @@ From [Philosophy.md](../../Philosophy.md)'s Code section and
 every package.
 
 - **Never run `clang-format` over an existing file, and never bulk-reformat.**
-  `.clang-format` is descriptive, not enforced: it exists so a *new* file starts
-  near the house style. It does not describe the tree and nothing checks it —
-  measured 31 Aug 2026, 108 of 141 files and 2,012 sites diverge even with the
-  config tuned toward house style. The formatting is hand-tuned per site
-  (aligned `case` returns, breaks chosen for readability, grouped initialiser
-  lists), so the formatter destroys information rather than normalising it.
+  The formatting is hand-tuned per site (aligned `case` returns, breaks chosen
+  for readability, grouped initialiser lists), so a formatter destroys
+  information rather than normalising it — measured 1 Sep 2026, 92 of 123 C++
+  files and 1,961 sites diverge even with the config tuned toward house style.
   Match the lines around the ones you touch, by hand.
+  - The root `.clang-format` is `DisableFormat: true`, so clang-format is a
+    verified no-op and Visual Studio's format-as-you-type cannot rewrite the
+    tree. That is a mechanism, not a request: a comment saying "descriptive
+    only" was ignored by both IDEs, which is why this file says what it says.
+  - The house style for a **new** file is `tools/house-style.clang-format`,
+    applied explicitly:
+    `clang-format --style=file:tools/house-style.clang-format -i <newfile>`.
+  - What *is* enforced is `.editorconfig` — indent, 100-column limit, final
+    newline, no trailing whitespace, LF (CRLF for `.ps1`/`.bat`/`.cmd`) —
+    checked by the `format-hygiene` invariant on every push.
 - RAII everywhere. No manual cleanup that a destructor could do.
 - Prefer composition over inheritance; prefer data over objects.
 - Ownership is explicit: `std::unique_ptr` for modules, injected at startup.
