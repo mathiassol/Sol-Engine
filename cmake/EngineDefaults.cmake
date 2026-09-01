@@ -30,6 +30,20 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
+# Sanitizers, GCC/Clang only (ENGINE_SANITIZE=address,undefined | address | ...).
+#
+# The Linux CI job compiles this tree; `--gates-cpu` is what makes it *run*
+# there, and running instrumented is the point. MSVC's /fsanitize=address is
+# deliberately not wired here: it is incompatible with incremental linking and
+# needs every module instrumented, and mixing that question into this one is how
+# neither gets finished. ENGINE_MAP Foundation has a row for it.
+set(ENGINE_SANITIZE "off" CACHE STRING "Sanitizers for GCC/Clang: off, address, undefined, or a comma list")
+if(NOT MSVC AND NOT ENGINE_SANITIZE STREQUAL "off")
+    message(STATUS "Sanitizers: ${ENGINE_SANITIZE}")
+    add_compile_options(-fsanitize=${ENGINE_SANITIZE} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${ENGINE_SANITIZE})
+endif()
+
 # Warnings
 if(MSVC)
     add_compile_options(/W4 /permissive-)

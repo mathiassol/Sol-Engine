@@ -46,4 +46,9 @@ extern const engine::usize kGateCount;
 // look identical to one that passed.
 bool run_cpu_gates(const CpuGateContext& ctx);
 
+// `--gates-cpu`. Builds the smallest context that works with no platform
+// backend - a std::filesystem IFileSystem, an asset loader over it, physics -
+// and runs every Cpu entry. Returns a process exit code. See headless.cpp.
+int run_headless_gates(const char* argv0);
+
 } // namespace sandbox

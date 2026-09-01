@@ -1,4 +1,5 @@
 #include "../sandbox_common.hpp"
+#include "gate_registry.hpp"
 
 // Core, config and identity gates.
 //
@@ -8,6 +9,53 @@
 // in sandbox_common.
 
 namespace sandbox {
+
+bool run_gate_registry_gate() {
+    // The kGates table's own consistency, at runtime. Invariant 15 checks the
+    // table against the definitions in source; this checks the table against
+    // itself, and runs headless, so a Cpu classification that cannot actually
+    // be invoked is caught where it would be used.
+    engine::u32 cpu = 0;
+    engine::u32 gpu = 0;
+    bool kinds_ok = true;
+    bool names_unique = true;
+    for (engine::usize i = 0; i < kGateCount; ++i) {
+        const GateEntry& e = kGates[i];
+        if (e.kind == GateKind::Cpu) {
+            ++cpu;
+            kinds_ok = kinds_ok && e.cpu_fn != nullptr;
+        } else {
+            ++gpu;
+            kinds_ok = kinds_ok && e.cpu_fn == nullptr;
+        }
+        for (engine::usize j = i + 1; j < kGateCount; ++j) {
+            if (std::string_view(e.name) == kGates[j].name) {
+                names_unique = false;
+            }
+        }
+    }
+    // This gate must be in the table it is checking. A registry that has
+    // forgotten the gate verifying it is the one failure this cannot otherwise
+    // see.
+    bool self_present = false;
+    for (engine::usize i = 0; i < kGateCount; ++i) {
+        if (std::string_view(kGates[i].name) == "run_gate_registry_gate") {
+            self_present = kGates[i].kind == GateKind::Cpu;
+        }
+    }
+
+    const bool passed = kinds_ok && names_unique && self_present && cpu + gpu == kGateCount
+        && cpu > 0 && gpu > 0;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Gate registry gate: total=%u cpu=%u gpu=%u kinds_consistent=%s names_unique=%s "
+        "self_registered=%s (%s)",
+        static_cast<engine::u32>(kGateCount), cpu, gpu, kinds_ok ? "yes" : "NO",
+        names_unique ? "yes" : "NO", self_present ? "yes" : "NO", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
+    return passed;
+}
 
 bool run_file_log_gate() {
     std::error_code ec;

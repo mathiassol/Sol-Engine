@@ -57,6 +57,7 @@
 #include "world_extract.hpp"
 #include "sandbox_common.hpp"
 #include "gates/gates.hpp"
+#include "gates/gate_registry.hpp"
 
 #ifdef ENGINE_HAS_WIN32_PLATFORM
 #include <engine/platform/win32/platform_win32.hpp>
@@ -901,10 +902,23 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
 // The engine body. main() below is only the exception boundary around it.
 int run_app(int argc, char** argv) {
     bool gates_mode = false;
+    bool headless_gates = false;
     for (int i = 1; i < argc; ++i) {
         if (std::string_view(argv[i]) == "--gates") {
             gates_mode = true;
         }
+        if (std::string_view(argv[i]) == "--gates-cpu") {
+            headless_gates = true;
+        }
+    }
+
+    // Before anything is created. --gates-cpu exists to run where there is no
+    // platform backend and no RHI, and the branch below this one is where a
+    // build without a platform logs Fatal and gives up - so a headless run has
+    // to return before reaching it, or it never runs on Linux at all.
+    if (headless_gates) {
+        engine::apply_cvar_args(argc, argv);
+        return sandbox::run_headless_gates(argc > 0 ? argv[0] : nullptr);
     }
     // Before Engine::init, so config.cfg cannot overwrite a --set value.
     engine::apply_cvar_args(argc, argv);
@@ -1183,6 +1197,9 @@ int run_app(int argc, char** argv) {
     bool gates_ok = run_mount_gate(*loader);
     gates_ok = run_mount_containment_gate(*loader) && gates_ok;
     gates_ok = run_build_gate(app.content_layout()) && gates_ok;
+    if (!run_gate_registry_gate()) {
+        gates_ok = false;
+    }
     if (!run_file_log_gate()) {
         gates_ok = false;
     }

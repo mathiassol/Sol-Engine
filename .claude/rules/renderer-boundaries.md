@@ -49,12 +49,11 @@ declines.
 1. **Shader** → `packages/sandbox/content/shaders/<name>.hlsl`. Mounted as
    `/shaders/<name>.hlsl`. (Engine shaders living under the sandbox's content
    root is a known wart — do not "fix" it in passing.)
-2. **Pipeline** → `packages/sandbox/src/sandbox_common.hpp` for the
-   `k<Name>Shader` path constant and the `make_<name>_pipeline_desc()`, then
-   `packages/sandbox/src/main.cpp`: a `k<Name>Shader` path
-   constant, a `make_<name>_pipeline_desc()`, and a compile + create block
-   alongside the existing ones. Pipelines are created by the app, not the
-   renderer. Hand the new pipeline to `ForwardDemo::adopt`, which stores the
+2. **Pipeline** → the `k<Name>Shader` path constant and
+   `make_<name>_pipeline_desc()` go in
+   `packages/sandbox/src/sandbox_common.hpp`/`.cpp`; the compile + create block
+   goes in `packages/sandbox/src/main.cpp` alongside the existing ones.
+   Pipelines are created by the app, not the renderer. Hand the new pipeline to `ForwardDemo::adopt`, which stores the
    identity and takes ownership; it replaces rather than appends, so shader
    hot-reload does not leak the pipeline it supersedes.
 3. **Plumbing** → two adjacent lines in
@@ -66,8 +65,10 @@ declines.
 4. **Register** → `add_pass` in `setup_standard_frame`
    (`packages/renderer/src/standard_frame.cpp`), declaring every read and
    write explicitly. Transients come from `create_transient`. Note the caps:
-   4 reads and 4 writes per pass, one color target, and `PassKind` is
-   `{Graphics, Copy}` — there is no compute pass kind.
+   4 reads and 4 writes per pass, and one color target. `PassKind` is
+   `{Graphics, Copy, Compute}`; a compute pass is ordered, missing-producer
+   checked and cycle-checked like any other, but a write it declares is
+   ordering-only until RHI #9 puts UAV textures on the contract.
 5. **Record** → declare the recorder in `render_snapshot.hpp`, define it in
    `render_graph.cpp`.
 6. **Gate** → a `run_<name>_gate()` in

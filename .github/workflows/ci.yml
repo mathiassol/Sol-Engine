@@ -135,6 +135,48 @@ jobs:
       - name: Build
         run: cmake --build build-linux --parallel
 
+      # First execution of this codebase off Windows. 36 of the 74 gates are
+      # classified Cpu in kGates and need no device; the rest are Gpu and are
+      # skipped by name, not by silence — the run logs how many of how many it
+      # executed, so a headless run that quietly does nothing cannot pass.
+      - name: Run the headless gates
+        run: ./build-linux/bin/sandbox --gates-cpu
+
+  # ── The same gates, instrumented. ────────────────────────────────────────
+  # The audit's comparison section named this as one of three places Sol was
+  # behind every reference engine: "there is no sanitizer job, no fuzzing, and
+  # no crash reporter. Unity, Unreal and Godot all run ASan/UBSan or equivalent
+  # in CI."
+  #
+  # Covers the ~36 Cpu gates and every package they touch — core, math, scene,
+  # physics-cpu, assets and the renderer's CPU maths. It does NOT cover GPU
+  # code: rhi-d3d12, shaders-dxc, platform-win32, audio-xaudio2 and
+  # assets-png-wic are not even compiled here.
+  #
+  # halt_on_error=1 on purpose. A sanitizer that reports and carries on turns a
+  # red build green, which is worse than not running it at all.
+  linux-sanitize:
+    name: ASan + UBSan (headless gates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure
+        run: >
+          cmake -B build-asan
+          -DENGINE_RHI_D3D12=OFF -DENGINE_PLATFORM_WIN32=OFF
+          -DENGINE_SANITIZE=address,undefined
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-asan --parallel
+
+      - name: Run the headless gates, instrumented
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ./build-asan/bin/sandbox --gates-cpu
+
   # ── The modularity claim, kept honest. ───────────────────────────────────
   # Every one of these switches is documented in README.md's CMake options
   # table. Before this job existed, -DENGINE_RHI_D3D12=OFF failed at generate

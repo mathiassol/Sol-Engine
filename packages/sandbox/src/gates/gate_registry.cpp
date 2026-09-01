@@ -32,6 +32,8 @@ const GateEntry kGates[] = {
     {"run_husky_mesh_gate", GateKind::Gpu, nullptr},
     {"run_aabb_gate", GateKind::Gpu, nullptr},
     {"run_aabb_transform_gate", GateKind::Gpu, nullptr},
+    {"run_gate_registry_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_gate_registry_gate(); }},
     {"run_file_log_gate", GateKind::Cpu,
         [](const CpuGateContext&) { return run_file_log_gate(); }},
     {"run_arena_gate", GateKind::Cpu,

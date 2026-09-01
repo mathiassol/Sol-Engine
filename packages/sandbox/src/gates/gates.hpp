@@ -48,6 +48,8 @@ bool run_aabb_gate(const engine::assets::MeshData& mesh);
 bool run_aabb_transform_gate(const engine::assets::MeshData& mesh);
 
 // ── core ──
+bool run_gate_registry_gate();
+
 bool run_file_log_gate();
 
 bool run_arena_gate();
