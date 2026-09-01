@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 1 Sep 2026: **24,176 lines** of C++/HLSL in **142 files**, **26
+Measured 1 Sep 2026: **24,344 lines** of C++/HLSL in **142 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 7,239
 — 30% of the engine, and its `content/shaders/*.hlsl` (1,040 lines) counts here
 too; `renderer` is 3,028 (13%); `rhi-d3d12` is 3,016 (12%); `physics-cpu` is
@@ -1235,6 +1235,156 @@ widened to `build*/` to cover the two new binary dirs.
 needs an MSVC environment the VS preset does not. Do not give `ci-build` a
 generator. Do not add a `CMakeUserPresets.json` to the repository; that file is
 for a developer's own machine and is not shared.
+
+---
+
+## Build #16 — a setup check that names the prerequisite (done)
+
+**Why:** Two prerequisites already failed well — a missing Windows SDK is a
+`FATAL_ERROR` naming DXC, and an over-long source path warns before `project()`.
+The rest failed as CMake errors about CMake. No Visual Studio gives "No
+CMAKE_CXX_COMPILER could be found"; CMake under 4.2 gives "Could not create
+named generator Visual Studio 18 2026". Neither names what to install.
+
+**Choice:** `tools/check-prereqs.ps1`, run before the first configure. One line
+per prerequisite — Windows build, shell, git, CMake against both its floors, the
+VS 18 generator, Visual Studio's C++ workload via `vswhere`, the Windows SDK DXC
+pair, source path length — found with a version, or missing with a name and a
+URL. The DXC line asks the build's own search through
+`cmake -P tools/report-dxc.cmake` rather than copying the path logic: a second
+copy would drift, and a drifted check is worse than none, because it reports
+success on a machine where configure then fails.
+
+Not an invariant, and it cannot be one — it inspects a machine, and CI runners
+have everything. CI runs it under both shells anyway, which catches
+compatibility regressions: the first version threw under Windows PowerShell 5.1
+alone, where a native command's stderr becomes an error record that
+`$ErrorActionPreference = 'Stop'` raises, and `cmake -P` writes its result there.
+
+**Gate (met):** No gate — it inspects a machine, not the engine. Three cases
+watched failing instead: the SDK absent, CMake below 3.24, and a CMake with no
+VS 18 generator. Each named the right prerequisite and exited 1, with the
+baseline re-verified green afterwards.
+
+**Do not (still):** do not split `project()` into `LANGUAGES NONE` plus
+`enable_language(CXX)` to intercept "no C++ compiler" inside CMake. That moves
+when `CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION` is set, and `engine_locate_dxc`
+reads it — risking DXC discovery to duplicate a message this script already
+gives. Do not duplicate the DXC search.
+
+---
+
+## Build #8 / #15 — a zip, and a tag that publishes it (done)
+
+**Why:** `game.exe` imported `MSVCP140.dll`, `VCRUNTIME140.dll`,
+`VCRUNTIME140_1.dll` and eight `api-ms-win-crt-*` entries. The latter are the
+Universal CRT and inbox on Windows 10+; the first three are the Visual C++
+redistributable and are not on a machine that has never had Visual Studio. That
+is exactly what Build #8's "(no Visual Studio on the player machine)" meant, and
+there was no way to hand anyone a build in any case.
+
+**Choice:** Remove the requirement rather than ship it.
+`CMAKE_MSVC_RUNTIME_LIBRARY = MultiThreaded` drops all eleven imports for 0.3 MB;
+`game.exe` now depends only on `ole32`, `VERSION`, `USER32`, `XINPUT1_4`,
+`d3d12`, `dxgi`, `KERNEL32` and `dxcompiler.dll`. This honours Build #9's
+`Do not: app-local vcruntime` rather than reversing it — no vcruntime travels at
+all. Safe because the engine ships no DLLs of its own, and `dxcompiler.dll` is
+reached through COM, so no CRT object crosses the boundary.
+
+CPack wraps the layout `cmake --install` already produced and restates nothing
+about what ships — the `install()` rules are the single definition. ZIP only.
+`release.yml` on a `v*` tag configures with `ci-build`, builds, runs the
+invariants, packs, checks the archive and publishes with `gh release create`;
+`workflow_dispatch` does everything except publish, so the path can be rehearsed
+without spending a tag.
+
+**Gate (met):** No gate — packaging changes nothing at runtime.
+`tools/check-shipped-zip.ps1` is the equivalent and runs before every upload: one
+top-level directory, `game.exe` / `dxcompiler.dll` / `dxil.dll` /
+`content.pak` / `LICENSE` / `content/` / `debug/` all present, no
+`.pdb`/`.lib`/`.ilk`/`.exp`, and no redistributable import — read out of the
+exe's bytes, since a PE stores imported module names as ASCII and that needs no
+Visual Studio on the runner. Watched failing on a real `/MD` build and on an
+archive with `dxcompiler.dll` removed. Proven the way a player meets it: the
+CI-built zip, downloaded and unzipped into a fresh directory, ran
+`game.exe --gates` to **74 (pass) / 0 FAIL**.
+
+**Do not (still):** no NSIS or WiX installer while the game is a folder you
+unzip — Build #19 delta patching (Far) is the row that would need one. Do not
+add files to CPack instead of to an `install()` rule. Do not claim CI verifies
+the gates: a hosted runner has no hardware D3D12 adapter, so a release is only as
+gate-verified as the last local run on that commit.
+
+---
+
+## Build #13 — the tree compiles without Windows (done)
+
+**Why:** ARCHITECTURE.md says only the backend packages touch a platform API,
+and a source scan agrees — 7 of 142 files, each inside its own package. Nothing
+made that true of the compiler rather than of the text.
+
+**Choice:** Four fixes, all small. `packages/game` gated the DXC install on the
+**option** `ENGINE_RHI_D3D12`, which defaults ON everywhere, instead of the
+**target** `engine::rhi-d3d12`, which exists only under
+`if(ENGINE_RHI_D3D12 AND WIN32)` — off Windows the `FATAL_ERROR` killed configure
+before anything else ran. The `content.pak` install rule was unguarded while the
+copy rule beside it was already guarded. Three includes were unguarded, and
+three call sites behind them. Hot reload simply degrades (the poll site already
+null-checks the watcher); the PNG decode refuses with a named error rather than
+uploading a black albedo that reads as a lighting bug; the shader compiler and
+everything downstream sit in one `ENGINE_HAS_D3D12` region whose `#else` logs
+Fatal and returns 1 — deliberately not a gate failure, because a backend-less
+build is a configuration, not a defect.
+
+**Gate (met):** A CI job on `ubuntu-latest` with gcc. It compiled **and linked**
+both `sandbox` and `game` on its first run — no source iteration was needed,
+which is the strongest evidence the layering claim was already true. Eight
+`-Wunused-function` warnings from functions reachable only inside the
+`ENGINE_HAS_D3D12` region were closed with `[[maybe_unused]]` rather than
+tolerated.
+
+**Do not (still):** do not read a green Linux job as Linux support. Nothing runs
+there — no platform backend, no RHI. Build #17 non-Windows packaging is a
+separate row, and Platform #9 is now Ready because this one landed. Do not add
+`-Werror` to that job in the same breath as making it pass.
+
+---
+
+## Build #10 — quality presets (done)
+
+**Why:** Fullscreen was already there — `WindowMode`, `set_mode`, the `window.*`
+cvars and F11. What was missing was one knob that moves several, and there were
+only two real quality knobs to move: `r.aa`, and a shadow size that was a struct
+field rather than a cvar.
+
+**Choice:** `r.shadow_size` (a power of two, 256–4096) plus `r.quality` over
+`custom | low | medium | high`. **`custom` is the default and means no preset**,
+so the per-knob defaults stand and an existing `config.cfg` behaves exactly as
+before — none of the three presets reproduces today's Off + 1024 pairing, so
+making one of them the default would have changed behaviour while claiming not
+to. A preset is a default, not an override: `resolve_quality` reads whether a
+knob was *set* rather than writing through `Cvar::set()`, so an explicit `r.aa`
+or `r.shadow_size` wins.
+
+`run_aa_gate` went red the moment `r.quality` could move the AA mode, because it
+re-derived its own expectation. Both it and the setup path now call one
+`resolve_quality_from_cvars`, so the gate cannot drift from the behaviour it
+checks, and its message reports startup/wanted/factory instead of a hard-coded
+`default=off`.
+
+**Gate (met):** `Quality preset gate: low=off/512 medium=fxaa/1024
+high=taa/2048 custom=yes unknown=rejected explicit_aa_wins=yes
+explicit_shadow_wins=yes bounds=yes (pass)` — 75 gates now. Watched failing
+first by swapping two rows of the preset table: `low=BAD/2048
+explicit_shadow_wins=no (FAIL)`, exit 1. The renderer's ready line now carries
+the shadow size, because until it did there was no way to observe which size the
+real graph used — the shadow gate runs against its own probe. Verified across
+`low`, `high`, an explicit override, an unknown name and a bad size.
+
+**Do not (still):** startup only — do not make these live without first solving
+the render-graph transient rebuild. Do not persist them: `config.cfg` is read and
+never written, and the cvar writer is Foundation #17. Do not add a preset knob
+for something the renderer does not actually expose.
 
 ---
 

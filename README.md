@@ -164,6 +164,34 @@ Startup AA can also be set without a rebuild: `sandbox.exe --set r.aa=taa`
 (`off` | `fxaa` | `smaa` | `taa`). See [docs/FOUNDATION.md](docs/FOUNDATION.md)
 for the full cvar list.
 
+**Quality presets** — one knob over the two the renderer actually exposes:
+
+```powershell
+.\build\bin\Debug\sandbox.exe --set r.quality=high
+```
+
+| `r.quality` | `r.aa` | `r.shadow_size` |
+|-------------|--------|-----------------|
+| `custom` (default) | `off` | 1024 |
+| `low` | `off` | 512 |
+| `medium` | `fxaa` | 1024 |
+| `high` | `taa` | 2048 |
+
+`custom` means *no preset*, so the per-knob defaults stand and an existing
+`config.cfg` behaves exactly as before. A preset is a default, not an override:
+`--set r.quality=high --set r.aa=fxaa` gives you FXAA with a 2048 shadow map.
+`r.shadow_size` takes a power of two from 256 to 4096 on its own.
+
+Both are **startup only**. The shadow map is a render-graph transient sized when
+the graph is built, so changing it mid-session means recreating that transient —
+Build #10 does not, and neither does anything persist your choice: `config.cfg`
+is read, never written (Foundation #17). The line the renderer logs at startup
+tells you what you actually got:
+
+```
+Render graph ready (shadow 2048x2048, forward, motion, sky, bloom, TAA, ...)
+```
+
 **What the sandbox renders:** 63 huskies plus a checker floor in `scene::World`
 (the scene holds up to 512; all are frustum-culled at extract), lit by a directional sun with a
 shadow, split-sum IBL, and one rim point light. A source cubemap sky fills

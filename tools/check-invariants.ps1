@@ -344,6 +344,13 @@ if (Test-Path $mapPath) {
         if (-not $r.Success) { continue }
         $key = "$curCat/$([int]$r.Groups[1].Value)"
         $status = ($r.Groups[3].Value -replace '\*', '').Trim()
+        # The # column is an id, not a position, so a repeat is a bookkeeping
+        # error - and a silent one: $rowStatus is keyed by it, so the second row
+        # used to overwrite the first and both the row count and the ready count
+        # quietly lost one. Found exactly that way, by adding a second #15.
+        if ($rowStatus.ContainsKey($key)) {
+            $mapViolations += "ENGINE_MAP $key : duplicate row id - ids are unique per category"
+        }
         $rowStatus[$key] = $status
         $rowFirst[$key]  = $r.Groups[4].Value.Trim()
         if (-not $catTally.ContainsKey($curCat)) { $catTally[$curCat] = @(0, 0, 0) }

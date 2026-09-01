@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-77 Done · 42 Ready · 102 Later · 60 Far.
+82 Done · 39 Ready · 101 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -68,7 +68,7 @@ Phases 0–14 are **Done**. Next work is any **Ready** row you choose.
 
 Core loop, memory, math, diagnostics. Mostly shipped.
 
-*8 done · 4 ready · 16 rows.*
+*8 done · 5 ready · 17 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -84,6 +84,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 | 10 | Interned string ids (`StringId`) with a debug-only reverse table | **Ready** |  |
 | 11 | Versioned binary reader/writer primitives, shared by every cooked format | **Ready** |  |
 | 12 | Tracked allocators: tag every arena, report live bytes and leaks at shutdown | **Ready** |  |
+| 17 | Cvar writer: persist chosen knobs back to `config.cfg` | **Ready** |  |
 | 13 | Per-thread scratch arenas (so a job can allocate without a lock) | Later | Jobs #2 pool. One worker needs no per-thread anything. |
 | 14 | Field descriptors for POD structs, so save/load and prefabs stop hand-writing both sides | Later | Foundation #11 binary primitives, then a second format that would duplicate the walk. |
 | 15 | Config hot-reload: re-read `config.cfg` on change without a restart | Later | Platform #12 filesystem watch. |
@@ -95,7 +96,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 
 Window, OS services, input devices. Win32 is the daily driver.
 
-*4 done · 3 ready · 16 rows.*
+*4 done · 4 ready · 16 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -114,7 +115,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 | 16 | Focus-loss throttling and battery/power state | Far | A shipped game complaining about heat or battery. |
 | 7 | Clipboard, file dialogs | Far | A separate editor (Editor #4–#5) or a game that picks files. No in-engine inspector. |
 | 5 | Multiple windows (editor + game view) | Far | A **separate** editor app (Editor #2), not an in-sandbox inspector. `IPlatform` is single-HWND today. |
-| 9 | `platform-*` non-Windows (same `IPlatform`) | Later | Build #13 — a CI job proving the tree configures on that OS before anyone writes a window for it. |
+| 9 | `platform-*` non-Windows (same `IPlatform`) | **Ready** | |
 
 ---
 
@@ -469,7 +470,7 @@ file. Not so an inspector can live in the engine.
 
 ## 18. Build and ship a `game.exe`
 
-*7 done · 5 ready · 19 rows.*
+*12 done · 0 ready · 19 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -479,12 +480,12 @@ file. Not so an inspector can live in the engine.
 | 4 | Icon, version resource, window title as game identity | **Done** |  |
 | 5 | Cooked asset pack next to (or inside) the exe | **Done** |  |
 | 9 | Ship dxcompiler/D3D12 Agility if required; document GPU baseline | **Done** |  |
-| 8 | Zip / installer (no Visual Studio on the player machine) | **Ready** |  |
-| 10 | Fullscreen options, quality presets | **Ready** |  |
-| 13 | CI job that configures (and ideally compiles) on Linux | **Ready** |  |
+| 8 | Zip / installer (no Visual Studio on the player machine) | **Done** |  |
+| 10 | Fullscreen options, quality presets | **Done** |  |
+| 13 | CI job that configures (and ideally compiles) on Linux | **Done** |  |
 | 14 | `CMakePresets.json` so the dev box and CI stop configuring differently | **Done** |  |
-| 15 | Release workflow: a tag produces a downloadable build | **Ready** |  |
-| 16 | A setup check that names the missing prerequisite instead of failing inside CMake | **Ready** |  |
+| 15 | Release workflow: a tag produces a downloadable build | **Done** |  |
+| 16 | A setup check that names the missing prerequisite instead of failing inside CMake | **Done** |  |
 | 7 | Logs + crash dumps in `%LOCALAPPDATA%` (or equivalent) | Later | Foundation #7 minidump. Foundation #6 is Done — `default_log_directory()` in `core/log_file.hpp` is the single function this row changes. |
 | 6 | Startup splash / loading that does not hitch the first frame silently | Later | A first-frame hitch worth hiding (many assets, or Assets #14 async load). Current load is tiny. |
 | 17 | Non-Windows packaging (AppImage, .app bundle) | Later | Platform #9 a non-Windows platform package. |

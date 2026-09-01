@@ -1,5 +1,7 @@
 #include <engine/renderer/standard_frame.hpp>
 
+#include <cstdio>
+
 #include <engine/core/log.hpp>
 #include <engine/renderer/aa.hpp>
 #include <engine/renderer/bloom.hpp>
@@ -345,11 +347,18 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
 
     const bool compiled = graph.compile();
     if (desc.log_ready) {
+        // shadow_map_size is the one field of StandardFrameDesc a knob can move
+        // (the sandbox's r.quality / r.shadow_size), and until it appeared here
+        // there was no way to observe which size the real graph was built with -
+        // the shadow gate runs against its own probe graph and always reported
+        // the default.
+        char message[192];
+        std::snprintf(message, sizeof(message),
+            "Render graph ready (shadow %ux%u, forward, motion, sky, bloom, TAA, tonemap, "
+            "AA, debug lines, overlay)",
+            desc.shadow_map_size, desc.shadow_map_size);
         log(compiled ? LogLevel::Info : LogLevel::Error, LogChannel::Render,
-            compiled
-                ? "Render graph ready (shadow, forward, motion, sky, bloom, TAA, tonemap, "
-                  "AA, debug lines, overlay)"
-                : "Render graph compile failed");
+            compiled ? message : "Render graph compile failed");
     }
     return compiled;
 }

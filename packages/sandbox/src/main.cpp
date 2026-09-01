@@ -162,6 +162,117 @@ engine::Cvar cv_aa{"r.aa", "off", "Anti-aliasing: off | fxaa | smaa | taa"};
 engine::Cvar cv_exposure{"r.exposure", -2.0f,
     "Exposure in EV stops; the multiplier is 2^ev. Scales sun, sky and IBL together."};
 
+// Quality presets (Build #10). One knob that moves the two the demo actually
+// has: anti-aliasing and shadow resolution.
+//
+// "custom" is the default and means *no preset*, so the per-knob defaults below
+// stand and an existing config.cfg behaves exactly as it did. None of the three
+// presets reproduces today's pairing (Off + 1024), so making one of them the
+// default would have changed behaviour while claiming not to.
+//
+// Startup only, and the help says so: the shadow map is a render-graph
+// transient sized when the graph is built, so changing it mid-session means
+// recreating that transient. That is its own row, not this one.
+engine::Cvar cv_quality{"r.quality",
+    "custom",
+    "Quality preset: custom | low | medium | high. Applied at startup to r.aa and "
+    "r.shadow_size; an explicit value for either of those wins."};
+engine::Cvar cv_shadow_size{"r.shadow_size", 1024,
+    "Shadow map edge in texels. A power of two from 256 to 4096."};
+
+struct QualityPreset {
+    const char* name;
+    engine::renderer::aa::Mode aa;
+    engine::u32 shadow_size;
+};
+
+constexpr QualityPreset kQualityPresets[] = {
+    {"low", engine::renderer::aa::Mode::Off, 512},
+    {"medium", engine::renderer::aa::Mode::Fxaa, 1024},
+    {"high", engine::renderer::aa::Mode::Taa, 2048},
+};
+
+struct QualitySettings {
+    engine::renderer::aa::Mode aa = engine::renderer::aa::Mode::Off;
+    engine::u32 shadow_size = engine::renderer::kShadowMapSize;
+};
+
+// A power of two so the mip chain and the PCF kernel stay well-defined, and
+// bounded because the shadow map is a graph transient: 8192 would allocate
+// 256 MB of D32 and fail somewhere less obvious than here.
+bool valid_shadow_size(engine::u32 texels) {
+    return texels >= 256 && texels <= 4096 && (texels & (texels - 1)) == 0;
+}
+
+// A preset is a default, not an override, so this reads whether a knob was set
+// rather than writing through Cvar::set(). Passing the explicit values in as
+// pointers - null meaning "not set" - keeps it a pure function the gate can
+// drive without touching global cvar state.
+//
+// Returns false for a name that is not a preset. "custom" is a name, and means
+// no preset was asked for.
+bool resolve_quality(std::string_view preset, const engine::renderer::aa::Mode* explicit_aa,
+    const engine::u32* explicit_shadow, QualitySettings& out) {
+    out = QualitySettings{};
+    bool known = preset == "custom";
+    for (const QualityPreset& candidate : kQualityPresets) {
+        if (preset == candidate.name) {
+            out.aa = candidate.aa;
+            out.shadow_size = candidate.shadow_size;
+            known = true;
+            break;
+        }
+    }
+    if (explicit_aa != nullptr) {
+        out.aa = *explicit_aa;
+    }
+    if (explicit_shadow != nullptr) {
+        out.shadow_size = *explicit_shadow;
+    }
+    return known;
+}
+
+// What the current knobs ask for, read off the live cvars. Both setup_forward_demo
+// and run_aa_gate call this, so the gate cannot drift from the behaviour it
+// checks - which it did the moment r.quality became a second way to move the AA
+// mode, and the gate still expected the factory default.
+//
+// `warn` because the setup path should report a bad knob once and the gate must
+// not repeat it.
+QualitySettings resolve_quality_from_cvars(bool warn) {
+    engine::renderer::aa::Mode explicit_aa{};
+    const engine::renderer::aa::Mode* explicit_aa_ptr = nullptr;
+    if (cv_aa.source() != engine::CvarSource::Default) {
+        if (engine::renderer::aa::parse_mode(cv_aa.as_string(), explicit_aa)) {
+            explicit_aa_ptr = &explicit_aa;
+        } else if (warn) {
+            engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+                std::string("Cvar 'r.aa' expects ") + cv_aa.help());
+        }
+    }
+
+    engine::u32 explicit_shadow = 0;
+    const engine::u32* explicit_shadow_ptr = nullptr;
+    if (cv_shadow_size.source() != engine::CvarSource::Default) {
+        const engine::i32 asked = cv_shadow_size.as_int();
+        if (asked > 0 && valid_shadow_size(static_cast<engine::u32>(asked))) {
+            explicit_shadow = static_cast<engine::u32>(asked);
+            explicit_shadow_ptr = &explicit_shadow;
+        } else if (warn) {
+            engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+                std::string("Cvar 'r.shadow_size' expects ") + cv_shadow_size.help());
+        }
+    }
+
+    QualitySettings out{};
+    if (!resolve_quality(cv_quality.as_string(), explicit_aa_ptr, explicit_shadow_ptr, out)
+            && warn) {
+        engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+            std::string("Cvar 'r.quality' expects ") + cv_quality.help());
+    }
+    return out;
+}
+
 struct FlyCamera {
     engine::math::Vec3 position{0.f, 0.35f, -2.2f};
     engine::f32 yaw   = 0.f;
@@ -274,6 +385,9 @@ struct SandboxState {
     engine::gameplay::GameCamera game_camera;
     bool walk_mode = false;
     engine::f32 husky_foot_y = 0.f;
+    // Resolved from r.quality / r.shadow_size in setup_forward_demo, consumed by
+    // setup_render_graph. Those run in that order in run_app.
+    engine::u32 shadow_map_size = engine::renderer::kShadowMapSize;
 };
 
 void toggle_walk_mode(SandboxState& state) {
@@ -2938,6 +3052,58 @@ bool run_bloom_gate(const ForwardDemo& demo) {
     return passed;
 }
 
+bool run_quality_preset_gate() {
+    using Mode = engine::renderer::aa::Mode;
+    QualitySettings q{};
+
+    const bool low_ok = resolve_quality("low", nullptr, nullptr, q)
+        && q.aa == Mode::Off && q.shadow_size == 512;
+    const engine::u32 low_shadow = q.shadow_size;
+
+    const bool medium_ok = resolve_quality("medium", nullptr, nullptr, q)
+        && q.aa == Mode::Fxaa && q.shadow_size == 1024;
+    const engine::u32 medium_shadow = q.shadow_size;
+
+    const bool high_ok = resolve_quality("high", nullptr, nullptr, q)
+        && q.aa == Mode::Taa && q.shadow_size == 2048;
+    const engine::u32 high_shadow = q.shadow_size;
+
+    // "custom" is a name, and it must leave the per-knob defaults alone -
+    // otherwise adding this row silently changes what an existing config does.
+    const bool custom_ok = resolve_quality("custom", nullptr, nullptr, q)
+        && q.aa == Mode::Off && q.shadow_size == engine::renderer::kShadowMapSize;
+
+    // An unrecognised name is reported, not silently treated as "custom".
+    const bool unknown_ok = !resolve_quality("ultra", nullptr, nullptr, q);
+
+    // A preset is a default, not an override.
+    const Mode want_aa = Mode::Fxaa;
+    const bool aa_wins = resolve_quality("high", &want_aa, nullptr, q)
+        && q.aa == Mode::Fxaa && q.shadow_size == 2048;
+    const engine::u32 want_shadow = 4096;
+    const bool shadow_wins = resolve_quality("low", nullptr, &want_shadow, q)
+        && q.aa == Mode::Off && q.shadow_size == 4096;
+
+    const bool bounds_ok = valid_shadow_size(256) && valid_shadow_size(1024)
+        && valid_shadow_size(4096) && !valid_shadow_size(0) && !valid_shadow_size(128)
+        && !valid_shadow_size(1000) && !valid_shadow_size(8192);
+
+    const bool passed = low_ok && medium_ok && high_ok && custom_ok && unknown_ok
+        && aa_wins && shadow_wins && bounds_ok;
+
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Quality preset gate: low=%s/%u medium=%s/%u high=%s/%u custom=%s unknown=%s "
+        "explicit_aa_wins=%s explicit_shadow_wins=%s bounds=%s (%s)",
+        low_ok ? "off" : "BAD", low_shadow, medium_ok ? "fxaa" : "BAD", medium_shadow,
+        high_ok ? "taa" : "BAD", high_shadow, custom_ok ? "yes" : "no",
+        unknown_ok ? "rejected" : "ACCEPTED", aa_wins ? "yes" : "no",
+        shadow_wins ? "yes" : "no", bounds_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_aa_gate(const ForwardDemo& demo) {
     using engine::renderer::aa::effective_mode;
     using engine::renderer::aa::kAfterTonemap;
@@ -2977,27 +3143,21 @@ bool run_aa_gate(const ForwardDemo& demo) {
         && parse_mode("taa", parsed) && parsed == Mode::Taa
         && !parse_mode("FXAA", parsed) && !parse_mode("nope", parsed);
 
-    // r.aa is now allowed to change demo.aa_mode before this gate runs, so
-    // asserting the factory default unconditionally would go red for anyone
-    // running with the knob set. Assert the default only while the knob is
-    // untouched; once touched, assert the demo matches what was asked for
-    // (falling back to the default on an unparsable value, same as the
-    // knob-application code does). Same shape as run_window_gate's
-    // startup/default_ok clause for window.mode and r.vsync.
-    bool startup_ok = demo.aa_mode == kDefault;
-    if (cv_aa.source() != engine::CvarSource::Default) {
-        Mode wanted = kDefault;
-        if (!parse_mode(cv_aa.as_string(), wanted)) {
-            wanted = kDefault;
-        }
-        startup_ok = demo.aa_mode == wanted;
-    }
+    // Two knobs can move the startup mode now - r.aa directly and r.quality as a
+    // preset - so asserting the factory default unconditionally goes red for
+    // anyone running with either set. Ask the same resolver the setup path used
+    // rather than re-deriving the expectation here, which is exactly how this
+    // gate broke when r.quality arrived. `false`: the setup path already warned
+    // about any bad knob, and a gate must not double-report it.
+    const Mode wanted = resolve_quality_from_cvars(false).aa;
+    const bool startup_ok = demo.aa_mode == wanted;
 
     const bool passed = policy_ok && luma_ok && fxaa_ok && smaa_ok && exclusive_ok
         && parse_ok && startup_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "AA gate: default=off exclusive=yes after_tonemap=yes fxaa=yes (%s)",
+        "AA gate: startup=%s wanted=%s factory=%s exclusive=yes after_tonemap=yes fxaa=yes (%s)",
+        mode_name(demo.aa_mode), mode_name(wanted), mode_name(kDefault),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
@@ -5031,6 +5191,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
 
 [[maybe_unused]] bool setup_render_graph(engine::Engine& app, SandboxState& state) {
     engine::renderer::StandardFrameDesc desc{};
+    desc.shadow_map_size = state.shadow_map_size;
     desc.draw_debug_lines = [&state](engine::renderer::PassContext& ctx) {
         state.debug_lines.draw(ctx.cmd, ctx.snapshot.view, ctx.snapshot.projection);
     };
@@ -5527,16 +5688,14 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     // an absurd knob value cannot put inf into scene_color.
     demo->exposure = exposure_from_ev(cv_exposure.as_float());
 
-    if (cv_aa.source() != engine::CvarSource::Default) {
-        engine::renderer::aa::Mode mode = demo->aa_mode;
-        if (engine::renderer::aa::parse_mode(cv_aa.as_string(), mode)) {
-            demo->aa_mode = mode;
-        } else {
-            engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
-                std::string("Cvar 'r.aa' expects ") + cv_aa.help());
-        }
-    }
+    // r.quality supplies both knobs; an explicit r.aa or r.shadow_size wins.
+    const QualitySettings quality = resolve_quality_from_cvars(true);
+    demo->aa_mode = quality.aa;
+    state.shadow_map_size = quality.shadow_size;
     if (!run_aa_gate(*demo) && fail_on_gate) {
+        return false;
+    }
+    if (!run_quality_preset_gate() && fail_on_gate) {
         return false;
     }
     if (!run_instance_capacity_gate() && fail_on_gate) {
