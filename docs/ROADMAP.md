@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 1 Sep 2026: **26,280 lines** of C++/HLSL in **159 files**, **26
+Measured 1 Sep 2026: **26,292 lines** of C++/HLSL in **159 files**, **26
 packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is still
 the largest at 7,609 — 31% — but it is no longer one file: `main.cpp` is 1,351
 lines, the seven `gates/gates_*.cpp` hold the 72 gates, and its

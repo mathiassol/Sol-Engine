@@ -1047,9 +1047,14 @@ bool D3D12Device::create_depth_buffer() {
     resource_desc.SampleDesc.Count   = 1;
     resource_desc.Flags              = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
+    // Baked at creation and must match what ClearDepthStencilView passes, or
+    // the debug layer reports a mismatch and the driver loses its fast clear.
+    // Reversed-Z clears to 0.
+    const f32 depth_clear_value =
+        depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format               = DXGI_FORMAT_D32_FLOAT;
-    clear_value.DepthStencil.Depth   = 1.f;
+    clear_value.DepthStencil.Depth   = depth_clear_value;
 
     if (FAILED(device_->CreateCommittedResource(
             &heap_props, D3D12_HEAP_FLAG_NONE, &resource_desc,
@@ -1582,7 +1587,9 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format = dxgi;
     if (is_depth) {
-        clear_value.DepthStencil.Depth = 1.f;
+        // Must match ClearDepthStencilView; reversed-Z clears to 0.
+        clear_value.DepthStencil.Depth =
+            depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
     } else {
         clear_value.Color[3] = 1.f;
     }
@@ -1989,9 +1996,14 @@ std::unique_ptr<ITexture> D3D12Device::create_shadow_texture(const TextureDesc& 
     resource_desc.SampleDesc.Count = 1;
     resource_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
+    // Baked at creation and must match what ClearDepthStencilView passes, or
+    // the debug layer reports a mismatch and the driver loses its fast clear.
+    // Reversed-Z clears to 0.
+    const f32 depth_clear_value =
+        depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format = DXGI_FORMAT_D32_FLOAT;
-    clear_value.DepthStencil.Depth = 1.f;
+    clear_value.DepthStencil.Depth = depth_clear_value;
 
     ID3D12Resource* resource = nullptr;
     if (FAILED(device_->CreateCommittedResource(
