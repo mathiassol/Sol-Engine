@@ -91,7 +91,8 @@ float4 ps_main(PSInput input) : SV_TARGET {
         for (int x = -1; x <= 1; x++) {
             float2 offset = float2(x, y);
             float2 sample_uv = current_uv + offset * texel;
-            float3 neighbor = max(0.0, scene_color.SampleLevel(linear_clamp, sample_uv, 0).rgb) * exposure;
+            float3 neighbor
+                = max(0.0, scene_color.SampleLevel(linear_clamp, sample_uv, 0).rgb) * exposure;
             neighbor += bloom_color.SampleLevel(linear_clamp, sample_uv, 0).rgb * bloom_intensity;
             float w = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
             current += neighbor * w;
@@ -114,7 +115,8 @@ float4 ps_main(PSInput input) : SV_TARGET {
     }
 
     float3 history = max(0.0, catmull_rom_sample(history_color, linear_clamp, history_uv, texel));
-    float3 clipped = ycocg_to_rgb(clip_aabb(neighborhood_min, neighborhood_max, rgb_to_ycocg(history)));
+    float3 clipped
+        = ycocg_to_rgb(clip_aabb(neighborhood_min, neighborhood_max, rgb_to_ycocg(history)));
     float3 resolved = lerp(current, clipped, history_weight);
     return float4(resolved, 1.0);
 }

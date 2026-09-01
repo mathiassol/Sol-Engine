@@ -124,7 +124,8 @@ bool load_png_bytes(std::span<const u8> bytes, ImageData& out) {
     IWICImagingFactory* factory = nullptr;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&factory)))) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets, "WIC factory creation failed");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+            "WIC factory creation failed");
         return false;
     }
 

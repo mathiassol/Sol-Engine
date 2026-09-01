@@ -88,7 +88,8 @@ bool extract_prefab(const World& world, std::string_view root_name, World& out) 
                 if (out.material_count >= kMaxMaterials) {
                     return reject("extract", "subtree needs more materials than kMaxMaterials");
                 }
-                mat_remap[instance.material] = add_material(out, world.materials[instance.material]);
+                mat_remap[instance.material]
+                    = add_material(out, world.materials[instance.material]);
             }
             instance.material = mat_remap[instance.material];
         }
@@ -109,7 +110,8 @@ bool extract_prefab(const World& world, std::string_view root_name, World& out) 
         }
         const std::string_view name = instance_name(world, i);
         const std::string_view parent_name =
-            world.instances[i].parent != kInvalidInstance && world.instances[i].parent < world.instance_count
+            world.instances[i].parent != kInvalidInstance
+                && world.instances[i].parent < world.instance_count
             ? instance_name(world, world.instances[i].parent)
             : std::string_view{};
         if (name.empty() || parent_name.empty()) {
@@ -205,7 +207,8 @@ u32 instantiate_prefab(World& dest, const World& prefab, const math::Mat4& world
     char parent_buf[kMaxNameChars + 1]{};
     for (const PendingParent& pending : parents) {
         std::string_view parent_spawned;
-        if (!join_name(prefix, pending.parent_name, parent_buf, sizeof(parent_buf), parent_spawned)) {
+        if (!join_name(
+                prefix, pending.parent_name, parent_buf, sizeof(parent_buf), parent_spawned)) {
             return kInvalidInstance;
         }
         const u32 parent = find_instance(dest, parent_spawned);

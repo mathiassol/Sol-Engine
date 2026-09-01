@@ -110,7 +110,8 @@ void DebugLines::add_aabb(const math::Aabb& box, math::Vec3 color) {
     add_line(p[3], p[7], color);
 }
 
-void DebugLines::draw(rhi::ICommandList& cmd, const math::Mat4& view, const math::Mat4& projection) {
+void DebugLines::draw(
+    rhi::ICommandList& cmd, const math::Mat4& view, const math::Mat4& projection) {
     if (!visible_ || !pipeline_ || !device_ || vertices_.empty()) {
         return;
     }

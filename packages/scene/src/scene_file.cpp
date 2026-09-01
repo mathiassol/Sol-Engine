@@ -320,7 +320,8 @@ bool read_world(std::string_view text, World& out) {
             if (!take_u64(text, i, instance.mesh.id) || !take_u32(text, i, instance.mesh.generation)
                 || !take_u32(text, i, instance.material) || !take_token(text, i, parent)
                 || !take_mat4(text, i, instance.model)) {
-                return reject(text, i, "instance wants mesh id, generation, material, parent, 16 floats");
+                return reject(
+                    text, i, "instance wants mesh id, generation, material, parent, 16 floats");
             }
             if (out.instance_count >= kMaxInstances) {
                 return reject(text, i, "more instances than kMaxInstances");

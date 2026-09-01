@@ -266,7 +266,8 @@ public:
         if (result != cgltf_result_success) {
             char message[96];
             std::snprintf(message, sizeof(message),
-                "glTF failed validation (cgltf_result %d) — refusing to load", static_cast<int>(result));
+                "glTF failed validation (cgltf_result %d) — refusing to load",
+                static_cast<int>(result));
             engine::log(LogLevel::Error, LogChannel::Assets, message);
             cgltf_free(data);
             return false;
@@ -330,7 +331,8 @@ public:
 
         cgltf_free(data);
         if (out.primitives.empty() || out.mesh.vertices.empty() || out.mesh.indices.empty()) {
-            engine::log(LogLevel::Error, LogChannel::Assets, "glTF contained no triangle primitives");
+            engine::log(LogLevel::Error, LogChannel::Assets,
+                "glTF contained no triangle primitives");
             return false;
         }
         out.albedo_uri = out.primitives[0].albedo_uri;

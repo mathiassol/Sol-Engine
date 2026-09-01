@@ -91,7 +91,8 @@ private:
 
 class D3D12Sampler final : public ISampler {
 public:
-    D3D12Sampler(ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HANDLE cpu, const SamplerDesc& desc);
+    D3D12Sampler(
+        ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HANDLE cpu, const SamplerDesc& desc);
     ~D3D12Sampler() override = default;
 
     D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle() const { return cpu_; }
@@ -156,7 +157,8 @@ public:
     void set_viewport(u32 width, u32 height) override;
     void set_pipeline(IGraphicsPipeline& pipeline) override;
     void set_compute_pipeline(IComputePipeline& pipeline) override;
-    void set_vertex_buffer(u32 slot, IBuffer& buffer, u32 stride_bytes, usize offset_bytes) override;
+    void set_vertex_buffer(
+        u32 slot, IBuffer& buffer, u32 stride_bytes, usize offset_bytes) override;
     void set_index_buffer(IBuffer& buffer, usize offset_bytes) override;
     void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) override;
     void set_shader_resource(u32 slot, ITexture& texture) override;

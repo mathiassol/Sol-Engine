@@ -60,7 +60,8 @@ public:
 
     bool last_compile_from_cache() const override { return false; }
 
-    bool compile(const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) override {
+    bool compile(
+        const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) override {
         if (!utils_ || !compiler_ || !includes_) {
             error_log = "DXC compiler is not available";
             return false;

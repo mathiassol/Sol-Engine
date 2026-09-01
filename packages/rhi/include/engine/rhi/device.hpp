@@ -89,8 +89,10 @@ public:
     // loop must stop rather than keep submitting into a dead device.
     virtual bool device_lost() const = 0;
 
-    virtual std::unique_ptr<IBuffer> create_buffer(const BufferDesc& desc, const void* data = nullptr) = 0;
-    virtual std::unique_ptr<ITexture> create_texture(const TextureDesc& desc, const void* data = nullptr) = 0;
+    virtual std::unique_ptr<IBuffer> create_buffer(
+        const BufferDesc& desc, const void* data = nullptr) = 0;
+    virtual std::unique_ptr<ITexture> create_texture(
+        const TextureDesc& desc, const void* data = nullptr) = 0;
     // Bump-allocates 256-byte-aligned upload memory for this frame_slot(). GPU-safe
     // because begin_frame waits that slot before resetting the bump pointer.
     virtual FrameAllocation alloc_frame_memory(usize size) = 0;

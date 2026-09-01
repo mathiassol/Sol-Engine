@@ -27,7 +27,8 @@ class IShaderCompiler {
 public:
     virtual ~IShaderCompiler() = default;
 
-    virtual bool compile(const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) = 0;
+    virtual bool compile(
+        const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) = 0;
     virtual bool last_compile_from_cache() const = 0;
 };
 

@@ -166,7 +166,8 @@ public:
 
     bool last_compile_from_cache() const override { return from_cache_; }
 
-    bool compile(const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) override {
+    bool compile(
+        const ShaderCompileDesc& desc, ShaderBytecode& out, std::string& error_log) override {
         from_cache_ = false;
         if (!inner_) {
             error_log = "Shader compiler missing";

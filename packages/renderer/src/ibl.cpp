@@ -90,7 +90,8 @@ math::Vec3 cube_direction(u32 face, f32 u, f32 v) {
 }
 
 void orthonormal_basis(math::Vec3 n, math::Vec3& t, math::Vec3& b) {
-    const math::Vec3 up = std::abs(n.z) < 0.999f ? math::Vec3{0.f, 0.f, 1.f} : math::Vec3{1.f, 0.f, 0.f};
+    const math::Vec3 up
+        = std::abs(n.z) < 0.999f ? math::Vec3{0.f, 0.f, 1.f} : math::Vec3{1.f, 0.f, 0.f};
     t = n.cross(up).normalized();
     b = t.cross(n);
 }
@@ -260,7 +261,8 @@ Baked bake() {
                     const math::Vec3 l = world_from_tangent(n, local);
                     acc = add(acc, sample_radiance(radiance, kRadianceSize, l));
                 }
-                pack_pixel(out.irradiance_rgba16, scale(acc, math::kPi / static_cast<f32>(kIrradianceSamples)));
+                pack_pixel(out.irradiance_rgba16,
+                    scale(acc, math::kPi / static_cast<f32>(kIrradianceSamples)));
             }
         }
     }
@@ -297,7 +299,8 @@ Baked bake() {
                         acc = add(acc, scale(sample_radiance(radiance, kRadianceSize, l), nol));
                         weight += nol;
                     }
-                    pack_pixel(out.prefilter_rgba16, weight > 0.f ? scale(acc, 1.f / weight) : math::Vec3{});
+                    pack_pixel(out.prefilter_rgba16,
+                        weight > 0.f ? scale(acc, 1.f / weight) : math::Vec3{});
                 }
             }
             size = size > 1 ? size / 2 : 1;

@@ -347,7 +347,8 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
     if (desc.log_ready) {
         log(compiled ? LogLevel::Info : LogLevel::Error, LogChannel::Render,
             compiled
-                ? "Render graph ready (shadow, forward, motion, sky, bloom, TAA, tonemap, AA, debug lines, overlay)"
+                ? "Render graph ready (shadow, forward, motion, sky, bloom, TAA, tonemap, "
+                  "AA, debug lines, overlay)"
                 : "Render graph compile failed");
     }
     return compiled;

@@ -66,7 +66,8 @@ LRESULT CALLBACK engine_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
 std::wstring utf8_to_wide(std::string_view text) {
     if (text.empty()) return {};
-    int len = ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    int len = ::MultiByteToWideChar(
+        CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
     std::wstring wide(static_cast<size_t>(len), L'\0');
     ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), len);
     return wide;
@@ -181,7 +182,8 @@ bool Win32Window::set_mode(WindowMode mode) {
     return true;
 }
 
-std::unique_ptr<Win32Window> create_win32_window(const WindowDesc& desc, WindowState& state_storage) {
+std::unique_ptr<Win32Window> create_win32_window(
+    const WindowDesc& desc, WindowState& state_storage) {
     HINSTANCE instance = ::GetModuleHandleW(nullptr);
 
     // Runtime .rc uses IDI_APP_ICON 101 (packages/game/resources/resource.h).

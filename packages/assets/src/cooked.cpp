@@ -233,7 +233,8 @@ bool read_cooked_mesh(std::span<const u8> bytes, MeshData& out) {
         return reject("mesh", bytes, "truncated before the vertex and index counts");
     }
     if (vertex_count == 0 || index_count < 3 || (index_count % 3) != 0) {
-        return reject("mesh", bytes, "no vertices, or an index count that is not a positive multiple of 3");
+        return reject(
+            "mesh", bytes, "no vertices, or an index count that is not a positive multiple of 3");
     }
     const u64 vertex_bytes = static_cast<u64>(vertex_count) * 32ull;
     const u64 index_bytes = static_cast<u64>(index_count) * 4ull;
@@ -265,7 +266,8 @@ bool read_cooked_mesh(std::span<const u8> bytes, MeshData& out) {
         }
     }
     if (!cur.exact_end() || !valid_mesh(mesh)) {
-        return reject("mesh", bytes, "trailing bytes after the geometry, or bounds that fail validation");
+        return reject(
+            "mesh", bytes, "trailing bytes after the geometry, or bounds that fail validation");
     }
     out = std::move(mesh);
     return true;
@@ -302,7 +304,8 @@ bool read_cooked_image(std::span<const u8> bytes, ImageData& out) {
     image.rgba.resize(static_cast<usize>(pixel_bytes));
     std::memcpy(image.rgba.data(), cur.bytes.data() + cur.pos, image.rgba.size());
     if (!cur.consume(image.rgba.size()) || !cur.exact_end() || !valid_image(image)) {
-        return reject("image", bytes, "trailing bytes after the pixels, or dimensions that fail validation");
+        return reject(
+            "image", bytes, "trailing bytes after the pixels, or dimensions that fail validation");
     }
     out = std::move(image);
     return true;
@@ -340,7 +343,8 @@ bool read_cooked_audio(std::span<const u8> bytes, CookedAudio& out) {
     audio.pcm.resize(byte_count);
     std::memcpy(audio.pcm.data(), cur.bytes.data() + cur.pos, byte_count);
     if (!cur.consume(byte_count) || !cur.exact_end() || !valid_audio(audio)) {
-        return reject("audio", bytes, "trailing bytes after the PCM, or a format that fails validation");
+        return reject(
+            "audio", bytes, "trailing bytes after the PCM, or a format that fails validation");
     }
     out = std::move(audio);
     return true;

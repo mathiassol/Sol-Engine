@@ -161,7 +161,8 @@ bool StatsOverlay::init(rhi::IDevice& device, shaders::IShaderCompiler& compiler
         return false;
     }
 
-    pipeline_ = device.create_graphics_pipeline(overlay_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
+    pipeline_ = device.create_graphics_pipeline(
+        overlay_pipeline_desc(vs_bytecode.data, ps_bytecode.data));
     if (!pipeline_) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
             "Stats overlay pipeline creation failed");

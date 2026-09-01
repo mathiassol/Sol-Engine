@@ -65,7 +65,8 @@ bool valid_pak_name(std::string_view name) {
     usize i = 1;
     while (i < name.size()) {
         const usize slash = name.find('/', i);
-        const std::string_view part = name.substr(i, slash == std::string_view::npos ? std::string_view::npos : slash - i);
+        const std::string_view part = name.substr(
+            i, slash == std::string_view::npos ? std::string_view::npos : slash - i);
         if (part.empty() || part == "." || part == "..") {
             return false;
         }
@@ -120,7 +121,8 @@ bool parse_pak(std::span<const u8> bytes, std::vector<TocRecord>& toc) {
             return reject(bytes, "entry name length missing, zero, or above kMaxNameLen");
         }
         TocRecord rec{};
-        if (!cur.read_bytes(name_len, rec.name) || !cur.read_u32(rec.offset) || !cur.read_u32(rec.size)) {
+        if (!cur.read_bytes(name_len, rec.name) || !cur.read_u32(rec.offset)
+            || !cur.read_u32(rec.size)) {
             return reject(bytes, "truncated inside a table-of-contents record");
         }
         if (!valid_pak_name(rec.name) || rec.size == 0 || !seen.insert(rec.name).second) {
@@ -212,7 +214,8 @@ namespace {
 
 class PakAssetLoader final : public IAssetLoader {
 public:
-    explicit PakAssetLoader(std::vector<u8> blob, std::unordered_map<std::string, std::pair<u32, u32>> table)
+    explicit PakAssetLoader(
+        std::vector<u8> blob, std::unordered_map<std::string, std::pair<u32, u32>> table)
         : blob_(std::move(blob)), table_(std::move(table)) {}
 
     bool mount(std::string_view name, std::string_view) override {
@@ -222,7 +225,8 @@ public:
         return !name.empty();
     }
 
-    bool resolve_path(std::string_view virtual_or_physical, std::string& out_physical) const override {
+    bool resolve_path(
+        std::string_view virtual_or_physical, std::string& out_physical) const override {
         if (table_.find(std::string(virtual_or_physical)) == table_.end()) {
             return false;
         }

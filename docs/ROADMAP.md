@@ -47,11 +47,11 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 31 Aug 2026: **24,047 lines** of C++/HLSL in **142 files**, **26
-packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 7,089
-— 30% of the engine, and its `content/shaders/*.hlsl` (1,058 lines) counts here
-too; `rhi-d3d12` is 2,998 (13%); `renderer` is 2,948 (12%); `physics-cpu` is
-1,432; `core` is 1,381; `math` is 674. `game.exe` reuses sandbox sources
+Measured 1 Sep 2026: **24,145 lines** of C++/HLSL in **142 files**, **26
+packages** (engine sources; vendored `cgltf.h` not counted). `sandbox` is 7,239
+— 30% of the engine, and its `content/shaders/*.hlsl` (1,040 lines) counts here
+too; `renderer` is 3,028 (13%); `rhi-d3d12` is 3,016 (12%); `physics-cpu` is
+1,435; `core` is 1,382; `math` is 674. `game.exe` reuses sandbox sources
 (install layout, no extra .cpp).
 
 Every per-package figure above was recounted on 31 Aug and every one had

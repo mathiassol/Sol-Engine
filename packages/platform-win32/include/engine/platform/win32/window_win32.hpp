@@ -53,7 +53,8 @@ private:
     WindowState* state_;
 };
 
-std::unique_ptr<Win32Window> create_win32_window(const WindowDesc& desc, WindowState& state_storage);
+std::unique_ptr<Win32Window> create_win32_window(
+    const WindowDesc& desc, WindowState& state_storage);
 
 // Destroys the OS window and detaches its wndproc from `state`. Must run while
 // `state` is still alive - the window outlives the Win32Window wrapper, which

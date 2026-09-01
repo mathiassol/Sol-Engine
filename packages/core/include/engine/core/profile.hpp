@@ -32,6 +32,7 @@ private:
 
 } // namespace engine
 
-#define ENGINE_PROFILE_SCOPE(name) ::engine::ProfileScope ENGINE_PROFILE_CONCAT(_engine_scope_, __LINE__)(name)
+#define ENGINE_PROFILE_SCOPE(name) \
+    ::engine::ProfileScope ENGINE_PROFILE_CONCAT(_engine_scope_, __LINE__)(name)
 #define ENGINE_PROFILE_CONCAT(a, b) ENGINE_PROFILE_CONCAT_IMPL(a, b)
 #define ENGINE_PROFILE_CONCAT_IMPL(a, b) a##b

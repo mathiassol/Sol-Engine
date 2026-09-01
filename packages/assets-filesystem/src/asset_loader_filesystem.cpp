@@ -31,7 +31,8 @@ public:
         }
 
         std::error_code ec;
-        const auto root = std::filesystem::weakly_canonical(std::filesystem::path(physical_root), ec);
+        const auto root
+            = std::filesystem::weakly_canonical(std::filesystem::path(physical_root), ec);
         if (ec || root.empty()) {
             log(LogLevel::Error, LogChannel::Assets, "Failed to mount content root");
             return false;
@@ -41,7 +42,8 @@ public:
         return true;
     }
 
-    bool resolve_path(std::string_view virtual_or_physical, std::string& out_physical) const override {
+    bool resolve_path(
+        std::string_view virtual_or_physical, std::string& out_physical) const override {
         if (virtual_or_physical.empty()) {
             return false;
         }

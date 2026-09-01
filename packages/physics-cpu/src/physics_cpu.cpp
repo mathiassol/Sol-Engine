@@ -860,7 +860,8 @@ public:
                 if (!body.live || (body.layer & mask) == 0) {
                     continue;
                 }
-                if (ignore.valid() && ignore.id == node.body && ignore.generation == body.generation) {
+                if (ignore.valid() && ignore.id == node.body
+                    && ignore.generation == body.generation) {
                     continue;
                 }
                 f32 t = 0.f;
@@ -1121,12 +1122,14 @@ private:
         u32 ia = 0;
         u32 ib = 0;
         while (ia < prev_count_ || ib < curr_count) {
-            if (ia < prev_count_ && ib < curr_count && pair_equal(prev_pairs_[ia], curr_pairs_[ib])) {
+            if (ia < prev_count_ && ib < curr_count
+                && pair_equal(prev_pairs_[ia], curr_pairs_[ib])) {
                 ++ia;
                 ++ib;
                 continue;
             }
-            if (ib >= curr_count || (ia < prev_count_ && pair_less(prev_pairs_[ia], curr_pairs_[ib]))) {
+            if (ib >= curr_count
+                || (ia < prev_count_ && pair_less(prev_pairs_[ia], curr_pairs_[ib]))) {
                 add_event(TriggerEventType::Exit, prev_pairs_[ia]);
                 ++ia;
                 continue;

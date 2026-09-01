@@ -98,7 +98,8 @@ bool cook_beep(std::vector<engine::assets::PakEntry>& entries) {
     engine::assets::PakEntry entry{};
     entry.name = "/content/audio/beep.solc";
     if (!engine::assets::write_cooked_audio(audio, entry.bytes)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets, "Cook failed to pack beep");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+            "Cook failed to pack beep");
         return false;
     }
     entries.push_back(std::move(entry));
@@ -124,7 +125,8 @@ int main(int argc, char** argv) {
     }
 
     std::vector<engine::assets::PakEntry> entries;
-    const bool ok = cook_mesh_obj(content / "meshes" / "cube.obj", "/content/meshes/cube.solc", entries)
+    const bool ok
+        = cook_mesh_obj(content / "meshes" / "cube.obj", "/content/meshes/cube.solc", entries)
         && cook_mesh_gltf(content / "meshes" / "cartoon_husky.gltf",
             "/content/meshes/cartoon_husky.solc", entries)
         && cook_image(content / "textures" / "albedo.png", "/content/textures/albedo.solc", entries)

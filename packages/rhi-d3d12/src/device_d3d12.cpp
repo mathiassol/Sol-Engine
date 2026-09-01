@@ -154,7 +154,8 @@ D3D12_FILTER to_d3d_filter(const SamplerDesc& desc) {
     return linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR : D3D12_FILTER_MIN_MAG_MIP_POINT;
 }
 
-void fill_static_sampler(D3D12_STATIC_SAMPLER_DESC& out, const SamplerDesc& desc, u32 register_index) {
+void fill_static_sampler(
+    D3D12_STATIC_SAMPLER_DESC& out, const SamplerDesc& desc, u32 register_index) {
     out = {};
     out.Filter = to_d3d_filter(desc);
     const D3D12_TEXTURE_ADDRESS_MODE address = to_d3d_address(desc.address);
@@ -380,8 +381,8 @@ void dump_info_queue_messages(ID3D12Device* device) {
 
 } // namespace
 
-D3D12Buffer::D3D12Buffer(D3D12Device* device, ID3D12Resource* resource, usize size, bool cpu_visible,
-    bool persist_map)
+D3D12Buffer::D3D12Buffer(D3D12Device* device, ID3D12Resource* resource, usize size,
+    bool cpu_visible, bool persist_map)
     : device_(device), resource_(resource), size_(size), cpu_visible_(cpu_visible) {
     if (persist_map && cpu_visible_ && resource_) {
         D3D12_RANGE read_range{0, 0};
@@ -510,7 +511,8 @@ D3D12_PRIMITIVE_TOPOLOGY D3D12Pipeline::topology() const { return topology_; }
 
 D3D12ComputePipeline::D3D12ComputePipeline(ID3D12PipelineState* pso, ID3D12RootSignature* root_sig,
     u32 uav_table_root, u32 srv_table_root)
-    : pso_(pso), root_sig_(root_sig), uav_table_root_(uav_table_root), srv_table_root_(srv_table_root) {}
+    : pso_(pso), root_sig_(root_sig), uav_table_root_(uav_table_root),
+      srv_table_root_(srv_table_root) {}
 
 D3D12ComputePipeline::~D3D12ComputePipeline() = default;
 
@@ -863,7 +865,8 @@ bool D3D12Device::init(const DeviceDesc& desc) {
         if (ID3D12Debug* debug = nullptr; SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
             debug->EnableDebugLayer();
             debug->Release();
-            log(LogLevel::Info, LogChannel::Render, "D3D12 debug layer enabled (ENGINE_GPU_DEBUG=1)");
+            log(LogLevel::Info, LogChannel::Render,
+                "D3D12 debug layer enabled (ENGINE_GPU_DEBUG=1)");
         }
     }
 #endif
@@ -889,7 +892,8 @@ bool D3D12Device::init(const DeviceDesc& desc) {
             adapter = nullptr;
             continue;
         }
-        if (FAILED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device_.put())))) {
+        if (FAILED(D3D12CreateDevice(
+                adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device_.put())))) {
             adapter->Release();
             adapter = nullptr;
             continue;
@@ -917,7 +921,8 @@ bool D3D12Device::init(const DeviceDesc& desc) {
     if (!device_) {
         factory->Release();
         log(LogLevel::Error, LogChannel::Render,
-            "D3D12 device creation failed (need Feature Level 11_0 and Shader Model 6.0; OS D3D12, no Agility SDK)");
+            "D3D12 device creation failed (need Feature Level 11_0 and Shader Model 6.0; "
+            "OS D3D12, no Agility SDK)");
         return false;
     }
 
@@ -988,7 +993,8 @@ bool D3D12Device::create_render_targets() {
             return false;
         }
         set_object_name(rtv_heap_.get(), "engine/rtv_heap");
-        rtv_descriptor_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        rtv_descriptor_size_
+            = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE handle = rtv_heap_->GetCPUDescriptorHandleForHeapStart();
@@ -1052,7 +1058,8 @@ bool D3D12Device::create_depth_buffer() {
     dsv_desc.Format        = DXGI_FORMAT_D32_FLOAT;
     dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
     device_->CreateDepthStencilView(depth_buffer_.get(), &dsv_desc, dsv_handle_);
-    depth_target_.bind_external(depth_buffer_.get(), dsv_handle_, width_, height_, Format::D32_FLOAT, true);
+    depth_target_.bind_external(
+        depth_buffer_.get(), dsv_handle_, width_, height_, Format::D32_FLOAT, true);
     return true;
 }
 
@@ -1392,7 +1399,8 @@ bool D3D12Device::resize(u32 width, u32 height) {
     if (!swapchain_ || device_removed()) {
         if (!logged_device_removed_) {
             logged_device_removed_ = true;
-            log_resize_failure("Swapchain resize skipped — device removed at", E_FAIL, width, height);
+            log_resize_failure(
+                "Swapchain resize skipped — device removed at", E_FAIL, width, height);
         }
         return false;
     }
@@ -1407,7 +1415,8 @@ bool D3D12Device::resize(u32 width, u32 height) {
         return false;
     }
     if (!release_command_list_resource_refs()) {
-        log_resize_failure("Swapchain resize aborted — command list reset at", E_FAIL, width, height);
+        log_resize_failure(
+                "Swapchain resize aborted — command list reset at", E_FAIL, width, height);
         return false;
     }
 
@@ -1604,7 +1613,8 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
 
 void D3D12Device::write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) {
     auto& d3d_buffer = static_cast<D3D12Buffer&>(buffer);
-    ENGINE_ASSERT_MSG(d3d_buffer.cpu_visible(), "write_buffer requires an upload-heap uniform buffer");
+    ENGINE_ASSERT_MSG(
+        d3d_buffer.cpu_visible(), "write_buffer requires an upload-heap uniform buffer");
     ENGINE_ASSERT(data != nullptr);
     ENGINE_ASSERT(offset <= d3d_buffer.size());
     ENGINE_ASSERT(size <= d3d_buffer.size() - offset);
@@ -1643,7 +1653,8 @@ void D3D12Device::read_buffer(IBuffer& buffer, usize offset, void* data, usize s
 
 FrameAllocation D3D12Device::alloc_frame_memory(usize size) {
     ENGINE_ASSERT(size > 0);
-    ENGINE_ASSERT_MSG(frame_ring_[frame_index_] != nullptr, "frame constant ring is not initialized");
+    ENGINE_ASSERT_MSG(
+        frame_ring_[frame_index_] != nullptr, "frame constant ring is not initialized");
     const usize aligned = (size + (kBufferAlign - 1)) & ~(kBufferAlign - 1);
 
     // How much a frame needs depends on how much is on screen, so running out
@@ -2009,7 +2020,8 @@ std::unique_ptr<ITexture> D3D12Device::create_shadow_texture(const TextureDesc& 
     return texture;
 }
 
-std::unique_ptr<ITexture> D3D12Device::create_color_shader_resource_texture(const TextureDesc& desc) {
+std::unique_ptr<ITexture> D3D12Device::create_color_shader_resource_texture(
+    const TextureDesc& desc) {
     const DXGI_FORMAT dxgi = to_dxgi(desc.format);
 
     D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc{};
@@ -2091,7 +2103,8 @@ std::unique_ptr<ITexture> D3D12Device::create_sampled_texture(const TextureDesc&
     const bool is_srgb = desc.format == Format::RGBA8_UNORM_SRGB;
     const bool rgba8 = desc.format == Format::RGBA8_UNORM || is_srgb;
     const bool can_mips = data && rgba8 && array_size == 1;
-    const u32 mips = can_mips ? resolve_mip_count(desc) : (desc.mip_levels == 0 ? 1 : desc.mip_levels);
+    const u32 mips
+        = can_mips ? resolve_mip_count(desc) : (desc.mip_levels == 0 ? 1 : desc.mip_levels);
     std::vector<u8> mip_bytes;
     const void* upload_data = data;
     if (can_mips && mips > 1) {
@@ -2325,7 +2338,8 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
         pso_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
     }
 
-    pso_desc.InputLayout = {desc.attribute_count > 0 ? input_layout : nullptr, desc.attribute_count};
+    pso_desc.InputLayout
+        = {desc.attribute_count > 0 ? input_layout : nullptr, desc.attribute_count};
     D3D12_PRIMITIVE_TOPOLOGY ia_topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     if (desc.topology == PrimitiveTopology::LineList) {
@@ -2364,7 +2378,8 @@ std::unique_ptr<IGraphicsPipeline> D3D12Device::create_graphics_pipeline(
         ia_topology);
 }
 
-std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(const ComputePipelineDesc& desc) {
+std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(
+    const ComputePipelineDesc& desc) {
     if (desc.compute_shader.empty()) {
         log(LogLevel::Error, LogChannel::Render, "D3D12 create_compute_pipeline: empty bytecode");
         return nullptr;
@@ -2432,7 +2447,8 @@ std::unique_ptr<IComputePipeline> D3D12Device::create_compute_pipeline(const Com
     if (FAILED(D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1,
             &root_blob, &root_error))) {
         if (root_error) root_error->Release();
-        log(LogLevel::Error, LogChannel::Render, "D3D12 create_compute_pipeline: root signature failed");
+        log(LogLevel::Error, LogChannel::Render,
+            "D3D12 create_compute_pipeline: root signature failed");
         return nullptr;
     }
 

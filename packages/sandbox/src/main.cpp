@@ -142,8 +142,10 @@ engine::Cvar cv_text_int{"gate.text_int", 0, "Cvar gate: text parser int"};
 engine::Cvar cv_text_float{"gate.text_float", 0.f, "Cvar gate: text parser float"};
 engine::Cvar cv_text_string{"gate.text_string", "unset", "Cvar gate: text parser string"};
 engine::Cvar cv_text_eq{"gate.text_eq", 0, "Cvar gate: text parser no-space '=' knob"};
-engine::Cvar cv_text_prec{"gate.text_prec", 0, "Cvar gate: text parser precedence-through-text knob"};
-engine::Cvar cv_text_comment{"gate.text_comment", "unset", "Cvar gate: text parser trailing-comment knob"};
+engine::Cvar cv_text_prec{
+    "gate.text_prec", 0, "Cvar gate: text parser precedence-through-text knob"};
+engine::Cvar cv_text_comment{
+    "gate.text_comment", "unset", "Cvar gate: text parser trailing-comment knob"};
 
 // The AA default is demo state, not engine state, so the knob is read here
 // rather than in Engine::init.
@@ -181,12 +183,18 @@ struct FlyCamera {
 
         const engine::f32 speed = 4.f * dt;
         if (fly_wasd) {
-            if (input.keys_down[static_cast<engine::usize>(Key::W)]) position = position + forward * speed;
-            if (input.keys_down[static_cast<engine::usize>(Key::S)]) position = position - forward * speed;
-            if (input.keys_down[static_cast<engine::usize>(Key::A)]) position = position - right * speed;
-            if (input.keys_down[static_cast<engine::usize>(Key::D)]) position = position + right * speed;
-            if (input.keys_down[static_cast<engine::usize>(Key::E)]) position = position + up * speed;
-            if (input.keys_down[static_cast<engine::usize>(Key::Q)]) position = position - up * speed;
+            if (input.keys_down[static_cast<engine::usize>(Key::W)])
+                position = position + forward * speed;
+            if (input.keys_down[static_cast<engine::usize>(Key::S)])
+                position = position - forward * speed;
+            if (input.keys_down[static_cast<engine::usize>(Key::A)])
+                position = position - right * speed;
+            if (input.keys_down[static_cast<engine::usize>(Key::D)])
+                position = position + right * speed;
+            if (input.keys_down[static_cast<engine::usize>(Key::E)])
+                position = position + up * speed;
+            if (input.keys_down[static_cast<engine::usize>(Key::Q)])
+                position = position - up * speed;
         }
     }
 
@@ -1353,7 +1361,8 @@ bool run_shader_cache_gate(engine::shaders::IShaderCompiler& compiler,
     engine::shaders::ShaderBytecode second;
     std::string error;
     if (!compiler.compile(desc, first, error) || first.data.empty()) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Shader cache gate compile failed");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "Shader cache gate compile failed");
         return false;
     }
     const bool first_hit = compiler.last_compile_from_cache();
@@ -1391,7 +1400,8 @@ bool run_dxc_gate(const engine::shaders::ShaderCompileDesc& desc,
     return passed;
 }
 
-bool run_rhi_contract_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler) {
+bool run_rhi_contract_gate(
+    engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler) {
     auto sampler = device.create_sampler(engine::rhi::shadow_comparison_sampler());
     const bool sampler_ok = sampler != nullptr
         && engine::rhi::GraphicsPipelineDesc::kMaxSamplers >= 2;
@@ -1640,7 +1650,8 @@ bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCom
     cs_desc.target_profile = "cs_6_0";
     engine::shaders::ShaderBytecode cs_bytecode;
     std::string error;
-    const bool compiled = compiler.compile(cs_desc, cs_bytecode, error) && !cs_bytecode.data.empty();
+    const bool compiled
+        = compiler.compile(cs_desc, cs_bytecode, error) && !cs_bytecode.data.empty();
 
     engine::rhi::ComputePipelineDesc compute{};
     compute.compute_shader = compiled ? std::span<const engine::u8>(cs_bytecode.data)
@@ -1774,7 +1785,8 @@ bool run_two_draw_items_gate() {
     engine::renderer::DrawItem draws[2]{};
     draws[0].model = engine::math::Mat4::identity();
     draws[1].model = engine::math::Mat4::translate({2.f, 0.f, 0.f});
-    const bool passed = std::memcmp(&draws[0].model, &draws[1].model, sizeof(engine::math::Mat4)) != 0;
+    const bool passed
+        = std::memcmp(&draws[0].model, &draws[1].model, sizeof(engine::math::Mat4)) != 0;
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render,
         passed ? "DrawItem pair gate: two models (pass)"
@@ -1962,7 +1974,8 @@ bool run_scene_name_gate() {
     const bool dup_ok = engine::scene::find_instance(world, "alpha") == alpha
         && world.instances[dup].name == world.instances[alpha].name;
 
-    const bool miss_ok = engine::scene::find_instance(world, "nope") == engine::scene::kInvalidInstance;
+    const bool miss_ok
+        = engine::scene::find_instance(world, "nope") == engine::scene::kInvalidInstance;
 
     const bool passed = intern_ok && find_ok && unnamed_ok && dup_ok && miss_ok;
     char message[192];
@@ -2011,8 +2024,8 @@ bool run_scene_hierarchy_gate() {
     const bool keep_ok = engine::scene::set_instance_parent(world, extra, parent, true)
         && near3(origin_of(engine::scene::instance_world_model(world, extra)), extra_before);
 
-    const bool unparent_ok = engine::scene::set_instance_parent(world, child, engine::scene::kInvalidInstance,
-        true)
+    const bool unparent_ok = engine::scene::set_instance_parent(
+        world, child, engine::scene::kInvalidInstance, true)
         && engine::scene::instance_parent(world, child) == engine::scene::kInvalidInstance
         && near3(origin_of(engine::scene::instance_world_model(world, child)), {11.f, 0.f, 0.f});
 
@@ -2176,7 +2189,8 @@ bool run_scene_prefab_gate() {
         && b != engine::scene::kInvalidInstance && a_body == a
         && dest.instance_count == 4
         && engine::scene::instance_parent(dest, a_head) == a_body
-        && engine::scene::instance_parent(dest, engine::scene::find_instance(dest, "b_head")) == b_body;
+        && engine::scene::instance_parent(dest, engine::scene::find_instance(dest, "b_head"))
+            == b_body;
 
     const bool compose_ok = spawn_ok
         && near3(origin_of(engine::scene::instance_world_model(dest, a_body)), {11.f, 0.f, 0.f})
@@ -2595,7 +2609,8 @@ bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher) {
     const bool passed = reloaded && fast;
     char message[256];
     std::snprintf(message, sizeof(message),
-        "Async compile gate: first_poll=%.2fms max_poll=%.2fms slow=%u/%u (>%.0fms, fail if majority) "
+        "Async compile gate: first_poll=%.2fms max_poll=%.2fms slow=%u/%u "
+        "(>%.0fms, fail if majority) "
         "busy=%s reloaded=%s (%s)",
         first_poll_ms, max_poll_ms, slow_polls, poll_count,
         static_cast<double>(kMaxPollMs),
@@ -3023,8 +3038,10 @@ bool run_taa_gate(const ForwardDemo& demo) {
     const bool ycc_ok = std::abs(roundtrip.x - rgb.x) < 1e-5f
         && std::abs(roundtrip.y - rgb.y) < 1e-5f && std::abs(roundtrip.z - rgb.z) < 1e-5f;
 
-    const engine::math::Vec3 inside = clip_aabb({0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {0.2f, 0.3f, 0.4f});
-    const engine::math::Vec3 outside = clip_aabb({0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {4.f, 0.5f, 0.5f});
+    const engine::math::Vec3 inside
+        = clip_aabb({0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {0.2f, 0.3f, 0.4f});
+    const engine::math::Vec3 outside
+        = clip_aabb({0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {4.f, 0.5f, 0.5f});
     const bool clip_ok = std::abs(inside.x - 0.2f) < 1e-5f && outside.x <= 1.0001f
         && outside.x >= 0.f;
     const engine::math::Vec3 resolved = resolve_sample({0.1f, 0.1f, 0.1f}, {8.f, 0.1f, 0.1f},
@@ -4230,9 +4247,11 @@ bool write_gltf_extras_probe(const std::filesystem::path& dir) {
         "        \"baseColorTexture\": { \"index\": 3 },\n"
         "        \"metallicFactor\": 0.0, \"roughnessFactor\": 1.0 } }\n"
         "  ],\n"
-        "  \"textures\": [ { \"source\": 0 }, { \"source\": 1 }, { \"source\": 2 }, { \"source\": 3 } ],\n"
+        "  \"textures\": [ { \"source\": 0 }, { \"source\": 1 }, "
+        "{ \"source\": 2 }, { \"source\": 3 } ],\n"
         "  \"images\": [\n"
-        "    { \"uri\": \"a.png\" }, { \"uri\": \"mr.png\" }, { \"uri\": \"n.png\" }, { \"uri\": \"b.png\" }\n"
+        "    { \"uri\": \"a.png\" }, { \"uri\": \"mr.png\" }, "
+        "{ \"uri\": \"n.png\" }, { \"uri\": \"b.png\" }\n"
         "  ],\n"
         "  \"buffers\": [ { \"uri\": \"probe.bin\", \"byteLength\": 216 } ],\n"
         "  \"bufferViews\": [\n"
@@ -4288,7 +4307,8 @@ bool run_gltf_extras_gate() {
         && loaded.primitives[0].first_index == 0 && loaded.primitives[0].index_count == 3
         && loaded.primitives[1].first_index == 3 && loaded.primitives[1].index_count == 3
         && loaded.mesh.indices[3] == 3;
-    const bool mr_ok = prims_ok && uri_ends_with(loaded.primitives[0].metallic_roughness_uri, "mr.png")
+    const bool mr_ok = prims_ok
+        && uri_ends_with(loaded.primitives[0].metallic_roughness_uri, "mr.png")
         && std::abs(loaded.primitives[0].metallic - 0.25f) < 1.e-4f
         && std::abs(loaded.primitives[0].roughness - 0.5f) < 1.e-4f;
     const bool normal_ok = prims_ok && uri_ends_with(loaded.primitives[0].normal_uri, "n.png")
@@ -4652,7 +4672,8 @@ bool run_aabb_gate(const engine::assets::MeshData& mesh) {
 
 bool run_aabb_transform_gate(const engine::assets::MeshData& mesh) {
     const engine::math::Aabb local = mesh.bounds;
-    const engine::math::Aabb moved = local.transformed(engine::math::Mat4::translate({1.f, 0.f, 0.f}));
+    const engine::math::Aabb moved
+        = local.transformed(engine::math::Mat4::translate({1.f, 0.f, 0.f}));
     const bool passed = local.valid() && moved.valid()
         && moved.min.x > local.min.x + 0.5f
         && moved.max.x > local.max.x + 0.5f;
@@ -4741,7 +4762,8 @@ bool load_albedo_texture(engine::assets::IAssetLoader& loader, engine::rhi::IDev
     albedo_desc.mip_levels = 0;
     out = device.create_texture(albedo_desc, image.rgba.data());
     if (!out) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Albedo texture creation failed");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "Albedo texture creation failed");
         return false;
     }
     device.set_debug_name(*out, virtual_path);
@@ -5084,13 +5106,15 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     auto mesh_loader = engine::assets::obj::create_mesh_loader();
     engine::assets::MeshData cube_data;
     if (!mesh_loader->load(cube_path, cube_data)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets, "Failed to load cube mesh");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+            "Failed to load cube mesh");
         return false;
     }
     auto gltf_loader = engine::assets::gltf::create_mesh_loader();
     engine::assets::gltf::GltfLoadResult husky_gltf;
     if (!gltf_loader->load(husky_path, husky_gltf)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets, "Failed to load husky glTF");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+            "Failed to load husky glTF");
         return false;
     }
     if (!run_gltf_gate(husky_gltf) && fail_on_gate) {
@@ -5192,7 +5216,8 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     shadow_vs.file_path = shadow_path;
     engine::shaders::ShaderBytecode shadow_bytecode;
     if (!compiler.compile(shadow_vs, shadow_bytecode, error)) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Shadow vertex shader compile failed");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "Shadow vertex shader compile failed");
         return false;
     }
     {
@@ -5256,7 +5281,8 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
         }
     }
     if (!run_handle_unload_gate(demo->meshes, *device, cube_data)) {
-        engine::log(engine::LogLevel::Warn, engine::LogChannel::Assets, "MeshHandle unload gate failed");
+        engine::log(engine::LogLevel::Warn, engine::LogChannel::Assets,
+            "MeshHandle unload gate failed");
         if (fail_on_gate) {
             return false;
         }
@@ -5264,7 +5290,8 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     demo->husky = demo->meshes.store(*device, kHuskyMesh, husky_data);
     const auto* gpu_mesh = demo->meshes.get(demo->husky);
     if (!gpu_mesh) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets, "Husky mesh store is empty");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+            "Husky mesh store is empty");
         return false;
     }
     device->set_debug_name(*gpu_mesh->vertex_buffer, "sandbox/husky_vb");
@@ -5352,7 +5379,8 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     demo->ground = demo->meshes.store(*device, kGroundMesh, ground_data);
     const auto* gpu_ground = demo->meshes.get(demo->ground);
     if (!gpu_ground) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets, "Ground mesh store is empty");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+            "Ground mesh store is empty");
         return false;
     }
     device->set_debug_name(*gpu_ground->vertex_buffer, "sandbox/ground_vb");
@@ -5367,7 +5395,8 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
     floor_desc.mip_levels = 0;
     demo->floor_albedo = device->create_texture(floor_desc, checker.rgba.data());
     if (!demo->floor_albedo) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render, "Floor albedo creation failed");
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "Floor albedo creation failed");
         return false;
     }
     device->set_debug_name(*demo->floor_albedo, "sandbox/floor_albedo");
@@ -5520,7 +5549,11 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
 
     state.forward = std::move(demo);
     engine::log(engine::LogLevel::Info, engine::LogChannel::Render,
-        "Forward pass ready (AA default Off / F5 FXAA+SMAA+TAA, F11 windowed/borderless, Tab/Start walk, Enter/Y follow/orbit/FPS, Space/A jump, pad sticks, motion vectors, Karis bloom, source cubemap sky, split-sum IBL, PBR GGX, 16-tap Vogel PCF, materials, renderer-owned frame, 512 instances, frustum skip, async DXC, glTF husky + mips, HDR, F4 AABBs, Space beep, Z/X, WASD look)");
+        "Forward pass ready (AA default Off / F5 FXAA+SMAA+TAA, F11 windowed/borderless, "
+        "Tab/Start walk, Enter/Y follow/orbit/FPS, Space/A jump, pad sticks, motion vectors, "
+        "Karis bloom, source cubemap sky, split-sum IBL, PBR GGX, 16-tap Vogel PCF, materials, "
+        "renderer-owned frame, 512 instances, frustum skip, async DXC, glTF husky + mips, HDR, "
+        "F4 AABBs, Space beep, Z/X, WASD look)");
     return true;
 }
 
@@ -5673,7 +5706,8 @@ int run_app(int argc, char** argv) {
         if (app.input() && app.input()->focused()
             && (app.input()->key_pressed(engine::platform::Key::Enter)
                 || app.input()->button_pressed(engine::platform::GamepadButton::Y))) {
-            state.game_camera.set_mode(engine::gameplay::next_camera_mode(state.game_camera.mode()));
+            state.game_camera.set_mode(
+                engine::gameplay::next_camera_mode(state.game_camera.mode()));
             char mode_message[64];
             std::snprintf(mode_message, sizeof(mode_message), "Camera mode: %s",
                 engine::gameplay::camera_mode_name(state.game_camera.mode()));
@@ -5730,14 +5764,16 @@ int run_app(int argc, char** argv) {
             }
         }
     };
-    callbacks.on_extract = [&app, &state](engine::renderer::RenderSnapshot& snapshot, engine::Arena& arena) {
+    callbacks.on_extract = [&app, &state](
+        engine::renderer::RenderSnapshot& snapshot, engine::Arena& arena) {
         if (!state.forward || !state.forward->pipelines.forward) {
             return;
         }
         auto& world = state.forward->world;
         const engine::u32 width = std::max(snapshot.width, 1u);
         const engine::u32 height = std::max(snapshot.height, 1u);
-        const engine::f32 aspect = static_cast<engine::f32>(width) / static_cast<engine::f32>(height);
+        const engine::f32 aspect
+            = static_cast<engine::f32>(width) / static_cast<engine::f32>(height);
         const bool use_game = state.walk_mode && state.player.spawned();
         if (use_game) {
             world.camera.view = state.game_camera.view();
@@ -5872,7 +5908,8 @@ int run_app(int argc, char** argv) {
         gates_ok = false;
     }
 
-    const auto cache_dir = (std::filesystem::path(app.content_root()) / ".cache" / "shaders").string();
+    const auto cache_dir
+        = (std::filesystem::path(app.content_root()) / ".cache" / "shaders").string();
     auto compiler = engine::shaders::dxc::create_cached_compiler(cache_dir);
 
     if (!setup_forward_demo(app, *loader, *compiler, state, gates_mode)) {

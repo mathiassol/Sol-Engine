@@ -32,8 +32,10 @@ void extract_lighting(const engine::scene::World& world, engine::math::Vec3 came
 
     for (engine::u32 i = 0; i < engine::scene::kMaxPointLights; ++i) {
         const auto& light = world.points[i];
-        out.point_pos_radius[i] = {light.position.x, light.position.y, light.position.z, light.radius};
-        out.point_color_intensity[i] = {light.color.x, light.color.y, light.color.z, light.intensity};
+        out.point_pos_radius[i]
+            = {light.position.x, light.position.y, light.position.z, light.radius};
+        out.point_color_intensity[i]
+            = {light.color.x, light.color.y, light.color.z, light.intensity};
     }
 }
 

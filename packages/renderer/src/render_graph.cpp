@@ -201,7 +201,8 @@ void record_opaque_draws(PassContext& ctx) {
         lighting.sun_direction.z, 0.f};
     constants.sun_color = {lighting.sun_color.x, lighting.sun_color.y, lighting.sun_color.z, 0.f};
     constants.ambient = {lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, 0.f};
-    constants.camera_pos = {lighting.camera_pos.x, lighting.camera_pos.y, lighting.camera_pos.z, 1.f};
+    constants.camera_pos
+        = {lighting.camera_pos.x, lighting.camera_pos.y, lighting.camera_pos.z, 1.f};
     for (u32 i = 0; i < kMaxPointLights; ++i) {
         constants.point_pos_radius[i] = lighting.point_pos_radius[i];
         constants.point_color_intensity[i] = lighting.point_color_intensity[i];
