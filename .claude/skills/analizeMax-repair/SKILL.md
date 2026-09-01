@@ -95,8 +95,8 @@ URL into `artifacts.json` immediately** — before publishing the next one. A UR
 that exists on claude.ai but not in the registry is lost, and the artifact it
 points at can never be updated again.
 
-**Phase B — link.** Every URL now known: re-publish all eight with real `href`s,
-correct grade badges, and correct staleness. Pass each document's registry `url`
+**Phase B — link.** Every URL now known: re-publish everything that has one,
+with real `href`s, correct grade badges, and correct staleness. Pass each document's registry `url`
 so it updates in place; pass its registry `favicon` and `title` unchanged.
 
 If a registry URL turns out to be unreachable, try `action: "read"` on it first.
@@ -112,7 +112,9 @@ case and repair is then a single re-publish pass.
 Do not report success on the fact that publishes returned. Check:
 
 - `artifacts.json` has no empty `url` and no duplicates.
-- All eight pages exist at their registry URLs — `action: "list"` shows them.
+- Every registry entry with a URL resolves to a real page — `action: "list"`
+  shows them. An entry with an empty `url` is fine and expected: a metric gets
+  its URL the first time its report is generated.
 - Spot-check by reading the hub back: its six links are the six registry metric
   URLs, in order.
 - Every grade on the hub equals the grade on the page it links to.

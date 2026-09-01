@@ -5,10 +5,10 @@ here is overwritten or rotated on the next run.
 
 | Command | Does |
 |---------|------|
-| `/analizeMax` | The audit. Measures the tree, researches externally, grades six dimensions. Publishes the full report and the hub, and **never** a metric page. Expensive. |
+| `/analizeMax [core\|max\|<metrics>]` | The audit. Measures the tree, researches externally, grades six dimensions. Publishes the full report and the hub; generates metric reports only for what the argument names, by invoking `/analizeMax-metric`. Expensive. |
 | `/analizeMax-metric <name>` | Expands one dimension into a working document, and is the **only** thing that writes or publishes a metric page. Pure derivation from the newest full report — no build, no research, no re-grading. Cheap. |
 | `/analizeMax-execute` | Applies `PLAN.md`, normally or fanned out across subagents or a workflow. |
-| `/analizeMax-repair` | Repairs drift: creates anything missing, validates every format, re-publishes all eight pages with correct cross-links. Not needed after a normal audit — `/analizeMax` materialises the full set itself. |
+| `/analizeMax-repair` | Repairs drift: validates every format, creates a missing metric *file*, restores a lost registry URL, re-publishes what is actually broken. Not needed after a normal audit, and it never generates a metric report. |
 
 ## Files
 
@@ -42,9 +42,16 @@ The full contract — registry rules, the two-phase publish that resolves the
 circular hub↔metric links, staleness display, and page structure — is
 [.claude/skills/analizeMax/publishing.md](../../.claude/skills/analizeMax/publishing.md).
 
-A metric page is only ever written by `/analizeMax-metric`. An audit refreshes
-the grades on the hub and leaves the metric pages alone, because generating six
-designed pages nobody asked to read is the cost that command exists to avoid.
+A metric page is only ever written by `/analizeMax-metric`. By default an audit
+refreshes the grades on the hub and leaves the metric pages alone, because
+generating six designed pages nobody asked to read is the cost that command
+exists to avoid.
+
+To get some anyway, name them on the audit: `/analizeMax core` (stability,
+architecture, capabilities), `/analizeMax max` (all six), or any metrics you
+want — `/analizeMax stability devex`. The audit still does not write them; it
+invokes `/analizeMax-metric` once per metric, so there is only ever one writer
+of that file.
 
 The hub stays honest about it. Each row is one of three states: **current** (its
 page derives from this audit), **superseded** (from an older one — still a link,

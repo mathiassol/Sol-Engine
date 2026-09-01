@@ -211,9 +211,10 @@ publishing.** For this command:
 - Publish **two** documents: this metric's page, and the **hub** — that row just
   went from *not analysed* or *superseded* to **current**, and the hub is where
   anyone would look.
-- **You are the only writer of a metric page.** `/analizeMax` deliberately never
-  regenerates these, so this command running is the single reason one is ever
-  current. If this metric had no registry URL, publishing here mints it — write
+- **You are the only writer of a metric page.** `/analizeMax` never writes one
+  itself — when its argument selects a metric it invokes *this* command, so this
+  command running is the single reason one is ever current. Behave identically
+  whether a person or the audit invoked you. If this metric had no registry URL, publishing here mints it — write
   the returned URL into `artifacts.json` immediately.
 - URLs, favicons and titles come from `docs/analysis/artifacts.json` and are
   permanent. Pass this metric's registry `url` so the page people already have

@@ -42,15 +42,16 @@ re-run.
 - Never renumber, rename, or repurpose a key. If a document is retired, leave
   its entry and mark it, so its URL is never handed to something else.
 
-Eight documents, eight URLs: the hub, the newest full report, and one per
-metric. Rotated older full reports stay as files only — `full` always shows the
-newest.
+Nine documents, nine URLs: the hub, the newest full report, the roadmap page,
+and one per metric. Rotated older full reports stay as files only — `full`
+always shows the newest. A metric's URL does not exist until its report is first
+generated, so fewer than nine being filled is a normal state, not a gap.
 
 ## 2. The circular-link problem
 
-The hub links to six metric pages; every metric page links back to the hub and
-sideways to the other five. So a first publish cannot know all the URLs it
-needs.
+The hub links to whichever metric pages exist; every metric page links back to
+the hub and sideways to the others. So a publish that mints more than one
+document cannot know all the URLs it needs.
 
 Resolve it in two phases, and only ever on a first run or a repair:
 
@@ -58,8 +59,8 @@ Resolve it in two phases, and only ever on a first run or a repair:
 document with the nav rendered as **disabled placeholders** (plain `<span>`, not
 `<a>`). Record each returned URL immediately.
 
-**Phase B — link.** Every URL is now known. Re-publish all eight with real
-`href`s.
+**Phase B — link.** Every URL is now known. Re-publish everything that has one,
+with real `href`s.
 
 After Phase B the registry is complete, so every later run is a single publish
 per changed document. Only `/analizeMax-repair` should ever need Phase A again.
@@ -68,15 +69,20 @@ per changed document. Only `/analizeMax-repair` should ever need Phase A again.
 
 | Command | Writes | Publishes |
 |---------|--------|-----------|
-| `/analizeMax` | full report, `LATEST.md`, `PLAN.md` | `full` and `hub`. **Nothing else.** |
+| `/analizeMax` | full report, `LATEST.md`, `PLAN.md` | `full` and `hub`. Metric pages only for the metrics its argument selected, and only by **invoking `/analizeMax-metric`** — never by writing one itself. |
 | `/analizeMax-metric <m>` | `metric-<m>.md` | that metric, **and `hub`** — its row's freshness just changed |
 | `/analizeMax-repair` | any malformed file | only what is broken |
 
-**`/analizeMax` never writes or publishes a metric page.** Not to refresh a
-grade, not to update a freshness label, not "while it is in there". A metric
-page costs a designed page's worth of work, and the point of splitting
-`/analizeMax-metric` out was to stop paying that for six pages nobody asked to
-read. An audit that regenerates them has quietly undone the split.
+**`/analizeMax` never writes a metric page itself.** Not to refresh a grade,
+not to update a freshness label, not "while it is in there". A metric page costs
+a designed page's worth of work, and the point of splitting `/analizeMax-metric`
+out was to stop paying that for six pages nobody asked to read. An audit that
+regenerates them all by default has quietly undone the split.
+
+It may generate some **on request** — `/analizeMax core`, `/analizeMax max`, or
+named metrics — but only by invoking `/analizeMax-metric`, once per metric. One
+writer for that file, always. An audit that reimplements the metric report is
+how the two documents start disagreeing about their own format.
 
 It may **read** the metric files — it needs their `derived_from` to label the
 hub. Reading is free; publishing is not.
@@ -131,13 +137,15 @@ links are the point. The markdown in `docs/analysis/` stays the repo-side source
 of truth; the artifact is its shareable view. Same content, no divergence.
 
 Follow the `artifact-design` skill for the visual pass. Beyond that, three
-things are fixed across all eight pages so navigation feels like one document:
+things are fixed across every published page so navigation feels like one
+document:
 
 **A. The nav strip** — top of every page, hub included:
 
-- On the hub: the six metrics as chips, each linking to its page. A metric with
-  no report yet still gets a chip and still links — its page exists and says it
-  is empty.
+- On the hub: the six metrics as chips, plus a **Roadmap** chip. A metric whose
+  registry `url` is empty still gets a chip, but as plain unlinked text — there
+  is no page to link to, and a dead link from a shared scorecard is worse than a
+  chip that admits it has no detail yet.
 - On a metric page: the same six chips with the current one marked as current
   (not a link), plus a **← Scorecard** link at the strip's left, and a second
   one at the bottom of the page. Someone who has scrolled a long action list

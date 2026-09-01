@@ -1,17 +1,43 @@
 ---
 name: analizeMax
-description: Full-depth audit of the engine — code (stability, architecture, capabilities, portability) and everything non-code (developer setup, AI tooling). Measures the tree, searches the web for external ground truth, verifies every finding adversarially, and grades six dimensions F to A+ against an absolute standard. Emits three files: a long report (last 5 kept), a one-page plain-language summary whose scorecard is the shareable hub, and a phased plan that /analizeMax-execute can apply without further approval. Publishes only the report and the hub — metric pages are written solely by /analizeMax-metric, so an audit never spends time on pages nobody asked to read. Expensive and deliberate — run it when you want the real picture, not during feature work.
+description: Full-depth audit of the engine — code (stability, architecture, capabilities, portability) and everything non-code (developer setup, AI tooling). Measures the tree, searches the web for external ground truth, verifies every finding adversarially, and grades six dimensions F to A+ against an absolute standard. Emits three files: a long report (last 5 kept), a one-page plain-language summary whose scorecard is the shareable hub, and a phased plan that /analizeMax-execute can apply without further approval. Publishes only the report and the hub by default; pass core, max, or metric names to also generate those metric reports. Metric pages are written solely by /analizeMax-metric, so an audit never spends time on pages nobody asked for. Expensive and deliberate — run it when you want the real picture, not during feature work.
 disable-model-invocation: true
-argument-hint: [optional: one dimension to go deep on]
+argument-hint: [optional: core | max | one or more metric names — which metric reports to also generate]
 effort: max
-allowed-tools: Bash(git *) Bash(cmake *) Bash(find *) Bash(grep *) Bash(wc *) Bash(ls *) Bash(sed *) Bash(awk *) Bash(./build/bin/Debug/sandbox.exe *) Bash(./build/bin/Release/game.exe *) PowerShell Read Grep Glob Write Edit WebSearch WebFetch Artifact
+allowed-tools: Bash(git *) Bash(cmake *) Bash(find *) Bash(grep *) Bash(wc *) Bash(ls *) Bash(sed *) Bash(awk *) Bash(./build/bin/Debug/sandbox.exe *) Bash(./build/bin/Release/game.exe *) PowerShell Read Grep Glob Write Edit WebSearch WebFetch Artifact Skill
 ---
 
 Audit this engine end to end and grade it. Two outputs: one exhaustive report,
 one page a human can read. Run every pass in order.
 
-If an argument was given, that dimension gets extra depth — it does **not**
-become the only one graded. All six are always graded.
+**All six dimensions are always graded.** The argument does not narrow the
+audit; it only chooses which metric *reports* get generated on top of it.
+
+## The argument: which metric reports to generate
+
+Metric reports are the expensive part nobody asked for by default, so they are
+opt-in. Case-insensitive; separate several with spaces or commas.
+
+| Argument | Generates |
+|----------|-----------|
+| *(none)* | **No metric reports.** The default, and the right one most runs. |
+| `core` | stability, architecture, capabilities |
+| `max` (or `all`) | all six |
+| one or more names | exactly those — `stability`, `devex ai-tooling`, `portability, capabilities` |
+| `none` | nothing, said explicitly |
+
+Names accept the same aliases as `/analizeMax-metric`: stability · architecture
+· capabilities · portability (cross-platform, linux, macos) · devex (setup, dx,
+docs) · ai-tooling (ai, claude, skills).
+
+**A selected dimension also gets extra depth in the audit itself.** Asking for
+its report means you care about it, so Pass 2 spends more evidence there. That
+is the only way the argument affects grading, and it never changes *which*
+dimensions are graded.
+
+If an argument does not resolve to a known name or group, say what you did not
+recognise, list the valid ones, and continue with **no** metric reports rather
+than guessing.
 
 ---
 
@@ -430,11 +456,13 @@ before publishing anything.** In short, for this command:
   the registry `url`, `favicon` and `title`; never publish without a `url` for a
   document that already has one.
 - Publish exactly **two** things: the **full report** and the **hub**.
-- **Never write or publish a metric page.** Not to refresh its grade, not to
-  fix its freshness label, not because you are already in the directory. Each
-  one is a designed page, and generating six that nobody asked to read is the
-  cost `/analizeMax-metric` exists to avoid. `metric-*.md` is that command's
-  file and nothing else writes it.
+- **Never write a metric page yourself** — not even for a metric the argument
+  selected. `metric-*.md` belongs to `/analizeMax-metric` and a second writer is
+  how the two start producing different documents. To generate one, **invoke
+  that skill**: `/analizeMax-metric <key>`, once per selected metric, after the
+  full report exists for it to derive from.
+- With no argument, no metric page is written at all. That is the default and
+  the reason the split exists.
 - You may **read** the metric files. You need each one's `derived_from` to label
   its row on the hub, and reading costs nothing.
 - **Label every hub row honestly instead.** The hub carries the new grade while
@@ -444,8 +472,13 @@ before publishing anything.** In short, for this command:
   audit), *superseded* (page derives from an older one, so say which). A
   superseded row is not a defect; an unlabelled one is.
 - If the `hub` or `full` registry URL is empty, publish and write the returned
-  URL back to `artifacts.json` immediately. Do not mint metric URLs — a metric
-  gets its URL the first time someone asks for that metric.
+  URL back to `artifacts.json` immediately. Do not mint a metric URL yourself —
+  the metric command mints its own the first time it runs for that metric.
+- **Order matters:** publish `full`, then run the selected metric reports, then
+  publish the `hub` **last**. Each metric run refreshes the hub too; publishing
+  it last regardless means the final state is correct without anyone having to
+  reason about who published it most recently. The redundant intermediate
+  publishes are accepted deliberately — it is one small page.
 - `/analizeMax-repair` exists for drift and breakage afterwards, not as a
   required second step.
 
@@ -574,9 +607,11 @@ just "execute the analizeMax plan") applies the plan, and
 with its full action list — cheaply, since it derives from the report you just
 wrote rather than measuring again.
 
-Say which metric pages are now **superseded** or **not analysed**, in one line.
-That is the honest consequence of not regenerating them, and it tells the user
-exactly which `/analizeMax-metric` calls would be worth making.
+Say which metric reports you generated, if any, and then which of the rest are
+now **superseded** or **not analysed**, in one line. That is the honest
+consequence of leaving them alone, and it tells the user exactly which
+`/analizeMax-metric` calls are still worth making — or that
+`/analizeMax core` next time would have covered it.
 
 Do not paste the full report into chat; it is a file. Do not start executing
 the plan — generating it and running it are separate acts.

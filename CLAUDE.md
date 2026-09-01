@@ -43,6 +43,10 @@ that `/analizeMax-execute` applies — normally, across subagents, or as a
 workflow. Only fixes that need no approval reach that plan; judgement calls
 stay on a separate list.
 
+By default it publishes only the report and the scorecard; `/analizeMax core`
+adds the stability, architecture and capability reports, `/analizeMax max` adds
+all six, and naming metrics adds just those.
+
 `/analizeMax-metric <name>` expands one graded dimension into a 1-2 page
 report plus a full ordered action list. It derives purely from the newest full
 report — no build, no research, no re-grading — so it is cheap to re-run.
