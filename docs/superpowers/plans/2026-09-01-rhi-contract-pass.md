@@ -165,34 +165,34 @@ what the debug layer polices.
 
 **Cost:** the whole depth pipeline, at once · **Closes:** RHI #15
 
-- [ ] **1.1** Add `DepthConvention { Standard, Reversed }` to
+- [x] **1.1** Add `DepthConvention { Standard, Reversed }` to
   `packages/rhi/include/engine/rhi/rhi.hpp` beside `DeviceDesc`, a
   `depth_convention` field defaulting to `Standard`, and
   `IDevice::depth_convention()`. Default `Standard` so this task is inert until
   step 1.6 flips it — every step before that must leave 79 gates green.
-- [ ] **1.2** Add `DepthTest::Greater` and `GreaterEqual`, and `CompareOp`'s
+- [x] **1.2** Add `DepthTest::Greater` and `GreaterEqual`, and `CompareOp`'s
   greater directions if absent. These are the mechanism, not the switch: the
   renderer picks which to use from the convention.
-- [ ] **1.3** Replace the hard-coded `1.0f` at `device_d3d12.cpp:572` with the
+- [x] **1.3** Replace the hard-coded `1.0f` at `device_d3d12.cpp:572` with the
   device's convention — `1.0f` for Standard, `0.0f` for Reversed. This is the
   site that makes a half-applied convention a black screen.
-- [ ] **1.4** Add `Mat4::perspective_reversed_z` beside `Mat4::perspective` in
+- [x] **1.4** Add `Mat4::perspective_reversed_z` beside `Mat4::perspective` in
   `math`, keeping every existing NaN guard. Two named functions rather than a
   flag argument: `math` stays a library with no rendering policy in it, and the
   renderer is where the choice belongs.
-- [ ] **1.5** In `renderer`, derive from `IDevice::depth_convention()`: which
+- [x] **1.5** In `renderer`, derive from `IDevice::depth_convention()`: which
   projection builder to call, which `DepthTest` the standard frame's pipelines
   use, and the sign of `slope_scaled_depth_bias`. Change
   `shadow_comparison_sampler()` to take the convention rather than hard-coding
   `CompareOp::Less`.
-- [ ] **1.6** **Write the gate first and watch it fail.** `run_depth_convention_gate`
+- [x] **1.6** **Write the gate first and watch it fail.** `run_depth_convention_gate`
   asserts the six sites agree with `depth_convention()`: the projection maps near
   to the far-plane depth value, the clear value matches, the shadow sampler's
   compare direction matches, the bias sign matches, the pipelines' `DepthTest`
   matches, and — the one that catches a half-application — that flipping the
   convention flips *all six* and not five. Assert on the values, not on "it did
   not crash".
-- [ ] **1.7** Only now flip the sandbox's `DeviceDesc` to `Reversed`. Re-run
+- [x] **1.7** Only now flip the sandbox's `DeviceDesc` to `Reversed`. Re-run
   every depth-sensitive gate: shadow, PCF, TAA, motion, frustum, HDR. Expect
   something here — this is the task most likely to surface a hidden assumption,
   and finding it is the point.
@@ -211,21 +211,21 @@ convention that only works in one position is a constant, not a convention.
 
 **Cost:** contained — the state already exists · **Closes:** RHI #9
 
-- [ ] **2.1** Add `TextureUsage::UnorderedAccess` and set
+- [x] **2.1** Add `TextureUsage::UnorderedAccess` and set
   `D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS` on textures created with it.
   Note that a texture may need to be both storage and sampled — check whether
   the enum should become flags before assuming it stays exclusive.
-- [ ] **2.2** Add `ICommandList::set_unordered_access(u32 slot, ITexture&)`
+- [x] **2.2** Add `ICommandList::set_unordered_access(u32 slot, ITexture&)`
   alongside the buffer overload, and the descriptor-heap slot behind it.
-- [ ] **2.3** Add `Access::UnorderedAccess` to the render graph and map it in
+- [x] **2.3** Add `Access::UnorderedAccess` to the render graph and map it in
   `state_for` to the `ResourceState::UnorderedAccess` that already exists.
-- [ ] **2.4** Add a `sample_count`-free `storage` flag to `TransientDesc` so the
+- [x] **2.4** Add a `sample_count`-free `storage` flag to `TransientDesc` so the
   graph can allocate a storage-capable transient.
-- [ ] **2.5** **This is what makes `PassKind::Compute`'s writes real.** Update
+- [x] **2.5** **This is what makes `PassKind::Compute`'s writes real.** Update
   `render_graph.cpp`'s compute branch and the comment that currently says a
   declared write is ordering-only, and update
   `.claude/rules/renderer-boundaries.md` step 4, which says the same.
-- [ ] **2.6** **Gate first.** `run_storage_texture_gate` dispatches a compute
+- [x] **2.6** **Gate first.** `run_storage_texture_gate` dispatches a compute
   pass that writes a known pattern into a storage texture, then reads it back
   and asserts the exact values — not that the dispatch returned. Then assert the
   graph orders a graphics pass reading it after the compute pass writing it,
@@ -243,24 +243,24 @@ crash. Readback values compared against a pattern computed on the CPU.
 
 **Cost:** the widest surface of the three · **Closes:** RHI #18
 
-- [ ] **3.1** Add `sample_count` to `TextureDesc` (default 1) and thread it
+- [x] **3.1** Add `sample_count` to `TextureDesc` (default 1) and thread it
   through all five `SampleDesc.Count = 1` sites in the backend.
-- [ ] **3.2** Add a matching `sample_count` to `GraphicsPipelineDesc`. A PSO
+- [x] **3.2** Add a matching `sample_count` to `GraphicsPipelineDesc`. A PSO
   whose sample count disagrees with its render target fails to create — so make
   the mismatch a logged error naming both numbers, not a null return.
-- [ ] **3.3** Add `ITexture* resolve` to `RenderPassInfo`, resolved in
+- [x] **3.3** Add `ITexture* resolve` to `RenderPassInfo`, resolved in
   `end_render_pass` with `ResolveSubresource`. Reject at the contract level a
   resolve whose format or extent disagrees with the colour target, naming both.
-- [ ] **3.4** Add `sample_count` to `TransientDesc` and let the graph allocate
+- [x] **3.4** Add `sample_count` to `TransientDesc` and let the graph allocate
   MSAA transients. A pass writing an MSAA target and declaring a resolve target
   reads as two resources on the graph, so ordering and missing-producer
   detection cover it for free.
-- [ ] **3.5** **Gate first.** `run_msaa_gate` asserts: a 4× target reports its
+- [x] **3.5** **Gate first.** `run_msaa_gate` asserts: a 4× target reports its
   sample count; a PSO built for 1× against a 4× target is rejected with both
   numbers named; a resolve produces a single-sample texture of the right extent;
   and a geometric edge is measurably smoother after resolve than a 1× render of
   the same triangle — a real measurement, not "it drew".
-- [ ] **3.6** Do **not** switch the standard frame to MSAA. This row puts it on
+- [x] **3.6** Do **not** switch the standard frame to MSAA. This row puts it on
   the contract; using it is a renderer decision with a real cost, and TAA
   already handles edges. Say so in the ROADMAP entry.
 
@@ -276,17 +276,17 @@ cannot pass by rendering nothing.
 
 **Cost:** small · **Closes:** nothing, fixes one wrong blocker
 
-- [ ] **4.1** A `docs/ROADMAP.md` Why / Choice / Gate / Do-not entry for all
+- [x] **4.1** A `docs/ROADMAP.md` Why / Choice / Gate / Do-not entry for all
   three. **Do-not** lines: do not add a second way to select depth direction; do
   not switch the standard frame to MSAA without a reason TAA cannot cover; do
   not let `TextureUsage` grow into a flags enum without checking every switch
   over it.
-- [ ] **4.2** **Correct RHI #12's *Finish first*.** It reads "Shaders #5 SPIR-V
+- [x] **4.2** **Correct RHI #12's *Finish first*.** It reads "Shaders #5 SPIR-V
   path, then Platform #9 a non-Windows platform package". Platform #9 is not a
   technical prerequisite — Vulkan runs on Windows, and doing it there first
   validates the contract with one new variable instead of two. Rewrite it to
   name Shaders #5 only, and say why Platform #9 was dropped.
-- [ ] **4.3** Record what this pass deliberately left for the second backend:
+- [x] **4.3** Record what this pass deliberately left for the second backend:
   #17 breadcrumbs, #16 PSO cache, and the A2 binding model.
 
 **Commit:** `docs(roadmap): the RHI contract pass, and RHI #12's real blocker`
@@ -295,19 +295,19 @@ cannot pass by rendering nothing.
 
 ## Definition of done
 
-- [ ] RHI #9, #15 and #18 are **Done**, with the category subtotal and header
+- [x] RHI #9, #15 and #18 are **Done**, with the category subtotal and header
       totals recounted
-- [ ] **82 `(pass)`, 0 `FAIL`** in Debug and Release; debug layer 0/0/0 on every
+- [x] **82 `(pass)`, 0 `FAIL`** in Debug and Release; debug layer 0/0/0 on every
       task, not just the last
-- [ ] reversed-Z is one value: flipping `DeviceDesc::depth_convention` flips all
+- [x] reversed-Z is one value: flipping `DeviceDesc::depth_convention` flips all
       six sites, and the gate fails if any one of them is left behind
-- [ ] a compute pass writes a storage texture and a graphics pass reads it, in
+- [x] a compute pass writes a storage texture and a graphics pass reads it, in
       that order, proven by readback values rather than by absence of a crash
-- [ ] a PSO/target sample-count mismatch is rejected with both numbers named
-- [ ] each new gate was watched failing before it was trusted
-- [ ] `all 16 checks passed` under both shells; CI green including the Linux and
-      sanitizer jobs
-- [ ] RHI #12's blockers say what is actually true
+- [x] a PSO/target sample-count mismatch is rejected with both numbers named
+- [x] each new gate was watched failing before it was trusted
+- [x] `all 16 checks passed` under both shells; CI green including the Linux and
+      sanitizer jobs *(run 33531065286: all jobs green)*
+- [x] RHI #12's blockers say what is actually true
 
 ## What this plan does not do
 
