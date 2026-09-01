@@ -3,6 +3,7 @@
 #include <engine/core/log.hpp>
 #include <engine/renderer/aa.hpp>
 #include <engine/renderer/bloom.hpp>
+#include <engine/renderer/frame_pipelines.hpp>
 #include <engine/renderer/motion.hpp>
 #include <engine/renderer/render_snapshot.hpp>
 #include <engine/renderer/taa.hpp>
