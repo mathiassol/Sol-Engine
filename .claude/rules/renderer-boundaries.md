@@ -36,12 +36,15 @@ swap test this engine is built to pass.
 
 ## Adding a render pass — the whole checklist
 
-`add_pass` is where the pass is *registered*, but a working pass touches two
-packages and eight files — the four structs in step 3 live in four different
-files, and the shader, registration and recorder add four more. Missing a step
-fails **silently**: every
-`should_execute` predicate treats a null pipeline as "feature disabled", so a
-forgotten copy line produces a pass that never runs and never complains.
+`add_pass` is where the pass is *registered*, but a working pass spans two
+packages and five files: the shader, the pipeline, two adjacent lines in
+`frame_pipelines.hpp`, the registration, and the recorder — plus its gate.
+Missing a step is no longer silent. A field with no `kFramePipelines` entry
+fails the `static_assert`; a pipeline that is never created turns
+`Pipeline set gate` red and names itself. A `should_execute` predicate still
+treats a null pipeline as "feature disabled", but the gate makes that state
+unreachable, and `RenderGraph::execute` names any pass whose predicate
+declines.
 
 1. **Shader** → `packages/sandbox/content/shaders/<name>.hlsl`. Mounted as
    `/shaders/<name>.hlsl`. (Engine shaders living under the sandbox's content
@@ -49,12 +52,15 @@ forgotten copy line produces a pass that never runs and never complains.
 2. **Pipeline** → `packages/sandbox/src/main.cpp`: a `k<Name>Shader` path
    constant, a `make_<name>_pipeline_desc()`, and a compile + create block
    alongside the existing ones. Pipelines are created by the app, not the
-   renderer.
-3. **Plumbing** → add the `I<Thing>Pipeline*` field to **all four** structs it
-   passes through, and to the three hand-written copy blocks between them:
-   `ForwardDemo` (main.cpp) → `WorldExtractAssets` (world_extract.hpp) →
-   `ExtractDesc` (renderer/extract.hpp) → `RenderSnapshot`
-   (renderer/render_snapshot.hpp).
+   renderer. Hand the new pipeline to `ForwardDemo::adopt`, which stores the
+   identity and takes ownership; it replaces rather than appends, so shader
+   hot-reload does not leak the pipeline it supersedes.
+3. **Plumbing** → two adjacent lines in
+   `packages/renderer/include/engine/renderer/frame_pipelines.hpp`: a field on
+   `FramePipelines` and its `kFramePipelines` entry. Nothing else. The struct
+   travels by value through `WorldExtractAssets` → `ExtractDesc` →
+   `RenderSnapshot`, so there is no copy block to forget, and a field without a
+   table entry fails the `static_assert`.
 4. **Register** → `add_pass` in `setup_standard_frame`
    (`packages/renderer/src/standard_frame.cpp`), declaring every read and
    write explicitly. Transients come from `create_transient`. Note the caps:
