@@ -165,17 +165,38 @@ the *uncreated* pipeline: null still reaches a predicate and still reads as
 "feature off". Two additions close that, chosen to keep the tree's
 degrade-and-log stance rather than replace it:
 
-1. **`RenderGraph::compile()` logs the passes it will skip**, once per compile,
-   naming each. A pass whose `should_execute` is false because a pipeline is null
-   is currently indistinguishable from one that is legitimately off; the message
-   makes the first case visible without changing behaviour.
-2. **A gate asserts the set is complete.** After setup, all thirteen entries must
-   be non-null. A forgotten pipeline turns `--gates` red rather than producing a
-   quietly incomplete frame.
+1. **A gate asserts the set is complete** — this is the safety net. After setup,
+   all thirteen entries must be non-null. A forgotten pipeline turns `--gates`
+   red rather than producing a quietly incomplete frame. It is a loop over
+   `kFramePipelines`, which is where the table earns its keep: a
+   named-fields-only design would need a hand-maintained list here,
+   reintroducing the drift being removed.
 
-Both are loops over `kFramePipelines`, which is why the table earns its keep —
-in a named-fields-only design each diagnostic would need its own hand-maintained
-list, reintroducing the drift being removed.
+2. **`RenderGraph::execute()` logs a skipped pass once**, naming it — a
+   development convenience, not a safety net, and deliberately ranked second.
+
+   Two corrections to an earlier draft of this section, both found while writing
+   the implementation plan:
+
+   - It cannot live in `compile()`. `should_execute` is evaluated in `execute()`
+     (`render_graph.cpp:819`) against the snapshot, and `compile()` has no
+     snapshot. So the log belongs in `execute()`, latched per pass so a
+     predicate that is false every frame does not log at 60 Hz — the pattern
+     `alloc_frame_memory` and `warn_physics_capacity` already use.
+   - It cannot say *why*. `should_execute` is an opaque
+     `std::function<bool(const RenderSnapshot&)>`; the graph knows a pass was
+     skipped, not which pointer was null. Claiming a reason would need a
+     `requires_pipeline` field on `RenderPassDesc` — adding a field to the
+     struct this design exists to slim, to describe a case the gate already
+     makes impossible. Not worth it. The message says only that the predicate
+     declined.
+
+   Its residual value is real but narrow: with the gate green, a null pipeline
+   cannot reach a predicate, so what remains is a predicate false for some
+   *other* reason — `sky` also requires `sky_cubemap`, and the AA modes are
+   legitimately off. During development of a new pass that is the difference
+   between "my pass does not run" and "my pass does not run because the cubemap
+   is missing".
 
 The AA pipelines are legitimately optional at *runtime* (F5 cycles Off / FXAA /
 SMAA / TAA, and `aa::effective_mode` already degrades on a null pipeline). The
