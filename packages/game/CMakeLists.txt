@@ -3,6 +3,15 @@ cmake_minimum_required(VERSION 3.24)
 include(EngineRuntimeApp)
 engine_add_runtime_app(game INSTALL_LAYOUT)
 
+# A single-config generator puts sandbox and game in the same bin/ directory, so
+# their POST_BUILD content copies write the same files - and with --parallel that
+# is a race. It failed a Linux CI build with "Error copying directory". A
+# multi-config generator keeps them in bin/Debug and bin/Release, where the two
+# copies are independent, which is why this never showed up on Windows.
+if(NOT CMAKE_CONFIGURATION_TYPES AND TARGET sandbox)
+    add_dependencies(game sandbox)
+endif()
+
 install(TARGETS game RUNTIME DESTINATION .)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/sandbox/content/" DESTINATION content)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/debug-draw/content/" DESTINATION debug)

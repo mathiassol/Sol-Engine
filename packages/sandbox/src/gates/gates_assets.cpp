@@ -36,9 +36,20 @@ bool run_mount_containment_gate(engine::assets::IAssetLoader& loader) {
     };
 
     const bool dotdot = escapes("/content/../../../windows/win.ini");
-    const bool absolute = escapes("/content/C:/Windows/win.ini");
     const bool unc = escapes("/content//server/share/secret");
     const bool rooted = escapes("/content//etc/passwd");
+    // A drive letter is only an escape where drive letters exist. On Linux
+    // "C:" is an ordinary directory name and `<root>/C:/Windows` stays inside
+    // the mount, so asserting it unconditionally fails a correct engine - which
+    // is what the first headless run on Linux did. Windows still gets the
+    // assertion, because there it is a real vector.
+#ifdef _WIN32
+    const bool absolute = escapes("/content/C:/Windows/win.ini");
+    const char* absolute_label = absolute ? "blocked" : "ESCAPED";
+#else
+    const bool absolute = true;
+    const char* absolute_label = "n/a";
+#endif
     // The legitimate path must still resolve, so this cannot pass by
     // rejecting everything.
     std::string ok_physical;
@@ -48,7 +59,7 @@ bool run_mount_containment_gate(engine::assets::IAssetLoader& loader) {
     char message[224];
     std::snprintf(message, sizeof(message),
         "Mount containment gate: dotdot=%s absolute=%s unc=%s rooted=%s normal_resolves=%s (%s)",
-        dotdot ? "blocked" : "ESCAPED", absolute ? "blocked" : "ESCAPED",
+        dotdot ? "blocked" : "ESCAPED", absolute_label,
         unc ? "blocked" : "ESCAPED", rooted ? "blocked" : "ESCAPED",
         normal_ok ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
