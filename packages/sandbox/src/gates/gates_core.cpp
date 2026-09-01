@@ -129,6 +129,14 @@ bool run_file_log_gate() {
 }
 
 bool run_arena_gate() {
+    // TEMPORARY: deliberate heap-buffer-overflow, to prove the ASan job is
+    // actually instrumented. Reverted in the next commit.
+    {
+        std::vector<engine::u8> probe(4, 0);
+        volatile engine::u8 sink = probe[7];
+        (void)sink;
+    }
+
     engine::Arena arena(1024);
 
     engine::u8* first = arena.push_n<engine::u8>(512);
