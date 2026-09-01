@@ -156,6 +156,9 @@ bool run_rhi_contract_gate(
 bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path);
 
+bool run_storage_texture_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
+
 bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
     const std::string& compute_path);
 

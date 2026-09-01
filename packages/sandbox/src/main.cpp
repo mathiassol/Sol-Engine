@@ -522,6 +522,17 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
+    std::string storage_tex_path;
+    if (!resolve_content(loader, kStorageTextureGateShader, storage_tex_path)) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "storage_texture_gate.hlsl missing");
+        if (fail_on_gate) {
+            return false;
+        }
+    } else if (!run_storage_texture_gate(*device, compiler, storage_tex_path) && fail_on_gate) {
+        return false;
+    }
+
     std::string srgb_gate_path;
     if (!resolve_content(loader, kSrgbGateShader, srgb_gate_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,

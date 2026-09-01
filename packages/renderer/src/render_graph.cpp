@@ -29,6 +29,7 @@ const char* access_name(Access access) {
     case Access::CopySrc:    return "CopySrc";
     case Access::CopyDst:    return "CopyDst";
     case Access::ShaderRead: return "ShaderRead";
+    case Access::StorageWrite: return "StorageWrite";
     }
     return "Unknown";
 }
@@ -471,6 +472,7 @@ rhi::ResourceState RenderGraph::state_for(Access access) const {
     case Access::CopySrc:    return rhi::ResourceState::CopySrc;
     case Access::CopyDst:    return rhi::ResourceState::CopyDst;
     case Access::ShaderRead: return rhi::ResourceState::ShaderRead;
+    case Access::StorageWrite: return rhi::ResourceState::Storage;
     }
     return rhi::ResourceState::Common;
 }
@@ -497,7 +499,9 @@ ResourceHandle RenderGraph::create_transient(const TransientDesc& desc) {
     ResourceRecord record{};
     record.name = std::string(desc.name);
     record.format = desc.format;
-    record.usage = desc.usage;
+    // `storage` promotes the usage rather than adding a parallel flag, so the
+    // one field the backend reads still decides everything about the resource.
+    record.usage = desc.storage ? rhi::TextureUsage::StorageShaderResource : desc.usage;
     record.width = desc.width;
     record.height = desc.height;
     record.extent_div = desc.extent_div == 0 ? 1u : desc.extent_div;
@@ -849,14 +853,14 @@ void RenderGraph::execute(rhi::IDevice& device, const RenderSnapshot& snapshot) 
         // dispatch inside one. Transitions still happen, which is what makes the
         // resources it reads correct rather than merely ordered.
         if (pass.kind == PassKind::Compute) {
-            // Writes as well as reads. compile() already treats a compute pass's
-            // declared writes as edges, so leaving them untransitioned here would
-            // let the ordering model and the resource-state model disagree - and
-            // that disagreement is invisible until a barrier is wrong.
+            // Writes as well as reads. compile() treats a compute pass's declared
+            // writes as edges, so leaving them untransitioned would let the
+            // ordering model and the resource-state model disagree - and that
+            // disagreement is invisible until a barrier is wrong.
             //
-            // A declared write is ordering-only until RHI #9 puts UAV textures on
-            // the contract: there is no Access value that maps to an unordered
-            // access, so a compute pass cannot yet bind one to write.
+            // Since RHI #9 a declared write is real: Access::StorageWrite maps to
+            // ResourceState::Storage, so a transient created with `storage` is
+            // barriered into place before the dispatch.
             for (u32 i = 0; i < pass.write_count; ++i) {
                 transition_to(cmd, device, pass.writes[i].handle, state_for(pass.writes[i].access));
             }

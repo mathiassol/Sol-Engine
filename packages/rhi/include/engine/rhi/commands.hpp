@@ -53,6 +53,9 @@ public:
     virtual void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes = 0) = 0;
     virtual void set_shader_resource(u32 slot, ITexture& texture) = 0;
     virtual void set_unordered_access(u32 slot, IBuffer& buffer) = 0;
+    // A storage texture a compute pass writes. Declared on the graph as
+    // Access::StorageWrite so the barrier and the ordering agree.
+    virtual void set_unordered_access(u32 slot, ITexture& texture) = 0;
     // Bind a buffer as a shader-readable array, visible to every stage.
     //
     // Visible to every shader stage, where a sampled texture is not. That

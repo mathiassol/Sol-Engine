@@ -116,7 +116,7 @@ D3D12_RESOURCE_STATES to_d3d_state(ResourceState state) {
     case ResourceState::CopySrc:      return D3D12_RESOURCE_STATE_COPY_SOURCE;
     case ResourceState::CopyDst:      return D3D12_RESOURCE_STATE_COPY_DEST;
     case ResourceState::ShaderRead:       return D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE;
-    case ResourceState::UnorderedAccess:  return D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    case ResourceState::Storage:  return D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     }
     return D3D12_RESOURCE_STATE_COMMON;
 }
@@ -705,6 +705,16 @@ void D3D12CommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
     auto& d3d_buffer = static_cast<D3D12Buffer&>(buffer);
     ENGINE_ASSERT(d3d_buffer.resource() != nullptr);
     device_.bind_compute_uav(slot, d3d_buffer.resource(), d3d_buffer.size(),
+        bound_compute_->uav_table_root());
+}
+
+void D3D12CommandList::set_unordered_access(u32 slot, ITexture& texture) {
+    ENGINE_ASSERT(bound_compute_ != nullptr);
+    ENGINE_ASSERT_MSG(bound_compute_->uav_table_root() != ~0u,
+        "compute pipeline has no unordered-access table");
+    auto& d3d_texture = static_cast<D3D12Texture&>(texture);
+    ENGINE_ASSERT(d3d_texture.resource() != nullptr);
+    device_.bind_compute_storage_texture(slot, d3d_texture.resource(), d3d_texture.format(),
         bound_compute_->uav_table_root());
 }
 
@@ -1556,6 +1566,9 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
     if (desc.usage == TextureUsage::ColorShaderResource) {
         return create_color_shader_resource_texture(desc);
     }
+    if (desc.usage == TextureUsage::StorageShaderResource) {
+        return create_storage_shader_resource_texture(desc);
+    }
 
     const bool is_depth = desc.usage == TextureUsage::DepthStencil
         || desc.format == Format::D32_FLOAT;
@@ -2100,6 +2113,86 @@ std::unique_ptr<ITexture> D3D12Device::create_color_shader_resource_texture(
         desc.format, rtv_heap, rtv, false, true);
     texture->set_srv(srv_heap, srv_cpu);
     return texture;
+}
+
+std::unique_ptr<ITexture> D3D12Device::create_storage_shader_resource_texture(
+    const TextureDesc& desc) {
+    // Written by a compute pass, sampled by a later graphics pass. Same shape as
+    // create_color_shader_resource_texture with the render-target flag swapped
+    // for unordered access, and no render-target view - nothing rasterises into
+    // one of these.
+    //
+    // No stored unordered-access descriptor either: bind_compute_storage_texture
+    // creates it into the shader-visible heap at bind time, exactly as the
+    // buffer path already does, so the texture owns only its sampled view.
+    const DXGI_FORMAT dxgi = to_dxgi(desc.format);
+
+    D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc{};
+    srv_heap_desc.NumDescriptors = 1;
+    srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    ID3D12DescriptorHeap* srv_heap = nullptr;
+    if (FAILED(device_->CreateDescriptorHeap(&srv_heap_desc, IID_PPV_ARGS(&srv_heap)))) {
+        return nullptr;
+    }
+
+    D3D12_HEAP_PROPERTIES heap_props{};
+    heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC resource_desc{};
+    resource_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resource_desc.Width = desc.width;
+    resource_desc.Height = desc.height;
+    resource_desc.DepthOrArraySize = 1;
+    resource_desc.MipLevels = 1;
+    resource_desc.Format = dxgi;
+    resource_desc.SampleDesc.Count = 1;
+    resource_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    ID3D12Resource* resource = nullptr;
+    if (FAILED(device_->CreateCommittedResource(
+            &heap_props, D3D12_HEAP_FLAG_NONE, &resource_desc,
+            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&resource)))) {
+        srv_heap->Release();
+        return nullptr;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu = srv_heap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = dxgi;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    device_->CreateShaderResourceView(resource, &srv, srv_cpu);
+
+    set_object_name(resource, "engine/storage_texture");
+    set_object_name(srv_heap, "engine/storage_srv");
+
+    auto texture = std::make_unique<D3D12Texture>(this, resource, desc.width, desc.height,
+        desc.format, nullptr, D3D12_CPU_DESCRIPTOR_HANDLE{}, false, true);
+    texture->set_srv(srv_heap, srv_cpu);
+    return texture;
+}
+
+void D3D12Device::bind_compute_storage_texture(u32 slot, ID3D12Resource* resource,
+    Format format, u32 table_root) {
+    ENGINE_ASSERT(shader_heap_.get() != nullptr);
+    ENGINE_ASSERT(resource != nullptr);
+    const u32 index = next_shader_descriptor();
+
+    D3D12_CPU_DESCRIPTOR_HANDLE dest = shader_cpu_;
+    dest.ptr += static_cast<SIZE_T>(index) * shader_descriptor_size_;
+
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+    uav.Format = to_dxgi(format);
+    uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    device_->CreateUnorderedAccessView(resource, nullptr, &uav, dest);
+
+    ID3D12DescriptorHeap* heaps[] = {shader_heap_.get()};
+    cmd_list_->SetDescriptorHeaps(1, heaps);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu = shader_gpu_;
+    gpu.ptr += static_cast<UINT64>(index) * shader_descriptor_size_;
+    cmd_list_->SetComputeRootDescriptorTable(table_root + slot, gpu);
 }
 
 std::unique_ptr<ITexture> D3D12Device::create_sampled_texture(const TextureDesc& desc,

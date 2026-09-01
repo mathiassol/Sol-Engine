@@ -24,15 +24,17 @@ enum class Access : u8 {
     CopySrc,
     CopyDst,
     ShaderRead,
+    // A compute pass writing a texture. Until this existed, a compute pass's
+    // declared writes were ordering-only: no Access mapped to the storage state,
+    // so the graph tracked the dependency and the barrier never happened.
+    StorageWrite,
 };
 
 // Compute participates in ordering exactly as Graphics does - the reads and
 // writes arrays below are kind-agnostic, so a compute pass is scheduled after
 // whatever produced the resources it reads, and a missing producer is reported
-// against it by name. What it cannot yet do is *write* a graph resource: that
-// needs UAV textures on the RHI contract (ENGINE_MAP RHI #9). Until then a
-// compute pass reads graph textures and writes buffers of its own, which is why
-// bloom is still fullscreen triangles rather than dispatches.
+// against it by name. Since RHI #9 it can also *write* one, by declaring
+// Access::StorageWrite on a transient created with `storage`.
 enum class PassKind : u8 { Graphics, Copy, Compute };
 
 struct ResourceHandle {
@@ -54,6 +56,10 @@ struct TransientDesc {
     u32 width = 0;
     u32 height = 0;
     u32 extent_div = 1;
+    // Writable by a compute pass and sampled afterwards. Last, and defaulted,
+    // because every call site uses positional aggregate initialisation - a new
+    // field in the middle silently rebinds all of them.
+    bool storage = false;
 };
 
 struct RenderPassDesc {

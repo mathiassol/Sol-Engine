@@ -9,6 +9,87 @@
 
 namespace sandbox {
 
+bool run_storage_texture_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path) {
+    // RHI #9. Until this landed, a compute pass could be *ordered* against a
+    // graph resource but not write one - no Access mapped to the storage state,
+    // so PassKind::Compute carried half a feature.
+    engine::shaders::ShaderCompileDesc cs_desc{};
+    cs_desc.file_path = shader_path;
+    cs_desc.entry_point = "cs_main";
+    cs_desc.target_profile = "cs_6_0";
+    cs_desc.target = engine::shaders::ShaderTarget::Dxil;
+    engine::shaders::ShaderBytecode cs{};
+    std::string error;
+    const bool compiled = compiler.compile(cs_desc, cs, error) && !cs.data.empty();
+
+    engine::rhi::ComputePipelineDesc pipeline{};
+    pipeline.compute_shader
+        = compiled ? std::span<const engine::u8>(cs.data) : std::span<const engine::u8>{};
+    // Two unordered slots: the texture at u0, the readback buffer at u1.
+    pipeline.storage_texture_count = 2;
+    pipeline.debug_name = "storage_texture_gate";
+    auto pso = compiled ? device.create_compute_pipeline(pipeline) : nullptr;
+
+    engine::rhi::TextureDesc tex{};
+    tex.width = 8;
+    tex.height = 8;
+    tex.format = engine::rhi::Format::RGBA8_UNORM;
+    tex.usage = engine::rhi::TextureUsage::StorageShaderResource;
+    auto storage_tex = device.create_texture(tex, nullptr);
+    // The sampled view exists too - that is what StorageShaderResource promises,
+    // and what a later graphics pass would bind.
+    const bool created = storage_tex != nullptr;
+
+    constexpr engine::usize kBytes = 4 * sizeof(engine::u32);
+    engine::rhi::BufferDesc storage{};
+    storage.size = kBytes;
+    storage.usage = engine::rhi::BufferUsage::Storage;
+    auto rw = device.create_buffer(storage);
+    engine::rhi::BufferDesc readback{};
+    readback.size = kBytes;
+    readback.usage = engine::rhi::BufferUsage::Readback;
+    auto rb = device.create_buffer(readback);
+
+    engine::u32 probes[4]{};
+    bool values_ok = false;
+    if (pso && created && rw && rb) {
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*storage_tex, engine::rhi::ResourceState::Common,
+            engine::rhi::ResourceState::Storage);
+        cmd.set_compute_pipeline(*pso);
+        cmd.set_unordered_access(0, *storage_tex);
+        cmd.set_unordered_access(1, *rw);
+        cmd.dispatch(1, 1, 1);
+        cmd.transition(*rw, engine::rhi::ResourceState::Storage,
+            engine::rhi::ResourceState::CopySrc);
+        cmd.copy_buffer(*rw, *rb, kBytes);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        device.read_buffer(*rb, 0, probes, kBytes);
+
+        // The four texels the shader probed, each written by a different thread.
+        auto packed = [](engine::u32 x, engine::u32 y) { return x | (y << 8); };
+        values_ok = probes[0] == packed(1, 0) && probes[1] == packed(0, 1)
+            && probes[2] == packed(7, 3) && probes[3] == packed(3, 7);
+    }
+
+    const bool passed = compiled && pso != nullptr && created && values_ok;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Storage texture gate: created=%s dispatch=%s probes=%u,%u,%u,%u "
+        "cross_thread_readback=%s (%s)",
+        created ? "yes" : "no", pso ? "yes" : "no", probes[0], probes[1], probes[2], probes[3],
+        values_ok ? "yes" : "NO", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
+
 bool run_pix_gate(engine::rhi::IDevice* device) {
     if (!device) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
@@ -223,7 +304,7 @@ bool run_color_space_gate(engine::rhi::IDevice& device,
         cmd.set_compute_pipeline(*pso);
         cmd.set_unordered_access(0, *rw);
         cmd.dispatch(1, 1, 1);
-        cmd.transition(*rw, engine::rhi::ResourceState::UnorderedAccess,
+        cmd.transition(*rw, engine::rhi::ResourceState::Storage,
             engine::rhi::ResourceState::CopySrc);
         cmd.copy_buffer(*rw, *rb, kProbeBytes);
         cmd.end();
@@ -289,7 +370,7 @@ bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCom
         cmd.set_compute_pipeline(*compute_pso);
         cmd.set_unordered_access(0, *rw);
         cmd.dispatch(1, 1, 1);
-        cmd.transition(*rw, engine::rhi::ResourceState::UnorderedAccess,
+        cmd.transition(*rw, engine::rhi::ResourceState::Storage,
             engine::rhi::ResourceState::CopySrc);
         cmd.copy_buffer(*rw, *rb, 4);
         cmd.end();

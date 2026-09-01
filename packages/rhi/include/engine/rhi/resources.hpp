@@ -26,6 +26,10 @@ enum class TextureUsage : u8 {
     ShaderResource,
     DepthShaderResource,
     ColorShaderResource,
+    // Written by a compute pass, sampled by a later graphics pass. Named
+    // combinations rather than flags, matching the two above - a storage
+    // texture nothing ever reads has no use here.
+    StorageShaderResource,
 };
 enum class ResourceState : u8 {
     Common,
@@ -35,7 +39,7 @@ enum class ResourceState : u8 {
     CopySrc,
     CopyDst,
     ShaderRead,
-    UnorderedAccess,
+    Storage,
 };
 
 enum class FilterMode : u8 { Point, Linear };

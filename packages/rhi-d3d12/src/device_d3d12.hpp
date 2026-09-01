@@ -163,6 +163,7 @@ public:
     void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) override;
     void set_shader_resource(u32 slot, ITexture& texture) override;
     void set_unordered_access(u32 slot, IBuffer& buffer) override;
+    void set_unordered_access(u32 slot, ITexture& texture) override;
     void set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) override;
     void draw(u32 vertex_count, u32 start_vertex) override;
     void draw_indexed(u32 index_count, u32 start_index, i32 base_vertex,
@@ -266,9 +267,12 @@ private:
     bool create_shader_heap();
     void bind_shader_srv(u32 slot, D3D12_CPU_DESCRIPTOR_HANDLE src, u32 table_root);
     void bind_compute_uav(u32 slot, ID3D12Resource* resource, usize size, u32 table_root);
+    void bind_compute_storage_texture(u32 slot, ID3D12Resource* resource, Format format,
+        u32 table_root);
     std::unique_ptr<ITexture> create_sampled_texture(const TextureDesc& desc, const void* data);
     std::unique_ptr<ITexture> create_shadow_texture(const TextureDesc& desc);
     std::unique_ptr<ITexture> create_color_shader_resource_texture(const TextureDesc& desc);
+    std::unique_ptr<ITexture> create_storage_shader_resource_texture(const TextureDesc& desc);
     void wait_for_copy();
     void begin_copy();
     UINT64 end_copy();

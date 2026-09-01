@@ -67,8 +67,9 @@ declines.
    write explicitly. Transients come from `create_transient`. Note the caps:
    4 reads and 4 writes per pass, and one color target. `PassKind` is
    `{Graphics, Copy, Compute}`; a compute pass is ordered, missing-producer
-   checked and cycle-checked like any other, but a write it declares is
-   ordering-only until RHI #9 puts UAV textures on the contract.
+   checked and cycle-checked like any other, and since RHI #9 it can write a
+   transient too — create it with `storage = true` and declare
+   `Access::StorageWrite`.
 5. **Record** → declare the recorder in `render_snapshot.hpp`, define it in
    `render_graph.cpp`.
 6. **Gate** → a `run_<name>_gate()` in
