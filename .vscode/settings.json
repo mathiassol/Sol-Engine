@@ -1,0 +1,29 @@
+{
+  // Shared workspace settings. Only three things belong here: turning the
+  // formatter off, pointing at the compile database, and hiding build output.
+  // Everything about *how* code is formatted lives in .editorconfig, which the
+  // format-hygiene invariant enforces — duplicating it here is how the two
+  // start disagreeing, which is the exact failure .clang-format already had.
+
+  // This tree is hand-formatted and no clang-format config describes it: 92 of
+  // 123 C++ files diverge from the closest one anyone could write. The root
+  // .clang-format is `DisableFormat: true` so the formatter is a verified no-op,
+  // and these settings stop the C/C++ extension reaching for one at all. Match
+  // the lines around what you touch, by hand — see
+  // .claude/rules/cpp-conventions.md.
+  "C_Cpp.formatting": "disabled",
+  "[cpp]": { "editor.formatOnSave": false },
+  "[c]": { "editor.formatOnSave": false },
+  "[hlsl]": { "editor.formatOnSave": false },
+
+  // The Visual Studio generator writes no compile_commands.json; the `ninja`
+  // preset does. Ignored unless you use clangd instead of the C/C++ extension.
+  "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build-ninja"],
+
+  "cmake.configureOnOpen": false,
+  "files.exclude": {
+    "**/build": true,
+    "**/build-ninja": true,
+    "**/build-off": true
+  }
+}

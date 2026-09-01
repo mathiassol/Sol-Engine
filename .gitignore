@@ -17,7 +17,13 @@ x64/
 
 # IDE / editor
 .idea/
-.vscode/
+# .vscode/* rather than .vscode/: git cannot re-include a file whose parent
+# directory is excluded, so the three shared files below would be unreachable.
+# Everything else in there stays personal.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
 .cursor/
 .cursor-tmp/
 *.swp

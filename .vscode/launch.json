@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  // Build first — `cmake --build --preset debug`, or the CMake Tools status
+  // bar. These launch what is already there rather than declaring a
+  // preLaunchTask, so a stale binary is visibly stale instead of silently
+  // rebuilt behind a debugger session.
+  //
+  // Paths follow the `vs2026` preset. On the `ninja` preset the binaries are
+  // under build-ninja/bin/Debug instead.
+  //
+  // cwd is the exe's own directory only because that is where a person would
+  // run it from; content mounts resolve next to the executable, so any cwd
+  // works.
+  "configurations": [
+    {
+      "name": "sandbox (Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/bin/Debug/sandbox.exe",
+      "cwd": "${workspaceFolder}/build/bin/Debug",
+      "args": [],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "sandbox --gates (Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/bin/Debug/sandbox.exe",
+      "cwd": "${workspaceFolder}/build/bin/Debug",
+      "args": ["--gates"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "sandbox --gates, D3D12 debug layer",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/bin/Debug/sandbox.exe",
+      "cwd": "${workspaceFolder}/build/bin/Debug",
+      "args": ["--gates"],
+      "console": "integratedTerminal",
+      // Any debug-layer message is a build-breaking bug, not a warning to skip.
+      "environment": [{ "name": "ENGINE_GPU_DEBUG", "value": "1" }]
+    },
+    {
+      "name": "game.exe --gates (Release)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/bin/Release/game.exe",
+      "cwd": "${workspaceFolder}/build/bin/Release",
+      "args": ["--gates"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

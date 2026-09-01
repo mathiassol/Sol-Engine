@@ -1,0 +1,15 @@
+{
+  // editorconfig is the load-bearing one: VS Code does not read .editorconfig
+  // natively, and .editorconfig is this project's formatting contract — the
+  // format-hygiene invariant fails a push that breaks it. Without the
+  // extension you get to find out in CI instead of on save.
+  //
+  // clangd is a reasonable alternative to ms-vscode.cpptools and settings.json
+  // already points it at build-ninja/compile_commands.json, but the two fight
+  // over IntelliSense, so it is not recommended alongside.
+  "recommendations": [
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools",
+    "editorconfig.editorconfig"
+  ]
+}
