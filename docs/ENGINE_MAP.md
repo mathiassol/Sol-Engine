@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-83 Done · 42 Ready · 97 Later · 60 Far.
+83 Done · 42 Ready · 98 Later · 60 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -68,7 +68,7 @@ Phases 0–14 are **Done**. Next work is any **Ready** row you choose.
 
 Core loop, memory, math, diagnostics. Mostly shipped.
 
-*9 done · 4 ready · 17 rows.*
+*9 done · 4 ready · 18 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -84,6 +84,7 @@ Core loop, memory, math, diagnostics. Mostly shipped.
 | 10 | Interned string ids (`StringId`) with a debug-only reverse table | **Ready** |  |
 | 11 | Versioned binary reader/writer primitives, shared by every cooked format | **Ready** |  |
 | 12 | Tracked allocators: tag every arena, report live bytes and leaks at shutdown | **Ready** |  |
+| 18 | MSVC `/fsanitize=address` over the full Windows gate run | Later | The Linux job sanitizes the ~37 CPU gates; this is the other 42, and the GPU code none of them touch. Needs incremental linking off and every module instrumented, including the DXC runtime that ships beside the exe. |
 | 17 | Cvar writer: persist chosen knobs back to `config.cfg` | **Ready** |  |
 | 13 | Per-thread scratch arenas (so a job can allocate without a lock) | Later | Jobs #2 pool. One worker needs no per-thread anything. |
 | 14 | Field descriptors for POD structs, so save/load and prefabs stop hand-writing both sides | Later | Foundation #11 binary primitives, then a second format that would duplicate the walk. |

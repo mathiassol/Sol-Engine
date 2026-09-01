@@ -1445,6 +1445,65 @@ still fullscreen triangles.
 
 ---
 
+## Stability — sanitizers, fuzzing, and a crash reporter (done)
+
+**Why:** All four of the 31 Aug audit's stability findings were already closed.
+What held the dimension was one paragraph: *"Where Sol is behind every
+reference: there is no sanitizer job, no fuzzing, and no crash reporter. Unity,
+Unreal and Godot all run ASan/UBSan or equivalent in CI. 71 hand-written
+assertions on one developer's GPU is a narrower net than any of them."* All
+three, closed.
+
+**Choice:** The Linux CI job compiled this tree and then stopped, so nothing had
+ever *executed* off Windows and a sanitizer job would have instrumented code
+that never ran. `--gates-cpu` runs the 37 gates `kGates` marks `Cpu`, before
+`create_platform()` — the branch below it is where a build with no platform
+gives up. A `std::filesystem` `IFileSystem` lives in the sandbox because it is
+scaffolding, not an engine capability.
+
+ASan and UBSan over that run, with `halt_on_error=1`: a sanitizer that reports
+and carries on turns a red build green. Neither found anything in 37 gates'
+worth of core, math, scene, physics-cpu, assets and the renderer's CPU maths —
+which is only worth saying because the job has been watched failing on an
+injected heap-buffer-overflow, named by file, line and function.
+
+The fuzz gate is a seeded mutation loop rather than libFuzzer: no framework, it
+runs everywhere the engine runs, a failure reproduces from its seed, and being
+CPU-only it goes through the sanitizer job for free. A counting `ILogger` makes
+"did this rejection say anything" an assertion, which is the hole the audit
+named as uncovered.
+
+The crash reporter needed a hook: `assert_fail` is in `core`,
+`MiniDumpWriteDump` is a Windows API, and dependencies only point downward. Both
+an access violation and a failed `ENGINE_ASSERT` now leave a dump beside the log
+— the assert path matters more, because there is no `NDEBUG` guard and 76 assert
+sites are live in Release.
+
+**Gate (met):** **79 (pass) / 0 FAIL** in Debug and Release, 37 headless, 16/16
+invariants. Every new check watched failing: the ASan job on a real overflow,
+the fuzz gate on a reject reverted to a bare `return false` (`scene=20`), the
+minidump gate on a stubbed `MiniDumpWriteDump`. And once by hand, outside any
+gate: a deliberate assert in a live session left `crash-assert.dmp`, 128,478
+bytes.
+
+Three things the first attempt got wrong, all caught by running rather than
+reasoning. The first headless run on Linux went red on a **build race** — a
+single-config generator puts `sandbox` and `game` in the same `bin/`, so their
+POST_BUILD content copies fought under `--parallel` — and on a **gate asserting
+a Windows-only escape vector**, where `C:/Windows` is an ordinary directory
+name and the engine was right. The fuzz gate's first version asserted pak at
+zero and failed against a correct engine, 239 of 3,058: a lookup miss is a
+question with a legitimate negative answer, not a refusal.
+
+**Do not (still):** do not suppress a sanitizer finding without a written
+reason. Do not let the fuzz gate become non-deterministic, and quote the seed
+when it finds something. Do not read the Linux sanitizer job as covering GPU
+code — none is compiled there. Do not install the crash handler under `--gates`.
+Do not treat a shipped dump as readable: that needs Build #18, symbol archiving,
+which this row unblocked and did not do.
+
+---
+
 ## After 14 — engine map (next, pick with a gate)
 
 Still one at a time. Still modular. Still `--gates`.
