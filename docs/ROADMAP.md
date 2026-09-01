@@ -1142,6 +1142,65 @@ per-channel files, async writing.
 
 ---
 
+## Developer setup — the formatter settled, and one build definition (done)
+
+**Why:** The 31 Aug audit's D1 said the tree did not conform to the
+`.clang-format` it ships and nothing checked it. That was closed by relabelling
+the config `DESCRIPTIVE, NOT ENFORCED` — but no editor reads comments. Visual
+Studio enables ClangFormat support by default and invokes `clang-format.exe`
+as you type whenever a `.clang-format` is present, and the VS Code C/C++
+extension does the same on save, so the failure the finding described was still
+live: one save could rewrite 92 of 123 C++ files across 1,961 sites. A research
+pass on 1 Sep also measured four things the audit said it had not looked at — a
+clean machine, timings, IDE integration, and CI beyond reading it — and found
+five more defects.
+
+**Choice:** `DisableFormat: true` at the root, which makes clang-format return
+its input unchanged and therefore disarms both IDEs, since they drive that same
+binary. Verified against clang-format 20.1.8 (the copy VS 18 ships) and 22.1.1,
+byte-identical over all 142 source files, with a control proving each binary
+still reformats when given an explicit style. The house style moved to
+`tools/house-style.clang-format`, deliberately not named `.clang-format` so
+nothing discovers it.
+
+A bulk reformat was rejected on measurement, not taste: across seven candidate
+configs, none describes this tree. The best still left 92 files and 1,945 sites
+divergent, and `AlignConsecutiveShortCaseStatements` — the option most likely to
+rescue the aligned `case` returns — moved 16 sites.
+
+What *is* enforceable is `.editorconfig`, which the tree already obeyed on five
+of six properties. 97 lines over the 100-column limit were wrapped by hand and
+`format-hygiene` now holds all six on every push. That is the CI formatting
+check Godot and bgfx have and D1's comparison said Sol lacked — over rules that
+are true here, rather than over a config that cannot describe the tree.
+
+`CMakePresets.json` replaces three configure commands that had already diverged.
+`vs2026` stays the documented default; `ci-build` sets no generator, preserving
+the reason the old CI comment gave. `ninja` is secondary and exists because
+`CMAKE_EXPORT_COMPILE_COMMANDS` had been set since the beginning and produced
+nothing — the VS generator ignores it, so clangd had no compile database.
+
+**Gate (met):** No gate — nothing here changes runtime behaviour, and the gate
+count stays at 74 in both configurations precisely because it should. The
+equivalent is invariant **#14, `format-hygiene`**, whose ten rules were each
+watched failing on an injected violation in a real tracked file before being
+trusted, then restored byte-for-byte. `tools/probe-formatter.ps1` re-proves the
+no-op on demand. Both build presets produce a `sandbox.exe` reporting 74
+`(pass)` / 0 `FAIL`; `build-ninja/compile_commands.json` has 147 entries. The
+`MAX_PATH` guard warns at 158 characters and is silent at 46 — its first version
+sat after `project()` and never printed, because the try-compile it warns about
+*is* `project()`'s compiler check, and its control test caught that.
+
+**Do not (still):** do not bulk-reformat, and do not add `clang-format` to CI —
+enforcing a config that cannot describe the tree is the trap, not the fix. Do
+not make the Ninja preset the documented default; it needs an MSVC environment
+the VS preset does not. Do not duplicate `.editorconfig`'s rules into
+`.vscode/settings.json` — two copies of a contract is how the first one went
+stale. Do not claim the 5.1 CI job covers the execution-policy failure: hosted
+runners are permissive and no CI job can reproduce it.
+
+---
+
 ## After 14 — engine map (next, pick with a gate)
 
 Still one at a time. Still modular. Still `--gates`.
