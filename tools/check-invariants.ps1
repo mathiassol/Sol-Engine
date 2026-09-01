@@ -622,9 +622,18 @@ if (Test-Path $registryPath) {
         }
     }
 
+    # Distinguish real reports from placeholders. "6/6 metric pages" reads as
+    # complete when five of them may be 80-word stubs carrying only a grade -
+    # a valid state since /analizeMax stopped generating them, but not the same
+    # thing, and the summary line is what anyone actually reads.
     $published = @($urls).Count
-    $metricFiles = @(Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue).Count
-    $analysisSummary = "registry valid, $published/9 published, $metricFiles/6 metric pages"
+    $reportCount = 0
+    $emptyCount = 0
+    foreach ($mf2 in Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue) {
+        $st2 = ([regex]::Match((Get-Content -LiteralPath $mf2.FullName -Raw), '(?m)^state:\s*(\S+)\s*$')).Groups[1].Value
+        if ($st2 -eq 'report') { $reportCount++ } elseif ($st2 -eq 'empty') { $emptyCount++ }
+    }
+    $analysisSummary = "registry valid, $published/9 published, $reportCount report + $emptyCount placeholder"
 }
 Add-Result 'analysis-set' $analysisSummary $analysisViolations
 
