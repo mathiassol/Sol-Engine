@@ -448,6 +448,63 @@ git push origin main
 
 ---
 
+### Task 2, as implemented — two corrections to the steps above
+
+Recorded rather than rewritten, so the difference between what was planned and
+what shipped stays visible.
+
+**The append pattern in Steps 5, 6 and 8 was wrong, and would have leaked.**
+`main.cpp` has a shader hot-reload path whose old code was
+`demo.pipeline = std::move(pipeline)` — a `unique_ptr` assignment, which *freed*
+the superseded pipeline. Appending there retains every previously-live forward
+pipeline for the life of the process: one leaked D3D12 pipeline state object per
+shader save. No gate catches it — the async-compile gate reloads once, and the
+mesh-reload VRAM gate measures meshes, not PSOs.
+
+The shipped code routes every hand-over through one helper on `ForwardDemo`
+instead, so "`owned` holds exactly the live set" is one function's job and there
+is exactly one `owned.push_back` in the file:
+
+```cpp
+    void adopt(engine::rhi::IGraphicsPipeline* engine::renderer::FramePipelines::*field,
+        std::unique_ptr<engine::rhi::IGraphicsPipeline> p) {
+        engine::rhi::IGraphicsPipeline* const previous = pipelines.*field;
+        pipelines.*field = p.get();
+        if (previous != nullptr) {
+            for (auto& slot : owned) {
+                if (slot.get() == previous) {
+                    slot = std::move(p);
+                    return;
+                }
+            }
+        }
+        owned.push_back(std::move(p));
+    }
+```
+
+All four sites call it: forward creation, shadow creation, the fullscreen loop
+(`demo->adopt(entry.field, std::move(p))`), and hot reload.
+
+**The Step 9 grep was incomplete.** It anchored on the `demo->` / `demo.`
+receiver and so missed two genuine member accesses reached another way: the
+truthiness check on `state.forward->pipeline` inside the `on_extract` lambda, and
+the hot-reload assignment. Use a receiver-agnostic search instead:
+
+```bash
+grep -n "\bpipeline\b\|[a-z_]*_pipeline\b" packages/sandbox/src/main.cpp
+```
+
+then filter out `create_graphics_pipeline`, `IGraphicsPipeline`,
+`make_*_pipeline_desc`, `DrawItem::pipeline`, `DrawBatch::pipeline`,
+`snapshot.*_pipeline` (a `RenderSnapshot` field, not `ForwardDemo`) and the two
+gate parameters.
+
+**Verified load-bearing, not vacuous.** Deleting one creation row gives
+`Pipeline set gate: present=12/13 missing=smaa_weights (FAIL)` and exit 1. Worth
+doing once when adding a gate of this kind.
+
+---
+
 ## Task 3: Collapse the three copy blocks
 
 **Files:**
