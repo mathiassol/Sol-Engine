@@ -99,6 +99,42 @@ jobs:
       # Run the gates locally before pushing, or on a self-hosted runner with
       # a real GPU.
 
+  # ── The portability claim, compiled rather than asserted. ────────────────
+  # ARCHITECTURE.md says only the backend packages touch a platform API, and a
+  # source scan agrees: 7 of 142 files, every one inside its own package. This
+  # job is the difference between that being true of the *text* and true of the
+  # *compiler* — gcc, no Windows headers, no MSVC.
+  #
+  # What it proves: core, math, the interface packages, renderer, scene,
+  # gameplay, engine and the shared app sources all compile off Windows.
+  #
+  # What it does not: nothing runs. There is no platform backend and no RHI in
+  # this configuration, so the binary logs "No GPU backend compiled in" and
+  # exits 1 by design. A green job here is a statement about the code, not about
+  # Linux support — Build #17 (non-Windows packaging) is a separate row and is
+  # blocked on Platform #9.
+  linux:
+    name: Compile without Windows (gcc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          g++ --version
+
+      # No preset: every preset in CMakePresets.json is a Windows one, and
+      # inventing a Linux preset would imply a supported configuration this row
+      # does not deliver. Both options are off because their packages are
+      # Windows-only anyway; naming them makes the intent explicit rather than
+      # relying on the `AND WIN32` in the root CMakeLists.
+      - name: Configure
+        run: cmake -B build-linux -DENGINE_RHI_D3D12=OFF -DENGINE_PLATFORM_WIN32=OFF
+
+      - name: Build
+        run: cmake --build build-linux --parallel
+
   # ── The modularity claim, kept honest. ───────────────────────────────────
   # Every one of these switches is documented in README.md's CMake options
   # table. Before this job existed, -DENGINE_RHI_D3D12=OFF failed at generate

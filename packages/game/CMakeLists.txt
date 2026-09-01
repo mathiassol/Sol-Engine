@@ -7,7 +7,11 @@ install(TARGETS game RUNTIME DESTINATION .)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/sandbox/content/" DESTINATION content)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/packages/debug-draw/content/" DESTINATION debug)
 
-if(ENGINE_RHI_D3D12)
+# The TARGET, not the option. ENGINE_RHI_D3D12 defaults ON on every platform,
+# but packages/rhi-d3d12 is added only under if(ENGINE_RHI_D3D12 AND WIN32) -
+# so off Windows the option was on, engine_locate_dxc() found nothing, and the
+# FATAL_ERROR below killed configure before anything else was reached.
+if(TARGET engine::rhi-d3d12)
     include(EngineDxc)
     engine_locate_dxc()
     if(NOT ENGINE_DXC_BIN_DIR)

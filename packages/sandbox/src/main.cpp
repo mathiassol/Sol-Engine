@@ -29,7 +29,6 @@
 #include <engine/assets/gpu/mesh_upload.hpp>
 #include <engine/assets/obj/mesh_loader_obj.hpp>
 #include <engine/assets/gltf/mesh_loader_gltf.hpp>
-#include <engine/assets/png/image_loader_png.hpp>
 #include <engine/assets/cooked.hpp>
 #include <engine/assets/pak.hpp>
 #include <engine/assets/image.hpp>
@@ -53,8 +52,6 @@
 #include <engine/debug/debug_lines.hpp>
 #include <engine/debug/frame_stats.hpp>
 #include <engine/debug/stats_overlay.hpp>
-#include <engine/shaders/dxc/shader_compiler_dxc.hpp>
-#include <engine/shaders/dxc/shader_hot_reload_dxc.hpp>
 #include <engine/shaders/shader_hot_reload.hpp>
 
 #include "world_extract.hpp"
@@ -73,6 +70,14 @@
 
 #ifdef ENGINE_HAS_D3D12
 #include <engine/rhi/d3d12/rhi_d3d12.hpp>
+// shaders-dxc is added under the same if(ENGINE_RHI_D3D12 AND WIN32) as
+// rhi-d3d12, so one guard covers both.
+#include <engine/shaders/dxc/shader_compiler_dxc.hpp>
+#include <engine/shaders/dxc/shader_hot_reload_dxc.hpp>
+#endif
+
+#ifdef ENGINE_HAS_PNG
+#include <engine/assets/png/image_loader_png.hpp>
 #endif
 
 #include <algorithm>
@@ -4748,9 +4753,17 @@ bool load_albedo_texture(engine::assets::IAssetLoader& loader, engine::rhi::IDev
             std::string("Failed to load albedo PNG bytes: ") + std::string(virtual_path));
         return false;
     }
+#ifdef ENGINE_HAS_PNG
     if (!engine::assets::png::load_png_bytes(png_bytes, image)) {
         return false;
     }
+#else
+    // No PNG decoder compiled in. Refuse rather than upload an empty texture:
+    // a black albedo looks like a lighting bug and costs an afternoon to trace.
+    engine::log(engine::LogLevel::Error, engine::LogChannel::Assets,
+        "No PNG decoder compiled in - cannot load albedo textures");
+    return false;
+#endif
     engine::rhi::TextureDesc albedo_desc{};
     albedo_desc.width = image.width;
     albedo_desc.height = image.height;
@@ -5541,11 +5554,16 @@ bool setup_forward_demo(engine::Engine& app, engine::assets::IAssetLoader& loade
 
     demo->shader_sources.vertex = vs_desc;
     demo->shader_sources.pixel  = ps_desc;
+#ifdef ENGINE_HAS_D3D12
     demo->shader_watcher = engine::shaders::dxc::create_hot_reloader();
     demo->shader_watcher->begin_watch(demo->shader_sources);
     if (!run_async_compile_gate(*demo->shader_watcher) && fail_on_gate) {
         return false;
     }
+#endif
+    // Left null without a backend. poll_shader_reload already returns early on
+    // a null watcher, so hot reload simply does not happen - it is a dev
+    // convenience, not something the demo needs to stand up.
 
     state.forward = std::move(demo);
     engine::log(engine::LogLevel::Info, engine::LogChannel::Render,
@@ -5908,6 +5926,7 @@ int run_app(int argc, char** argv) {
         gates_ok = false;
     }
 
+#ifdef ENGINE_HAS_D3D12
     const auto cache_dir
         = (std::filesystem::path(app.content_root()) / ".cache" / "shaders").string();
     auto compiler = engine::shaders::dxc::create_cached_compiler(cache_dir);
@@ -5946,6 +5965,18 @@ int run_app(int argc, char** argv) {
             "Render graph setup failed — running without rendering");
         gates_ok = false;
     }
+#else
+    // Built without a GPU backend: -DENGINE_RHI_D3D12=OFF, or any non-Windows
+    // configure, where packages/rhi-d3d12 and packages/shaders-dxc are both
+    // absent. Everything from the shader compiler down needs one, so there is
+    // nothing honest left to do. Same shape as the missing-platform branch in
+    // main() - say so and stop, rather than report a gate failure for what is a
+    // deliberate build configuration.
+    (void)loader;
+    engine::log(engine::LogLevel::Fatal, engine::LogChannel::Render,
+        "No GPU backend compiled in - configure with ENGINE_RHI_D3D12=ON on Windows");
+    return 1;
+#endif
 
     // After setup_render_graph: this one executes the real compiled graph, so it
     // has to run once the graph exists and the demo owns real resources.

@@ -35,11 +35,9 @@ function(engine_add_runtime_app TARGET)
 
     # packages/assets-png-wic is added only under if(WIN32), so an unconditional
     # link here made `cmake -B build` fail at generate time on Linux and macOS.
-    # No ENGINE_HAS_* definition to match the backends below: nothing gates on
-    # one for PNG yet, and the sandbox's include of the loader is still
-    # unconditional, so a define here would have no consumer.
     if(TARGET engine::assets-png-wic)
         target_link_libraries(${TARGET} PRIVATE engine::assets-png-wic)
+        target_compile_definitions(${TARGET} PRIVATE ENGINE_HAS_PNG)
     endif()
 
     if(TARGET engine::audio-xaudio2)
@@ -75,7 +73,13 @@ function(engine_add_runtime_app TARGET)
 
     if(APP_INSTALL_LAYOUT)
         target_compile_definitions(${TARGET} PRIVATE ENGINE_GAME_APP)
-        install(FILES "${CMAKE_BINARY_DIR}/cooked/content.pak" DESTINATION .)
+        # Guarded like the copy rule below it. packages/cook is inside if(WIN32)
+        # because it links assets-png-wic (WIC), so off Windows nothing produces
+        # this file and an unconditional rule fails at `cmake --install` - later
+        # than configure, and therefore quieter.
+        if(TARGET content-pak)
+            install(FILES "${CMAKE_BINARY_DIR}/cooked/content.pak" DESTINATION .)
+        endif()
     endif()
 
     if(TARGET content-pak)
