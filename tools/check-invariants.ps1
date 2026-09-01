@@ -827,6 +827,91 @@ Add-Result 'format-hygiene' `
     ("$($fmtSources.Count) sources, $($fmtMarkdown.Count) markdown, $($fmtShell.Count) shell " +
      'match .editorconfig; .clang-format still a no-op') $fmtViolations
 
+# ── 15. Every gate is declared and classified ────────────────────────────────
+# A gate that exists but is in no sequence runs nowhere and says nothing - the
+# same silent-absence failure the FramePipelines static_assert was added to stop
+# (analizeMax A1), one layer up and in the one place a static_assert cannot
+# reach. Three things have to agree: the definitions in gates/gates_*.cpp, the
+# declarations in gates/gates.hpp, and the kGates table in gate_registry.cpp
+# that classifies each one Cpu or Gpu.
+#
+# Source-only, so it runs in CI with no compiler and no GPU.
+$gateViolations = @()
+$gateDir = 'packages/sandbox/src/gates'
+$gateSummary = 'gates/ not present'
+
+if (Test-Path $gateDir) {
+    $defined = @{}
+    foreach ($f in Get-ChildItem $gateDir -File -Filter 'gates_*.cpp') {
+        $lineNo = 0
+        foreach ($line in Get-Content -LiteralPath $f.FullName) {
+            $lineNo++
+            if ($line -match '^(?:\[\[maybe_unused\]\] )?bool (run_\w+_gate)\(') {
+                $name = $Matches[1]
+                if ($defined.ContainsKey($name)) {
+                    $gateViolations += "$($f.Name):${lineNo}: $name is defined twice"
+                }
+                $defined[$name] = "$($f.Name):$lineNo"
+            }
+        }
+    }
+
+    $header = Get-Content -LiteralPath (Join-Path $gateDir 'gates.hpp') -Raw
+    $declared = @{}
+    foreach ($m in [regex]::Matches($header, 'bool (run_\w+_gate)\(')) {
+        $declared[$m.Groups[1].Value] = $true
+    }
+
+    $registry = Get-Content -LiteralPath (Join-Path $gateDir 'gate_registry.cpp') -Raw
+    $classified = @{}
+    foreach ($m in [regex]::Matches($registry, '\{"(run_\w+_gate)",\s*GateKind::(Cpu|Gpu)')) {
+        $n = $m.Groups[1].Value
+        if ($classified.ContainsKey($n)) {
+            $gateViolations += "gate_registry.cpp: $n appears in kGates twice"
+        }
+        $classified[$n] = $m.Groups[2].Value
+    }
+
+    foreach ($name in $defined.Keys) {
+        if (-not $declared.ContainsKey($name)) {
+            $gateViolations += ("$($defined[$name]): $name is defined but not declared in " +
+                "gates.hpp - main.cpp cannot call it")
+        }
+        if (-not $classified.ContainsKey($name)) {
+            $gateViolations += ("$($defined[$name]): $name is not in kGates - add it to " +
+                "gate_registry.cpp as Cpu or Gpu, or it runs in no sequence")
+        }
+    }
+    foreach ($name in $declared.Keys) {
+        if (-not $defined.ContainsKey($name)) {
+            $gateViolations += "gates.hpp: $name is declared but no gates_*.cpp defines it"
+        }
+    }
+    foreach ($name in $classified.Keys) {
+        if (-not $defined.ContainsKey($name)) {
+            $gateViolations += "gate_registry.cpp: kGates names $name, which no gates_*.cpp defines"
+        }
+    }
+
+    # A Cpu entry must carry a function; a Gpu entry must not. The header says
+    # the same thing and run_cpu_gates asserts it, but at runtime and only on the
+    # entries a headless run reaches.
+    foreach ($m in [regex]::Matches($registry,
+            '\{"(run_\w+_gate)",\s*GateKind::Gpu,\s*([^\}]*?)\}')) {
+        if ($m.Groups[2].Value.Trim() -ne 'nullptr') {
+            $gateViolations += "gate_registry.cpp: $($m.Groups[1].Value) is Gpu but carries a function"
+        }
+    }
+    foreach ($m in [regex]::Matches($registry, '\{"(run_\w+_gate)",\s*GateKind::Cpu,\s*nullptr')) {
+        $gateViolations += "gate_registry.cpp: $($m.Groups[1].Value) is Cpu but carries nullptr"
+    }
+
+    $cpu = @($classified.Values | Where-Object { $_ -eq 'Cpu' }).Count
+    $gateSummary = "$($defined.Count) gates, all declared and classified ($cpu Cpu, $($defined.Count - $cpu) Gpu)"
+}
+
+Add-Result 'gate-registry' $gateSummary $gateViolations
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 
