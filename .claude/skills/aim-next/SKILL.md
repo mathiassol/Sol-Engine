@@ -1,6 +1,6 @@
 ---
 name: aim-next
-description: Work out what to do next and suggest three genuinely different directions, with the evidence for each. One `aim whatnow` call supplies audit staleness, the Ready rows ranked by how much they unblock, and the dependency graph's verdict; this skill adds the local state a server cannot see — uncommitted work, invariants, whether the gate binary is stale — and does the judgement. Cheap, fast, and it suggests without starting anything.
+description: Work out what to do next and suggest three genuinely different directions, with the evidence for each. One `aim whatnow` call supplies audit staleness, the open findings with their severity and whether any check covers them, the Ready rows ranked by how much they unblock, and the dependency graph's verdict; this skill adds the local state a server cannot see — uncommitted work, invariants, whether the gate binary is stale — and does the judgement. Cheap, fast, and it suggests without starting anything.
 when_to_use: The user is deciding where to spend time and wants a read on the whole system. Trigger phrases include "what now", "what should I work on", "what's next", "where should I spend today", "give me options", "I don't know what to do". Not an audit — that is /aim-audit. Not a single row — that is /aim-row.
 argument-hint: "[optional: an area to bias toward, e.g. rendering, tooling, stability]"
 disallowed-tools: Write Edit NotebookEdit Artifact
@@ -24,14 +24,28 @@ expensive one. This answers in about a minute.
 pwsh -NoProfile -File tools/aim.ps1 whatnow
 ```
 
-One call returns three things that used to be reconstructed by hand every
-session, and it is the reason this skill is short:
+One call returns everything that used to be reconstructed by hand every session,
+and it is the reason this skill is short:
 
 - **the newest audit**, its grades, and **how stale it is** against `HEAD` —
   computed from the audit's `commit_sha`, so it is never a guess
+- **`open_findings`** — every finding from that audit with its `code`,
+  `severity`, and **`covered_by_check`**. Read these. They are the audit's most
+  actionable output and the cheapest evidence in the whole payload
 - **the Ready rows ranked by `unblocks`** — the count of rows that
-  *transitively* wait on each one, plus how many unblock nothing at all
-- **the graph's verdict** — cycles, stale blockers, dangling references
+  *transitively* wait on each one, plus `ready_unblocking_nothing`, which is
+  usually over half of them
+- **the graph's verdict** — cycles, stale blockers, dangling refs, plus
+  `available_but_blocked` (a Ready row that still names a blocker) and
+  `later_without_reason` (a Later row naming neither a row nor a wall). Both are
+  contradictions in the backlog rather than work, and worth one line if non-empty
+- **`the_bar`** — the project's own standard. Judge against that, not against
+  what is reasonable for its size
+
+**A caution on `open_findings`: "open" means "present in the newest audit", not
+"still true".** Nothing marks a finding fixed, so one you closed an hour after
+the audit still appears here. Check anything you are about to lead with against
+the tree before repeating it.
 
 Take those numbers as given. Do not re-derive leverage with `grep`: the ad-hoc
 version of that count read anti-dependency disclaimers as edges and reported two
@@ -110,6 +124,12 @@ forty.
 - **Choking** — it blocks more work than anything else, **by the `unblocks`
   count from Step 1**, not by impression.
 
+`open_findings` is evidence for this test, never a verdict on it. A `critical`
+finding, or a `high` one with `covered_by_check: false`, is the strongest
+candidate the payload offers — a serious problem that nothing would catch is
+exactly the **Wrong** case. But confirm it against the tree first: the audit may
+be many commits old, and the fix may have landed. A finding alone is not urgency.
+
 **At most one item per run may be called urgent. Usually none is.** If two feel
 urgent you have not finished deciding: rank them and name the first. "Nothing is
 urgent, here are three good directions" is the normal, correct answer and should
@@ -120,6 +140,8 @@ be said without hedging.
 - **Absence is not urgency.** A missing feature is a roadmap row, however large
   the hole. No text rendering is not an emergency; it is UI #2.
 - **A grade is not urgency.** C+ describes the tree; nothing is on fire.
+- **A finding count is not urgency.** Twenty findings is a normal audit, not
+  twenty fires. Severity and `covered_by_check` are what separate them.
 - **A Later or Far row is never urgent.** By definition something comes first.
 - **"Could become a problem"** is not urgency. Neither is "best practice" or
   "technical debt" with no named cost.
@@ -137,7 +159,7 @@ the user asked what to *consider*.
 | Kind | What it is |
 |------|-----------|
 | **Build** | Roadmap rows: one category, or a cluster across two sharing a foundation |
-| **Strengthen** | Make what exists harder to break: a ceiling, a silent failure, a missing gate |
+| **Strengthen** | Make what exists harder to break: a ceiling, a silent failure, a missing gate. **The `high` findings with `covered_by_check: false` are this list** — you do not have to invent it |
 | **Smooth** | Reduce friction: setup, CI, docs, AI tooling, repository hygiene |
 | **Decide** | An open judgement call blocking future work, where the deliverable is the decision |
 
