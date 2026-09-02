@@ -250,10 +250,21 @@ void VulkanCommandList::end_render_pass() {
 void VulkanCommandList::set_pipeline(IGraphicsPipeline& pipeline) {
     auto& vk_pipeline = static_cast<VulkanPipeline&>(pipeline);
     bound_pipeline_ = &vk_pipeline;
+    bound_stride_ = ~0u;
     if (device_.cmd() == VK_NULL_HANDLE) {
         return;
     }
-    vkCmdBindPipeline(device_.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline.handle());
+    // A pipeline with vertex attributes cannot be bound yet: which VkPipeline
+    // it is depends on the stride, and the stride arrives with
+    // set_vertex_buffer. One with no attributes has a single variant, so it
+    // binds now and a caller that never binds a vertex buffer still works.
+    if (vk_pipeline.attribute_count() == 0) {
+        const VkPipeline variant = vk_pipeline.variant(0);
+        if (variant != VK_NULL_HANDLE) {
+            vkCmdBindPipeline(device_.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, variant);
+            bound_stride_ = 0;
+        }
+    }
 }
 
 void VulkanCommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
@@ -267,7 +278,7 @@ void VulkanCommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize off
     // device submits and waits inside one frame; under real frames in flight
     // the pool has to be per-slot, which is the parity pass's problem and is
     // deliberately not pretended to be solved here.
-    VkDescriptorSetLayout layout = bound_pipeline_->set_layout();
+    VkDescriptorSetLayout layout = bound_pipeline_->set_layout(0);
     VkDescriptorSetAllocateInfo allocate{};
     allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocate.descriptorPool = device_.descriptor_pool();
@@ -338,9 +349,31 @@ void VulkanCommandList::set_viewport(u32 width, u32 height) {
 
 
 void VulkanCommandList::copy_texture(ITexture& src, ITexture& dst) {
-    (void)src;
-    (void)dst;
-    not_implemented("copy_texture");
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    auto& vk_src = static_cast<VulkanTexture&>(src);
+    auto& vk_dst = static_cast<VulkanTexture&>(dst);
+    // The same asserts the D3D12 side makes. A mismatched copy there is a
+    // debug-layer error; here it is a validation error - either way the caller
+    // asked for something that cannot mean anything.
+    ENGINE_ASSERT(vk_src.width() == vk_dst.width());
+    ENGINE_ASSERT(vk_src.height() == vk_dst.height());
+    ENGINE_ASSERT(vk_src.format() == vk_dst.format());
+    ENGINE_ASSERT(vk_src.array_size() == vk_dst.array_size());
+    ENGINE_ASSERT(vk_src.dimension() == vk_dst.dimension());
+
+    const VkImageAspectFlags aspect = aspect_of(vk_src.format());
+    VkImageCopy region{};
+    region.srcSubresource.aspectMask = aspect;
+    region.srcSubresource.layerCount = vk_src.array_size();
+    region.dstSubresource.aspectMask = aspect;
+    region.dstSubresource.layerCount = vk_dst.array_size();
+    region.extent = {vk_src.width(), vk_src.height(), 1};
+    // The caller owns the states, as it does on the other backend: CopySrc and
+    // CopyDst are what ResourceState says, and the layouts follow from them.
+    vkCmdCopyImage(device_.cmd(), vk_src.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vk_dst.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
 
 
@@ -353,17 +386,37 @@ void VulkanCommandList::set_compute_pipeline(IComputePipeline& pipeline) {
 
 void VulkanCommandList::set_vertex_buffer(
     u32 slot, IBuffer& buffer, u32 stride_bytes, usize offset_bytes) {
-    (void)slot;
-    (void)buffer;
-    (void)stride_bytes;
-    (void)offset_bytes;
-    not_implemented("set_vertex_buffer");
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+    // Where the stride difference is absorbed. Vulkan bakes the stride into the
+    // pipeline and the contract supplies it here, so this is the first moment
+    // the right VkPipeline is knowable - see the note at the top of
+    // pipeline_vulkan.cpp for why it cannot live on the desc.
+    if (bound_pipeline_ != nullptr && stride_bytes != bound_stride_) {
+        const VkPipeline variant = bound_pipeline_->variant(stride_bytes);
+        if (variant == VK_NULL_HANDLE) {
+            return;
+        }
+        vkCmdBindPipeline(device_.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, variant);
+        bound_stride_ = stride_bytes;
+    }
+    const VkBuffer handle = vk_buffer.handle();
+    const VkDeviceSize offset = offset_bytes;
+    vkCmdBindVertexBuffers(device_.cmd(), slot, 1, &handle, &offset);
 }
 
 void VulkanCommandList::set_index_buffer(IBuffer& buffer, usize offset_bytes) {
-    (void)buffer;
-    (void)offset_bytes;
-    not_implemented("set_index_buffer");
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+    // UINT32 always. The contract says indices are 32-bit unsigned and has no
+    // format parameter; UINT16 here would draw nothing rather than fail, which
+    // is what the comment on set_index_buffer exists to prevent.
+    vkCmdBindIndexBuffer(device_.cmd(), vk_buffer.handle(), offset_bytes,
+        VK_INDEX_TYPE_UINT32);
 }
 
 
@@ -395,11 +448,14 @@ void VulkanCommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize o
 
 void VulkanCommandList::draw_indexed(
     u32 index_count, u32 start_index, i32 base_vertex, u32 instance_count) {
-    (void)index_count;
-    (void)start_index;
-    (void)base_vertex;
-    (void)instance_count;
-    not_implemented("draw_indexed");
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    // firstInstance is 0, deliberately and permanently. The contract has no
+    // start_instance because D3D excludes it from SV_InstanceID while Vulkan
+    // includes it in gl_InstanceIndex - so the same shader would read different
+    // data on each backend. A batch base offset goes in a constant buffer.
+    vkCmdDrawIndexed(device_.cmd(), index_count, instance_count, start_index, base_vertex, 0);
 }
 
 void VulkanCommandList::dispatch(u32 group_count_x, u32 group_count_y, u32 group_count_z) {

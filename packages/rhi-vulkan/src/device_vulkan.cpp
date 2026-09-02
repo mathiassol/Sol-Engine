@@ -1,5 +1,6 @@
 #include "device_vulkan.hpp"
 
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -56,23 +57,41 @@ VulkanTexture::~VulkanTexture() {
     }
 }
 
-VulkanPipeline::VulkanPipeline(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout,
-    VkDescriptorSetLayout set_layout, u32 uniform_count)
-    : device_(device), pipeline_(pipeline), layout_(layout), set_layout_(set_layout),
-      uniform_count_(uniform_count) {}
+VulkanPipeline::VulkanPipeline(VkDevice device, const PipelineRecipe& recipe,
+    VkDescriptorSetLayout set0, VkDescriptorSetLayout set1, std::vector<VkSampler> samplers,
+    u32 uniform_count, u32 storage_buffer_count)
+    : device_(device), recipe_(recipe), set0_(set0), set1_(set1),
+      samplers_(std::move(samplers)), uniform_count_(uniform_count),
+      storage_buffer_count_(storage_buffer_count) {}
 
 VulkanPipeline::~VulkanPipeline() {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
-    if (pipeline_ != VK_NULL_HANDLE) {
-        vkDestroyPipeline(device_, pipeline_, nullptr);
+    for (const auto& [stride, pipeline] : variants_) {
+        (void)stride;
+        vkDestroyPipeline(device_, pipeline, nullptr);
     }
-    if (layout_ != VK_NULL_HANDLE) {
-        vkDestroyPipelineLayout(device_, layout_, nullptr);
+    // Held for the pipeline's lifetime rather than freed after creation,
+    // because a stride variant created later needs them.
+    if (recipe_.vertex != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, recipe_.vertex, nullptr);
     }
-    if (set_layout_ != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(device_, set_layout_, nullptr);
+    if (recipe_.fragment != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, recipe_.fragment, nullptr);
+    }
+    if (recipe_.layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, recipe_.layout, nullptr);
+    }
+    if (set1_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, set1_, nullptr);
+    }
+    if (set0_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, set0_, nullptr);
+    }
+    // Immutable samplers outlive the set layout that referenced them.
+    for (VkSampler sampler : samplers_) {
+        vkDestroySampler(device_, sampler, nullptr);
     }
 }
 
@@ -349,10 +368,17 @@ std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, con
         host_visible = true;
         break;
     case BufferUsage::Vertex:
+        usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        break;
     case BufferUsage::Index:
+        usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        break;
     case BufferUsage::Storage:
-        not_implemented("create_buffer(Vertex/Index/Storage)");
-        return nullptr;
+        // A StructuredBuffer is a storage buffer in SPIR-V, and the engine also
+        // reads one back through copy_buffer, hence TRANSFER_SRC.
+        usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+            | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        break;
     }
 
     VkBufferCreateInfo buffer_info{};
@@ -404,8 +430,14 @@ std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, con
         vkDestroyBuffer(device_, buffer, nullptr);
         return nullptr;
     }
-    if (data != nullptr && mapped != nullptr) {
-        std::memcpy(mapped, data, desc.size);
+    if (data != nullptr) {
+        if (mapped != nullptr) {
+            std::memcpy(mapped, data, desc.size);
+        } else if (!upload_to_buffer(buffer, data, desc.size)) {
+            vkFreeMemory(device_, memory, nullptr);
+            vkDestroyBuffer(device_, buffer, nullptr);
+            return nullptr;
+        }
     }
 
     return std::make_unique<VulkanBuffer>(device_, buffer, memory, desc.size, mapped);
@@ -596,6 +628,89 @@ bool VulkanDevice::read_texture(ITexture& texture, void* out, usize size) {
 
     std::memcpy(out, vk_staging.mapped(), size);
     return true;
+}
+
+// A host-visible buffer, a copy, a submit and a wait. Freed only after the
+// wait, which is the whole reason this blocks: the D3D12 path can hand its
+// staging resource to a fence-keyed retirement list because a released
+// D3D12 resource stays alive until the fence passes, and vkFreeMemory has no
+// such courtesy.
+bool VulkanDevice::stage_and_submit(
+    const void* data, usize size, const std::function<void(VkCommandBuffer, VkBuffer)>& record) {
+    if (device_ == VK_NULL_HANDLE || data == nullptr || size == 0) {
+        return false;
+    }
+
+    VkBufferCreateInfo staging_info{};
+    staging_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    staging_info.size = size;
+    staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBuffer staging = VK_NULL_HANDLE;
+    if (vk_failed(vkCreateBuffer(device_, &staging_info, nullptr, &staging), "staging buffer")) {
+        return false;
+    }
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device_, staging, &requirements);
+    const u32 type = find_memory_type(state_.gpu, requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    bool ok = type != ~0u;
+    if (ok) {
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = type;
+        ok = !vk_failed(vkAllocateMemory(device_, &allocate, nullptr, &memory),
+            "staging allocation");
+    }
+    if (ok) {
+        ok = !vk_failed(vkBindBufferMemory(device_, staging, memory, 0), "staging bind");
+    }
+    void* mapped = nullptr;
+    if (ok) {
+        ok = !vk_failed(vkMapMemory(device_, memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+            "staging map");
+    }
+    if (ok) {
+        std::memcpy(mapped, data, size);
+        vkUnmapMemory(device_, memory);
+
+        vkResetCommandBuffer(cmd_buffer_, 0);
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        ok = !vk_failed(vkBeginCommandBuffer(cmd_buffer_, &begin), "upload begin");
+        if (ok) {
+            record(cmd_buffer_, staging);
+            ok = !vk_failed(vkEndCommandBuffer(cmd_buffer_), "upload end");
+        }
+        if (ok) {
+            vkResetFences(device_, 1, &fence_);
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &cmd_buffer_;
+            ok = !vk_failed(vkQueueSubmit(queue_, 1, &submit, fence_), "upload submit");
+        }
+        if (ok) {
+            vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX);
+        }
+    }
+
+    if (memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, memory, nullptr);
+    }
+    vkDestroyBuffer(device_, staging, nullptr);
+    return ok;
+}
+
+bool VulkanDevice::upload_to_buffer(VkBuffer dest, const void* data, usize size) {
+    return stage_and_submit(data, size, [&](VkCommandBuffer cmd, VkBuffer staging) {
+        VkBufferCopy region{};
+        region.size = size;
+        vkCmdCopyBuffer(cmd, staging, dest, 1, &region);
+    });
 }
 
 void VulkanDevice::set_debug_name(IBuffer& buffer, std::string_view name) {

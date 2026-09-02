@@ -55,6 +55,14 @@ public:
     virtual void set_compute_pipeline(IComputePipeline& pipeline) = 0;
     virtual void set_vertex_buffer(u32 slot, IBuffer& buffer, u32 stride_bytes,
         usize offset_bytes = 0) = 0;
+    // Indices are **32-bit unsigned**, always. There is no index-format
+    // parameter and no plan for one: `assets::MeshData::indices` is u32, so
+    // nothing in the engine produces anything else.
+    //
+    // Written down because it was implicit. A 16-bit index buffer draws
+    // nothing rather than failing - both backends read the memory as u32 and
+    // get garbage indices - and a second backend author picking a 16-bit index
+    // type would produce exactly that silence.
     virtual void set_index_buffer(IBuffer& buffer, usize offset_bytes = 0) = 0;
     virtual void set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes = 0) = 0;
     virtual void set_shader_resource(u32 slot, ITexture& texture) = 0;

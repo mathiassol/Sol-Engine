@@ -6,8 +6,10 @@
 #include <engine/rhi/device.hpp>
 #include <engine/rhi/rhi.hpp>
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::rhi::vulkan {
@@ -133,27 +135,65 @@ private:
     TextureDesc desc_{};
 };
 
+// Everything needed to create a VkPipeline *except* the vertex stride, which
+// Vulkan bakes in and the contract supplies at bind time. Kept so a variant can
+// be built for whatever stride first arrives - see the note at the top of
+// pipeline_vulkan.cpp.
+//
+// The shader modules live here for the pipeline's whole lifetime rather than
+// being destroyed straight after creation, because a later variant needs them.
+struct PipelineRecipe {
+    VkShaderModule vertex = VK_NULL_HANDLE;
+    VkShaderModule fragment = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkVertexInputAttributeDescription attributes[GraphicsPipelineDesc::kMaxAttributes]{};
+    u32 attribute_count = 0;
+    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkCullModeFlags cull = VK_CULL_MODE_NONE;
+    bool blend_alpha = false;
+    bool depth_test = false;
+    bool depth_write = false;
+    VkCompareOp depth_compare = VK_COMPARE_OP_ALWAYS;
+    f32 depth_bias = 0.f;
+    u32 sample_count = 1;
+    VkFormat color_format = VK_FORMAT_UNDEFINED;
+    VkFormat depth_format = VK_FORMAT_UNDEFINED;
+};
+
 class VulkanPipeline final : public IGraphicsPipeline {
 public:
-    VulkanPipeline(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout,
-        VkDescriptorSetLayout set_layout, u32 uniform_count);
+    VulkanPipeline(VkDevice device, const PipelineRecipe& recipe, VkDescriptorSetLayout set0,
+        VkDescriptorSetLayout set1, std::vector<VkSampler> samplers, u32 uniform_count,
+        u32 storage_buffer_count);
     ~VulkanPipeline() override;
 
     VulkanPipeline(const VulkanPipeline&) = delete;
     VulkanPipeline& operator=(const VulkanPipeline&) = delete;
 
-    VkPipeline handle() const { return pipeline_; }
-    VkPipelineLayout layout() const { return layout_; }
-    VkDescriptorSetLayout set_layout() const { return set_layout_; }
+    // The pipeline for this vertex stride, created on first use and cached. In
+    // this engine that is two or three for a whole run.
+    VkPipeline variant(u32 stride);
+
+    VkPipelineLayout layout() const { return recipe_.layout; }
+    VkDescriptorSetLayout set_layout(u32 set) const { return set == 0 ? set0_ : set1_; }
     u32 uniform_count() const { return uniform_count_; }
+    u32 storage_buffer_count() const { return storage_buffer_count_; }
+    u32 attribute_count() const { return recipe_.attribute_count; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
-    VkPipeline pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout layout_ = VK_NULL_HANDLE;
-    VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
+    PipelineRecipe recipe_{};
+    VkDescriptorSetLayout set0_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set1_ = VK_NULL_HANDLE;
+    std::vector<VkSampler> samplers_;
+    std::unordered_map<u32, VkPipeline> variants_;
     u32 uniform_count_ = 0;
+    u32 storage_buffer_count_ = 0;
 };
+
+// The one place a SamplerDesc becomes a VkSampler. Used both for immutable
+// samplers baked into a set layout and for create_sampler's standalone objects.
+VkSampler create_vulkan_sampler(VkDevice device, const SamplerDesc& desc);
 
 // Both exist so the device's factory functions have something to return once
 // they are implemented. Neither carries state yet, and creating one reaches
@@ -203,6 +243,9 @@ private:
 
     VulkanDevice& device_;
     VulkanPipeline* bound_pipeline_ = nullptr;
+    // Which stride variant is currently bound, so set_vertex_buffer only
+    // rebinds when the stride actually changes. ~0u means none yet.
+    u32 bound_stride_ = ~0u;
     VulkanTexture* pass_color_ = nullptr;
     u32 event_depth_ = 0;
     std::string event_stack_[kMaxDebugEvents];
@@ -257,6 +300,17 @@ public:
     std::unique_ptr<IComputePipeline> create_compute_pipeline(
         const ComputePipelineDesc& desc) override;
     std::unique_ptr<ISampler> create_sampler(const SamplerDesc& desc) override;
+
+    // One-shot copy on the device's own command buffer, submitted and waited.
+    // The D3D12 side retires its staging buffer against a fence and returns
+    // immediately; this waits instead, because a Vulkan staging buffer freed
+    // while a copy is in flight is undefined rather than merely early - and an
+    // upload path that blocks is honest at creation time, which is the only
+    // time either backend uploads.
+    bool stage_and_submit(const void* data, usize size,
+        const std::function<void(VkCommandBuffer, VkBuffer)>& record);
+    bool upload_to_buffer(VkBuffer dest, const void* data, usize size);
+    bool upload_to_image(VkImage dest, const TextureDesc& desc, const void* data);
 
     // For the command list and the pipeline factory, which live in other
     // translation units.

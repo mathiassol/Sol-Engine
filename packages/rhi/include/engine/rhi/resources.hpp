@@ -184,6 +184,21 @@ struct GraphicsPipelineDesc {
 
     std::span<const u8> vertex_shader;
     std::span<const u8> pixel_shader;
+    // **The order of this array is significant.** It must match the
+    // declaration order of the shader's vertex input struct.
+    //
+    // One backend resolves attributes by semantic *name* out of the shader's
+    // input signature and does not care about the order; the other resolves
+    // them by *position*, because the bytecode carries a slot number assigned
+    // in declaration order and nothing else. So a reordering here is free on
+    // the first backend and reads the wrong data on the second - measured, by
+    // swapping two entries and watching one backend pass and the other return
+    // the wrong pixels.
+    //
+    // For the same reason every `semantic_index` must be 0: a second index on
+    // one semantic (TEXCOORD1) is its own slot, so array order stops
+    // corresponding to declaration order. A backend that resolves by position
+    // rejects a non-zero index by name rather than binding silently.
     VertexAttribute attributes[kMaxAttributes]{};
     u32 attribute_count = 0;
     u32 uniform_buffer_count = 0;

@@ -568,6 +568,8 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
 #endif
 
     std::string parity_path;
+    std::string mesh_path;
+    (void)resolve_content(loader, kParityMeshGateShader, mesh_path);
     engine::u32 d3d12_lit = 0;
     if (!resolve_content(loader, kBackendParityGateShader, parity_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
@@ -607,6 +609,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                        engine::shaders::ShaderTarget::Dxil, "d3d12", d3d12_lit)
             && fail_on_gate) {
             return false;
+        } else if (!mesh_path.empty()
+            && !run_parity_mesh_gate(*offscreen_device, compiler, mesh_path,
+                engine::shaders::ShaderTarget::Dxil, "d3d12")
+            && fail_on_gate) {
+            return false;
         }
     }
 #endif
@@ -629,6 +636,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                 "Backend parity gate [vulkan]: no Vulkan device (skip)");
         } else if (!run_backend_parity_gate(*vk_device, compiler, parity_path,
                        engine::shaders::ShaderTarget::Spirv, "vulkan", vulkan_lit)
+            && fail_on_gate) {
+            return false;
+        } else if (!mesh_path.empty()
+            && !run_parity_mesh_gate(*vk_device, compiler, mesh_path,
+                engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;
         }

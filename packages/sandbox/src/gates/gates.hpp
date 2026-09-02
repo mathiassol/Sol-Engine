@@ -168,6 +168,13 @@ bool run_vulkan_device_gate();
 // device - it needs a DLL that ships with a GPU SDK.
 bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
 
+// RHI #24: vertex input parity. An indexed quad whose per-vertex normal and uv
+// both reach the output, so a wrong attribute location is a wrong colour rather
+// than a missing triangle.
+bool run_parity_mesh_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api);
+
 // RHI #12: the same shader, the same asserted pixels, once per backend. Takes
 // the device and the shader target, so one function covers both - a per-backend
 // copy would be a place for the parity comparison to be wrong in the test

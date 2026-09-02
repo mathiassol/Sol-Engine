@@ -449,6 +449,167 @@ bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::strin
     return passed;
 }
 
+bool run_parity_mesh_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api) {
+    // Vertex input parity, one function against both devices - the same shape
+    // run_backend_parity_gate uses, and for the same reason: a divergence has
+    // to be a backend difference and cannot be a difference in the test.
+    //
+    // An indexed quad whose per-vertex data is *used*. The four probe texels
+    // land one per quadrant, and each channel answers a different question:
+    //   R, G  the uv reached the shader, and which way round it is
+    //   B     the normal reached the shader at all
+    // Swap the two attribute locations and the quadrants collapse to one
+    // colour; lose the index buffer and the probes read the clear colour.
+
+    constexpr engine::u32 kExtent = 64;
+
+    struct Vertex {
+        engine::f32 pos[3];
+        engine::f32 normal[3];
+        engine::f32 uv[2];
+    };
+    // Clip space directly, corner to corner, so there is no transform to be
+    // wrong about. Top-left, top-right, bottom-left, bottom-right.
+    static const Vertex kVertices[4] = {
+        {{-1.f, 1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f}},
+        {{1.f, 1.f, 0.f}, {0.f, 0.f, 1.f}, {1.f, 0.f}},
+        {{-1.f, -1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 1.f}},
+        {{1.f, -1.f, 0.f}, {0.f, 0.f, 1.f}, {1.f, 1.f}},
+    };
+    // Two triangles, clockwise to match the front face both pipelines declare.
+    //
+    // u32 because that is the only width the contract supports - see
+    // set_index_buffer on ICommandList. The first version of this gate used
+    // u16 and drew nothing, on *both* backends, which is how the implicit
+    // 32-bit rule got written down.
+    static const engine::u32 kIndices[6] = {0, 1, 2, 2, 1, 3};
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps);
+
+    engine::rhi::TextureDesc color{};
+    color.width = kExtent;
+    color.height = kExtent;
+    color.format = engine::rhi::Format::RGBA8_UNORM;
+    color.usage = engine::rhi::TextureUsage::RenderTarget;
+    auto target_texture = device.create_texture(color, nullptr);
+
+    engine::rhi::BufferDesc vertex_desc{};
+    vertex_desc.size = sizeof(kVertices);
+    vertex_desc.usage = engine::rhi::BufferUsage::Vertex;
+    auto vertex_buffer = device.create_buffer(vertex_desc, kVertices);
+
+    engine::rhi::BufferDesc index_desc{};
+    index_desc.size = sizeof(kIndices);
+    index_desc.usage = engine::rhi::BufferUsage::Index;
+    auto index_buffer = device.create_buffer(index_desc, kIndices);
+
+    engine::rhi::GraphicsPipelineDesc pipeline{};
+    pipeline.vertex_shader = std::span<const engine::u8>(vs.data);
+    pipeline.pixel_shader = std::span<const engine::u8>(ps.data);
+    // Declaration order matters: index 0 is the shader's first semantic. See
+    // the shader's own comment.
+    pipeline.attributes[0] = {engine::rhi::VertexSemantic::Position, 0,
+        engine::rhi::VertexFormat::Float3, offsetof(Vertex, pos)};
+    pipeline.attributes[1] = {engine::rhi::VertexSemantic::Normal, 0,
+        engine::rhi::VertexFormat::Float3, offsetof(Vertex, normal)};
+    pipeline.attributes[2] = {engine::rhi::VertexSemantic::TexCoord, 0,
+        engine::rhi::VertexFormat::Float2, offsetof(Vertex, uv)};
+    pipeline.attribute_count = 3;
+    pipeline.color_format = engine::rhi::Format::RGBA8_UNORM;
+    pipeline.depth = engine::rhi::DepthTest::Disabled;
+    pipeline.depth_write = false;
+    pipeline.cull = engine::rhi::CullMode::None;
+    pipeline.debug_name = "parity_mesh";
+    auto pso = compiled ? device.create_graphics_pipeline(pipeline) : nullptr;
+
+    std::vector<engine::u8> pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    bool read_ok = false;
+    const bool ready = compiled && target_texture && vertex_buffer && index_buffer && pso;
+
+    if (ready) {
+        using State = engine::rhi::ResourceState;
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*target_texture, State::Common, State::RenderTarget);
+
+        engine::rhi::RenderPassInfo pass{};
+        pass.color = target_texture.get();
+        pass.clear_color_target = true;
+        pass.clear_depth = false;
+        cmd.begin_render_pass(pass);
+        cmd.set_pipeline(*pso);
+        cmd.set_vertex_buffer(0, *vertex_buffer, sizeof(Vertex));
+        cmd.set_index_buffer(*index_buffer);
+        cmd.draw_indexed(6, 0, 0, 1);
+        cmd.end_render_pass();
+
+        cmd.transition(*target_texture, State::RenderTarget, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        read_ok = device.read_texture(*target_texture, pixels.data(), pixels.size());
+    }
+
+    auto texel = [&pixels](engine::u32 x, engine::u32 y) {
+        return &pixels[(static_cast<engine::usize>(y) * kExtent + x) * 4];
+    };
+    // 0.2, 0.6 and 0.8 are exactly 51, 153 and 204 in UNORM8.
+    struct Probe {
+        engine::u32 x;
+        engine::u32 y;
+        engine::u8 expect[4];
+    };
+    static const Probe kProbes[4] = {
+        {8, 8, {51, 51, 255, 255}},
+        {55, 8, {204, 51, 255, 255}},
+        {8, 55, {51, 153, 255, 255}},
+        {55, 55, {204, 153, 255, 255}},
+    };
+    engine::u32 matched = 0;
+    if (read_ok) {
+        for (const Probe& probe : kProbes) {
+            const engine::u8* t = texel(probe.x, probe.y);
+            if (t[0] == probe.expect[0] && t[1] == probe.expect[1] && t[2] == probe.expect[2]
+                && t[3] == probe.expect[3]) {
+                ++matched;
+            }
+        }
+    }
+
+    const engine::u8* first = texel(kProbes[0].x, kProbes[0].y);
+    const engine::u8* last = texel(kProbes[3].x, kProbes[3].y);
+    const bool passed = ready && read_ok && matched == 4;
+
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Parity mesh gate [%s]: quadrants=%u/4 tl=(%u,%u,%u,%u) br=(%u,%u,%u,%u) (%s)", api,
+        matched, first[0], first[1], first[2], first[3], last[0], last[1], last[2], last[3],
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_backend_parity_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
     engine::shaders::ShaderTarget target, const char* api, engine::u32& lit_out) {
