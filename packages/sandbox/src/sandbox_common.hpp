@@ -61,6 +61,16 @@
 #include <engine/rhi/commands.hpp>
 #include <engine/rhi/device.hpp>
 #include <engine/rhi/resources.hpp>
+
+// The backend factories, for the two gates that stand up their own device
+// rather than borrowing the sandbox's: the offscreen parity pair. Guarded
+// because a configure with a backend switched off does not build its package.
+#ifdef ENGINE_HAS_D3D12
+#include <engine/rhi/d3d12/rhi_d3d12.hpp>
+#endif
+#ifdef ENGINE_HAS_VULKAN
+#include <engine/rhi/vulkan/rhi_vulkan.hpp>
+#endif
 #include <engine/debug/debug_lines.hpp>
 #include <engine/debug/frame_stats.hpp>
 #include <engine/debug/stats_overlay.hpp>

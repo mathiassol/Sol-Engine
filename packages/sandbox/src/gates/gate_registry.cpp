@@ -106,6 +106,7 @@ const GateEntry kGates[] = {
     {"run_storage_texture_gate", GateKind::Gpu, nullptr},
     {"run_msaa_gate", GateKind::Gpu, nullptr},
     {"run_spirv_gate", GateKind::Gpu, nullptr},
+    {"run_vulkan_device_gate", GateKind::Gpu, nullptr},
     {"run_backend_parity_gate", GateKind::Gpu, nullptr},
     {"run_rhi_impl_gate", GateKind::Gpu, nullptr},
     {"run_mip_gate", GateKind::Gpu, nullptr},

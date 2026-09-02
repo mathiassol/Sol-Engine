@@ -72,6 +72,17 @@ function(engine_add_runtime_app TARGET)
         engine_copy_dxc_runtime(${TARGET})
     endif()
 
+    # No engine_copy_dxc_runtime here. That copies the Windows SDK's DXC next to
+    # the exe; the SPIR-V one is loaded from the Vulkan SDK by absolute path
+    # instead, deliberately not copied - two differently-built DLLs with the
+    # same name in one directory is a coin flip nobody should have to think
+    # about. Linking shaders-dxc from both blocks is harmless and states that
+    # both backends need it.
+    if(TARGET engine::rhi-vulkan)
+        target_link_libraries(${TARGET} PRIVATE engine::rhi-vulkan engine::shaders-dxc)
+        target_compile_definitions(${TARGET} PRIVATE ENGINE_HAS_VULKAN)
+    endif()
+
     # Both apps get the content copy, not just the install-layout one.
     #
     # The engine resolves its mounts next to the executable, so `sandbox.exe`

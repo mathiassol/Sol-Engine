@@ -74,8 +74,17 @@
 
 #ifdef ENGINE_HAS_D3D12
 #include <engine/rhi/d3d12/rhi_d3d12.hpp>
-// shaders-dxc is added under the same if(ENGINE_RHI_D3D12 AND WIN32) as
-// rhi-d3d12, so one guard covers both.
+#endif
+
+#ifdef ENGINE_HAS_VULKAN
+#include <engine/rhi/vulkan/rhi_vulkan.hpp>
+#endif
+
+// shaders-dxc used to be added under the same if() as rhi-d3d12, so one guard
+// covered both. Since Shaders #5 it is added for either backend - DXC emits
+// DXIL for one and SPIR-V for the other from the same HLSL - so either define
+// means it is present.
+#if defined(ENGINE_HAS_D3D12) || defined(ENGINE_HAS_VULKAN)
 #include <engine/shaders/dxc/shader_compiler_dxc.hpp>
 #include <engine/shaders/dxc/shader_hot_reload_dxc.hpp>
 #endif
@@ -552,6 +561,12 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     //
     // parity_path is declared here and used again by the Vulkan call site
     // below: resolving the same mount twice is two places for them to differ.
+#ifdef ENGINE_HAS_VULKAN
+    if (!run_vulkan_device_gate() && fail_on_gate) {
+        return false;
+    }
+#endif
+
     std::string parity_path;
     engine::u32 d3d12_lit = 0;
     if (!resolve_content(loader, kBackendParityGateShader, parity_path)) {

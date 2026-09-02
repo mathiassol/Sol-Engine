@@ -47,13 +47,16 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 2 Sep 2026: **27,638 lines** of C++/HLSL in **162 files**, **26
-packages** (engine sources; vendored third-party headers not counted).
-`sandbox` is still the largest at 9,811 — 36% — but it is no longer one file:
-`main.cpp` is 1,469 lines, the seven `gates/gates_*.cpp` hold the 81 registered
-gates, and its `content/shaders/*.hlsl` (1,168 lines) counts here too.
-`rhi-d3d12` is 3,414 (12%); `renderer` is 3,087 (11%); `core` is 1,436;
-`physics-cpu` is 1,435. `game.exe` reuses sandbox sources (install layout, no
+Measured 2 Sep 2026: **29,029 lines** of C++/HLSL in **170 files**, **27
+packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
+`packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
+is not — so a vendor drop does not move this figure). `sandbox` is still the
+largest at 9,898 — 34% — but it is no longer one file: `main.cpp` is 1,484
+lines, the seven `gates/gates_*.cpp` hold the 82 registered gates, and its
+`content/shaders/*.hlsl` (1,209 lines) counts here too. `rhi-d3d12` is 3,414
+(12%); `renderer` is 3,087 (11%); `core` is 1,436; `physics-cpu` is 1,435;
+**`rhi-vulkan` is 1,304** — a second backend at 38% of the first, because it is
+offscreen-only so far. `game.exe` reuses sandbox sources (install layout, no
 extra .cpp).
 
 Every per-package figure above was recounted on 31 Aug and every one had

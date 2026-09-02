@@ -156,6 +156,13 @@ bool run_rhi_contract_gate(
 bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path);
 
+// RHI #12: the Vulkan device stands up and reports what was asked for. Stands
+// up its own device, so it runs on the D3D12 build too rather than only behind
+// a flag - a gate behind a flag is a gate that rots.
+#ifdef ENGINE_HAS_VULKAN
+bool run_vulkan_device_gate();
+#endif
+
 // Shaders #5: SPIR-V really came from a SPIR-V-capable compiler, and the DXIL
 // path still works from the same instance. Gpu-classified despite touching no
 // device - it needs a DLL that ships with a GPU SDK.

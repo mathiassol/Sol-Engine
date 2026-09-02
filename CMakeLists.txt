@@ -34,10 +34,14 @@ if(CMAKE_HOST_WIN32)
     unset(ENGINE_SOURCE_PATH_LENGTH)
 endif()
 
+# C is here for exactly one file: packages/rhi-vulkan/third_party/volk.c, the
+# Vulkan entry-point loader. Without it CMake silently declines to compile the
+# .c - no warning at configure, no warning at build - and the only symptom is
+# every vk* symbol unresolved at link.
 project(Engine
     VERSION 0.1.0
     DESCRIPTION "Modular game engine"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 if(WIN32)
@@ -96,6 +100,9 @@ if((ENGINE_RHI_D3D12 OR ENGINE_RHI_VULKAN) AND WIN32)
 endif()
 if(ENGINE_RHI_D3D12 AND WIN32)
     add_subdirectory(packages/rhi-d3d12)
+endif()
+if(ENGINE_RHI_VULKAN AND WIN32)
+    add_subdirectory(packages/rhi-vulkan)
 endif()
 
 # ── Layer 3: Systems ─────────────────────────────────────────────────────────

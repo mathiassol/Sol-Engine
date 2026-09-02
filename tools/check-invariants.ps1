@@ -45,7 +45,8 @@ $Layers = @{
     # Layer 1 - interfaces
     'platform' = 2; 'rhi' = 2; 'shaders' = 2; 'assets' = 2; 'audio' = 2; 'physics' = 2
     # Layer 2 - implementations
-    'platform-win32' = 3; 'rhi-d3d12' = 3; 'shaders-dxc' = 3; 'audio-xaudio2' = 3
+    'platform-win32' = 3; 'rhi-d3d12' = 3; 'rhi-vulkan' = 3; 'shaders-dxc' = 3
+    'audio-xaudio2' = 3
     'physics-cpu' = 3; 'assets-filesystem' = 3; 'assets-obj' = 3; 'assets-gltf' = 3
     'assets-png-wic' = 3; 'assets-gpu' = 3
     # Layer 3 - systems
@@ -80,6 +81,11 @@ Add-Result 'package-layers' "$($packages.Count) packages, all with a declared la
 $apiRules = @(
     @{ Pattern = '#include\s*[<"](d3d12|dxgi|d3dcompiler|d3d12sdklayers)'; Allowed = @('rhi-d3d12'); What = 'D3D12/DXGI' }
     @{ Pattern = '#include\s*[<"]dxcapi';                                  Allowed = @('shaders-dxc'); What = 'DXC' }
+    # Vulkan is as much a graphics API as D3D12, so it gets the same fence.
+    # Two backends means this rule protects the renderer from both
+    # directions rather than only from the one that happened to be first.
+    @{ Pattern = '#include\s*[<"](vulkan/|volk\.h)'
+       Allowed = @('rhi-vulkan'); What = 'Vulkan' }
     @{ Pattern = '#include\s*[<"](windows\.h|Windows\.h|wincodec|xaudio2|xinput|objbase|wrl/)'
        Allowed = @('platform-win32', 'rhi-d3d12', 'shaders-dxc', 'audio-xaudio2', 'assets-png-wic'); What = 'Win32' }
 )
@@ -920,10 +926,15 @@ Add-Result 'gate-registry' $gateSummary $gateViolations
 # space1)". Register spaces are HLSL, and a Vulkan backend reading that header
 # learns the wrong model (analizeMax A2).
 #
-# Two allowances, both deliberate. rhi.hpp's Backend enumerator names D3D12
-# because it names backends. The binding contract in resources.hpp names both
-# D3D12 and Vulkan on purpose - it is the translation table, and a table that
-# cannot say "D3D12" is useless.
+# Since rhi-vulkan the banned list covers Vulkan vocabulary too. A header
+# kept neutral only away from D3D12 would drift toward whichever backend was
+# written second, and the check would then be enforcing a preference instead
+# of neutrality.
+#
+# Two allowances, both deliberate. rhi.hpp's GraphicsAPI enumerator names the
+# backends because that is what it is for. The binding contract in
+# resources.hpp names both on purpose - it is the translation table, and a
+# table that cannot say "D3D12" or "descriptor set" is useless.
 $vocabViolations = @()
 $vocabSummary = 'packages/rhi/include not present'
 $vocabRoot = 'packages/rhi/include'
@@ -934,10 +945,22 @@ if (Test-Path $vocabRoot) {
     $banned = @(
         @{ Pattern = '\bD3D12\b'; Why = 'names a backend' },
         @{ Pattern = '\bDXGI\b'; Why = 'names a backend' },
-        @{ Pattern = '\bSRV\b|\bUAV\b|\bCBV\b|\bRTV\b|\bDSV\b'; Why = 'is a D3D descriptor kind' },
-        @{ Pattern = 'root signature|root parameter|descriptor table'; Why = 'is a D3D12 layout concept' },
+        @{ Pattern = '\bSRV\b|\bUAV\b|\bCBV\b|\bRTV\b|\bDSV\b'
+           Why = 'is a D3D descriptor kind' },
+        @{ Pattern = 'root signature|root parameter|descriptor table'
+           Why = 'is a D3D12 layout concept' },
         @{ Pattern = 'register space'; Why = 'is HLSL register syntax' },
-        @{ Pattern = '\b[tbsu][0-9]+\.\.'; Why = 'is HLSL register syntax' }
+        @{ Pattern = '\b[tbsu][0-9]+\.\.'
+           Why = 'is HLSL register syntax' },
+        # Symmetry, added with rhi-vulkan. A header kept neutral only away from
+        # D3D12 would drift toward whichever backend was written second, and the
+        # check would then be enforcing a preference rather than neutrality.
+        @{ Pattern = '\bVk[A-Z]\w+'; Why = 'is a Vulkan type' },
+        @{ Pattern = '\bVK_[A-Z]'; Why = 'is a Vulkan enumerant or macro' },
+        @{ Pattern = '\bSPIR-V\b|\bSPIRV\b'
+           Why = 'is a Vulkan bytecode format' },
+        @{ Pattern = 'descriptor set|pipeline layout|push constant'
+           Why = 'is a Vulkan layout concept' }
     )
     $scanned = 0
     foreach ($f in Get-ChildItem $vocabRoot -Recurse -File -Include '*.hpp', '*.h') {

@@ -307,6 +307,60 @@ bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompile
     return passed;
 }
 
+#ifdef ENGINE_HAS_VULKAN
+bool run_vulkan_device_gate() {
+    // Standing the device up is its own gate, because everything after it is
+    // meaningless if the instance, the physical-device choice or dynamic
+    // rendering were not what was asked for. Asserts on what the device
+    // reports, not on a non-null pointer.
+    engine::rhi::DeviceDesc desc{};
+    desc.window_handle = nullptr;
+    desc.width = 64;
+    desc.height = 64;
+    desc.preferred_api = engine::rhi::GraphicsAPI::Vulkan;
+    auto rhi = engine::rhi::vulkan::create_rhi();
+    const bool factory_ok = rhi != nullptr && rhi->api() == engine::rhi::GraphicsAPI::Vulkan
+        && rhi->name() == "Vulkan";
+    auto device = rhi ? rhi->create_device(desc) : nullptr;
+
+    // No Vulkan driver is an environment fact, not a defect. Skip by name, and
+    // say `skip` rather than `pass` so the pass count cannot absorb it.
+    if (factory_ok && !device) {
+        engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+            "Vulkan device gate: no usable Vulkan device - needs a driver with dynamic "
+            "rendering and synchronization2 (skip)");
+        return true;
+    }
+
+    const bool offscreen_ok = device && device->offscreen();
+    // SM 6.0 is what DXC compiles the SPIR-V from, so it is the honest figure
+    // for a Vulkan device to report. feature_level has no Vulkan equivalent and
+    // is deliberately 0 - GpuBaseline is D3D-shaped, and that is recorded
+    // rather than filled with an unrelated number.
+    const bool baseline_ok = device && device->gpu_baseline().shader_model >= 0x60
+        && device->gpu_baseline().feature_level == 0;
+    const bool not_lost = device && !device->device_lost();
+    // A device-local heap has to exist and be non-trivial for anything to be
+    // allocated later; 64 MiB is far below any real GPU and far above zero.
+    const bool memory_ok = device && device->gpu_memory_stats().local_budget_bytes > (64u << 20);
+    const bool passed = factory_ok && offscreen_ok && baseline_ok && not_lost && memory_ok;
+
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Vulkan device gate: factory=%s offscreen=%s sm=0x%02X fl=%u vram_mb=%llu lost=%s (%s)",
+        factory_ok ? "yes" : "no", offscreen_ok ? "yes" : "no",
+        device ? device->gpu_baseline().shader_model : 0u,
+        device ? device->gpu_baseline().feature_level : 0u,
+        device ? static_cast<unsigned long long>(
+                     device->gpu_memory_stats().local_budget_bytes >> 20)
+               : 0ull,
+        not_lost ? "no" : "YES", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+#endif // ENGINE_HAS_VULKAN
+
 bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path) {
     // Shaders #5. The DXC this engine ships - the Windows SDK's - cannot emit
     // SPIR-V at all: it answers "SPIR-V CodeGen not available", and nothing in
