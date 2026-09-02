@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-89 Done · 39 Ready · 98 Later · 58 Far.
+90 Done · 42 Ready · 95 Later · 58 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -124,7 +124,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 
 Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 
-*13 done · 2 ready · 24 rows.*
+*13 done · 3 ready · 25 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -142,6 +142,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 18 | MSAA render targets on `TextureDesc` | **Done** |  |
 | 9 | UAV textures (compute write) | **Done** |  |
 | 24 | `rhi-vulkan` parity: surface, swapchain, and every virtual the offscreen slice left calling `not_implemented` — then `--rhi vulkan` and the whole gate suite on it | **Done** |  |
+| 25 | `--rhi vulkan` renders a **live frame**: stop the present reporting `VK_ERROR_DEVICE_LOST`, and add a gate that covers the frame loop rather than only the gate suite — the gates never call `Engine::render()`, which is how #24 shipped green with a frame that crashed. Found by Renderer #16; see its ROADMAP entry for the two causes already fixed | **Ready** | |
 | 19 | Copy queue: uploads off the graphics timeline | Later | Uploads big enough to stall the graphics queue. Async loading is what would keep a copy queue busy, and it can start on the graphics queue. |
 | 20 | Transient memory pool / resource aliasing for graph transients | Later | Renderer #18 depth+normals — enough transients that peak VRAM is the wall. |
 | 21 | Indirect draw (`ExecuteIndirect`) on the contract | Later | A pass submitting more draws than the CPU can afford to record. Instanced draws already cut that cost a long way. |
@@ -181,7 +182,7 @@ Graph-owned frame. New engine pass = `add_pass` in
 [reasarch/GRAPICS-RESEARCH.md](../reasarch/GRAPICS-RESEARCH.md) — treat as
 features, not a school pile.
 
-*17 done · 4 ready · 40 rows.*
+*18 done · 5 ready · 40 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -202,12 +203,12 @@ features, not a school pile.
 | 27 | Instanced draws: batch the extract by material/mesh key, one `draw_indexed` per batch | **Done** |  |
 | 28 | Colour space: sRGB decode on colour textures, sRGB encode after tonemap | **Done** |  |
 | 29 | Exposure control (one scalar before the tonemap; scales sun, sky and IBL together) | **Done** |  |
-| 16 | Transparency / alpha (forward; keep out of deferred) | **Ready** |  |
+| 16 | Transparency / alpha (forward; keep out of deferred) | **Done** |  |
 | 30 | Spot lights, plus radius and attenuation on the same forward path | **Ready** |  |
 | 31 | Emissive term on the material (a surface that feeds bloom without a lamp) | **Ready** |  |
 | 32 | Debug view modes: albedo, normal, roughness, overdraw, cascade index | **Ready** |  |
-| 33 | Alpha-tested cutout path (foliage, fences) — cheaper than sorted blending | Later | Renderer #16 alpha, which decides where the material flag lives. |
-| 34 | Draw sorting: opaque front-to-back, transparent back-to-front | Later | Renderer #16 alpha — sorting only starts to matter once anything blends. |
+| 33 | Alpha-tested cutout path (foliage, fences) — cheaper than sorted blending | **Ready** | |
+| 34 | Draw sorting: opaque front-to-back, transparent back-to-front | **Ready** | |
 | 38 | Depth prepass, once overdraw is measurable | Later | Renderer #32 debug views — the overdraw view is how you find out whether this pays for itself. |
 | 36 | Render scale / dynamic resolution, with the AA passes following it | Later | Renderer #37 post chain, or every scale below 1 just looks soft. |
 | 37 | Post: LUT colour grading, vignette, film grain, sharpening | Later | A look worth authoring. ACES plus exposure is the whole pipeline today. |
@@ -383,7 +384,7 @@ file. Not so an inspector can live in the engine.
 
 ## 13. World and environment
 
-*1 done · 1 ready · 9 rows.*
+*1 done · 2 ready · 9 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -392,7 +393,7 @@ file. Not so an inspector can live in the engine.
 | 2 | Fog (simple exp, then height) | Later | World #3 terrain — a scene with depth to fog into. World #1 sky is already in. |
 | 7 | Terrain LOD (clipmap or quadtree) once one heightmap is not enough | Later | World #3 terrain. |
 | 8 | Foliage and prop scatter, drawn through the instanced path | Later | World #3 terrain to scatter onto. Renderer #27 instancing is already in. |
-| 4 | Water | Later | Renderer #16 transparency. |
+| 4 | Water | **Ready** | |
 | 9 | Streaming volumes that drive Scene additive load/unload | Later | Scene #7 additive worlds. |
 | 5 | Vegetation / wind | Far | World #8 scatter. |
 | 6 | Weather / day-night as **data** driving sun + IBL | Far | World #2 fog, so there is an atmosphere to modulate. |

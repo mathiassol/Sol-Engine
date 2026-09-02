@@ -1394,6 +1394,115 @@ for something the renderer does not actually expose.
 
 ---
 
+## Renderer #16 — transparency, and three defects a live frame found (done)
+
+**Why:** Nothing in the engine blended. `BlendMode::Alpha` had sat in the RHI
+contract since before this row existed with exactly one consumer — the stats
+overlay — so the question was not whether the contract could express
+transparency but whether the forward path could use it. Five rows wait on this
+one: alpha-tested cutout, draw sorting, shader permutations, world-space UI and
+water.
+
+**Gate:** `Transparency gate` on both backends, byte-identical:
+
+```
+blended=(125,150,75,255) want=(125,150,75,255) control=(200,100,50)
+opaque_passthrough=(50,200,100) order=forward1<sky3<transparent4<bloom5
+```
+
+99 pass / 0 FAIL on D3D12 Debug and Release with the debug layer at 0/0/0;
+98 pass / 0 FAIL / 1 skip on the Vulkan gate suite with validation silent;
+17/17 invariants.
+
+**Choice: no `rhi` change at all.** The contract already carried this, both
+backends already translated it to identical factors, and the overlay was a
+complete working precedent. So this row extended that mechanism rather than
+adding a third way to composite. The engine now has exactly two, cleanly
+separated by purpose: hardware `BlendMode::Alpha` for *geometry* drawn into a
+target whose contents cannot be sampled because they are the target, and
+in-shader SRV compositing for every *fullscreen* pass. A third would have been
+the real cost of this row.
+
+**Unsorted, deliberately.** Renderer #34 owns draw ordering and its own map
+note already said sorting starts to matter once anything blends, so the split
+was decided before this row started; confirmed with the user before the spec
+was written. Transparency against opaque geometry and against the sky is
+correct, because depth testing still runs. Two transparent surfaces that
+overlap each other blend in scene order until #34 lands. That is stated in the
+spec, in the pass registration, and in the sandbox demo, which puts translucent
+huskies where they overlap so the limitation is visible rather than latent.
+
+**`depth_write = false` is a requirement, not a preference.** The motion pass
+draws with `DepthTest::Equal` against the depth buffer forward produced, and
+`extract.cpp` records that geometry which does not rasterize identically to
+forward silently writes nothing. A transparent surface writing depth would
+erase the motion vectors of everything behind it — TAA ghosting on objects that
+are not transparent, with the symptom nowhere near the cause.
+`run_depth_convention_gate` gained the new maker as its seventh site, and it is
+the only place that flag is pinned.
+
+**Opacity rides in `InstanceData::material_params.z`**, which was unused
+padding — zero bytes, zero extra uploads. Not `FrameConstants`: that struct is
+per *batch*, so it is the wrong home, and `sizeof(FrameConstants) == 336` is
+asserted in three separate gates.
+
+**The gate's own assertion was wrong twice, and each failure was the
+diagnosis.** It first compared batch counts, on the theory that a different
+pipeline splits a batch. It does not: opacity is per material and the batch key
+already separates materials, so the probe material's instances were one batch
+before and one batch after — the key changed, the count did not, and the gate
+sat at `batches=5->5` with everything else green. Rewritten to require every
+draw be the probe value or exactly 1, it went red the moment the demo gained a
+translucent material, because that form had silently encoded *"every other
+material is opaque"*. It now compares draw-by-draw against the baseline and
+requires that exactly the probe material's draws moved, which is independent of
+what the demo contains. An assertion that depends on the content it measures
+will fail for the wrong reason eventually.
+
+---
+
+### Three Vulkan defects, found by running a live frame for the first time
+
+RHI #24 shipped with the whole gate suite green on Vulkan. **The gates never
+call `Engine::render()`**, so none of this was visible, and the first live
+`--rhi vulkan` frame crashed before drawing anything. Two are fixed; the third
+is [RHI #25](ENGINE_MAP.md).
+
+*1. volk keeps one device dispatch table per process.* `volkLoadDevice` fills
+global pointers from `vkGetDeviceProcAddr`, which returns per-*device*
+functions — so the last device created owns the table. `--gates` stands up two
+offscreen devices for the parity gates while the windowed one is alive, so by
+the time the frame loop ran the table belonged to a device that had already
+been destroyed. The first frame died inside `vkAcquireNextImageKHR`: an access
+violation with nothing logged, from a driver that never saw a valid call.
+Devices now make themselves current, guarded on a pointer compare so a running
+frame loop pays nothing. `volkLoadDeviceTable` would remove the global
+entirely, at the cost of routing every call in the package through a table
+member — a much larger change to make a rarer path cheaper.
+
+*2. The frame ring lacked `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT`.* The frame's
+per-instance array is a ring slice bound with `set_structured_buffer`, which
+without the bit is `VUID-VkWriteDescriptorSet-descriptorType-00331`, ten times
+a frame. No gate sees it: they bind ring slices as vertex and uniform buffers,
+and only a real frame binds one as storage.
+
+*3. A device-lost latch that named nothing.* The acquire and present paths both
+`return` before `vk_failed` could log, so a lost device reached the frame
+loop's FATAL with no line saying which call reported it. Both now say — and
+saying it is what produced the remaining finding.
+
+**Do not:** do not sort here; Renderer #34 owns ordering, and a sort added in
+passing makes batch composition camera-dependent and `run_instancing_gate`
+view-dependent with it. Do not let the transparent pipeline write depth. Do not
+add a `BlendMode` enumerator without a consumer — each one costs two backend
+implementations and a parity gate. Do not grow `FrameConstants`. Do not
+hand-copy `make_forward_pipeline_desc`; call it and override, or the depth
+convention drifts between the two. Do not add a third way to composite. And do
+not read a green gate suite as a working backend: these three defects were
+green for a day.
+
+---
+
 ## RHI #24 — Vulkan parity: the whole gate suite on the second backend (done)
 
 **Why:** RHI #12 proved the contract survives a second API, but only for the
@@ -1533,6 +1642,14 @@ reference-counted for the reason above. Do not index the backbuffer array or the
 render-finished semaphores by frame slot. Do not acquire in `begin_frame`. Do not
 give a per-backend gate parameter a default. Do not let a gate report `pass` on a
 figure the device does not provide — `skip`, by name, with the reason.
+
+**Correction, 2 Sep 2026, from Renderer #16.** This row's gate is the whole
+suite, and that is real and still green. It is *not* a working live frame: the
+gates never call `Engine::render()`, and the first `--rhi vulkan` windowed
+frame crashed in `vkAcquireNextImageKHR` because volk keeps one device dispatch
+table per process and this row's own parity devices had taken it. Two causes
+are fixed under Renderer #16; the surviving one is RHI #25. A green gate suite
+is not a working backend, and this row is the reason that sentence exists.
 
 **Still missing, and recorded rather than hidden:** `last_gpu_time_ms()` is 0 on
 Vulkan (RHI #10's blocker is a consumer, not a backend);

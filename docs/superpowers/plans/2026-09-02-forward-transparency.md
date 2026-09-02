@@ -77,7 +77,7 @@ it. Self-contained: its own shader, its own pipeline, its own 64×64 target.
 - Modify: `packages/sandbox/src/gates/gate_registry.cpp`
 - Modify: `packages/sandbox/src/main.cpp`
 
-- [ ] **Step 1.1: Write the gate shader**
+- [x] **Step 1.1: Write the gate shader**
 
 Create `packages/sandbox/content/shaders/transparency_gate.hlsl`:
 
@@ -120,7 +120,7 @@ float4 ps_main(PSInput input) : SV_TARGET {
 }
 ```
 
-- [ ] **Step 1.2: Declare the gate**
+- [x] **Step 1.2: Declare the gate**
 
 In `packages/sandbox/src/gates/gates.hpp`, beside the other renderer gates, add:
 
@@ -136,7 +136,7 @@ bool run_transparency_gate(engine::rhi::IDevice& device,
     engine::shaders::ShaderTarget target, const char* api);
 ```
 
-- [ ] **Step 1.3: Classify it in the registry**
+- [x] **Step 1.3: Classify it in the registry**
 
 In `packages/sandbox/src/gates/gate_registry.cpp`, in `kGates`, beside the other
 renderer entries:
@@ -145,7 +145,7 @@ renderer entries:
     {"run_transparency_gate", GateKind::Gpu, nullptr},
 ```
 
-- [ ] **Step 1.4: Add the shader path constant**
+- [x] **Step 1.4: Add the shader path constant**
 
 In `packages/sandbox/src/sandbox_common.hpp`, beside `kForwardShader`:
 
@@ -153,7 +153,7 @@ In `packages/sandbox/src/sandbox_common.hpp`, beside `kForwardShader`:
 inline constexpr const char* kTransparencyGateShader = "/shaders/transparency_gate.hlsl";
 ```
 
-- [ ] **Step 1.5: Write the gate**
+- [x] **Step 1.5: Write the gate**
 
 In `packages/sandbox/src/gates/gates_renderer.cpp`, add at the end of the file
 (before the closing namespace, if any):
@@ -365,7 +365,7 @@ bool run_transparency_gate(engine::rhi::IDevice& device,
 }
 ```
 
-- [ ] **Step 1.6: Call it from the gate sequence**
+- [x] **Step 1.6: Call it from the gate sequence**
 
 In `packages/sandbox/src/main.cpp`, inside `setup_forward_demo`, beside the
 other per-backend gate calls (the `run_storage_texture_gate` / `run_msaa_gate`
@@ -400,7 +400,7 @@ Then in the parity block, beside `run_storage_texture_gate(*vk_device, ...)`:
 and in the D3D12 parity block, beside its `run_storage_texture_gate` call, the
 same with `ShaderTarget::Dxil` and `"d3d12"`.
 
-- [ ] **Step 1.7: Build and run it on both backends**
+- [x] **Step 1.7: Build and run it on both backends**
 
 ```bash
 cmake --build build --config Debug
@@ -422,7 +422,7 @@ agreement is the point of this task. Debug layer 0/0/0, validation silent.
 If either fails, stop: the contract's `BlendMode::Alpha` does not do what the
 rest of this plan assumes, and that is a `rhi` bug to fix before continuing.
 
-- [ ] **Step 1.8: Commit**
+- [x] **Step 1.8: Commit**
 
 ```bash
 git add packages/sandbox/content/shaders/transparency_gate.hlsl packages/sandbox/src/gates/gates_renderer.cpp packages/sandbox/src/gates/gates.hpp packages/sandbox/src/gates/gate_registry.cpp packages/sandbox/src/sandbox_common.hpp packages/sandbox/src/main.cpp
@@ -436,7 +436,7 @@ git commit -m "test(renderer): measure alpha blending on both backends (Renderer
 **Files:**
 - Modify: `packages/renderer/include/engine/renderer/frame_pipelines.hpp`
 
-- [ ] **Step 2.1: Add the field and its table entry**
+- [x] **Step 2.1: Add the field and its table entry**
 
 In `packages/renderer/include/engine/renderer/frame_pipelines.hpp`, add the
 field immediately after `forward`:
@@ -456,7 +456,7 @@ and the matching entry immediately after `forward`'s:
     {&FramePipelines::forward_transparent, "forward_transparent"},
 ```
 
-- [ ] **Step 2.2: Build and watch `run_pipeline_set_gate` go red**
+- [x] **Step 2.2: Build and watch `run_pipeline_set_gate` go red**
 
 ```bash
 cmake --build build --config Debug
@@ -483,7 +483,7 @@ Do not commit a red tree. Continue to Task 3.
 - Modify: `packages/sandbox/src/main.cpp`
 - Modify: `packages/sandbox/src/gates/gates_renderer.cpp`
 
-- [ ] **Step 3.1: Declare the maker**
+- [x] **Step 3.1: Declare the maker**
 
 In `packages/sandbox/src/sandbox_common.hpp`, immediately after
 `make_forward_pipeline_desc`'s declaration:
@@ -499,7 +499,7 @@ engine::rhi::GraphicsPipelineDesc make_forward_transparent_pipeline_desc(
     engine::rhi::DepthConvention convention);
 ```
 
-- [ ] **Step 3.2: Define it**
+- [x] **Step 3.2: Define it**
 
 In `packages/sandbox/src/sandbox_common.cpp`, immediately after
 `make_forward_pipeline_desc`'s definition:
@@ -525,7 +525,7 @@ engine::rhi::GraphicsPipelineDesc make_forward_transparent_pipeline_desc(
 }
 ```
 
-- [ ] **Step 3.3: Create it in the app**
+- [x] **Step 3.3: Create it in the app**
 
 In `packages/sandbox/src/main.cpp`, in `setup_forward_demo`, immediately after
 the block that creates the `forward` pipeline and calls
@@ -547,7 +547,7 @@ the same shape for the transparent one. It reuses `vs_bytecode` and
     }
 ```
 
-- [ ] **Step 3.4: Add it to the depth-convention gate's list**
+- [x] **Step 3.4: Add it to the depth-convention gate's list**
 
 In `packages/sandbox/src/gates/gates_renderer.cpp`, in
 `run_depth_convention_gate`, extend `pipelines_ok`:
@@ -567,7 +567,7 @@ In `packages/sandbox/src/gates/gates_renderer.cpp`, in
             == (live == DepthConvention::Reversed);
 ```
 
-- [ ] **Step 3.5: Build and confirm green**
+- [x] **Step 3.5: Build and confirm green**
 
 ```bash
 cmake --build build --config Debug
@@ -580,7 +580,7 @@ cmake --build build --config Debug
 Expected: `Pipeline set gate` back to `(pass)`, now covering 14 pipelines.
 `Depth convention gate` still `(pass)`. Total 98 pass, 0 FAIL.
 
-- [ ] **Step 3.6: Commit**
+- [x] **Step 3.6: Commit**
 
 ```bash
 git add packages/renderer/include/engine/renderer/frame_pipelines.hpp packages/sandbox/src/sandbox_common.hpp packages/sandbox/src/sandbox_common.cpp packages/sandbox/src/main.cpp packages/sandbox/src/gates/gates_renderer.cpp
@@ -599,7 +599,7 @@ git commit -m "feat(renderer): a blended forward pipeline, depth-tested but not 
 - Modify: `packages/sandbox/src/world_extract.cpp`
 - Modify: `packages/sandbox/src/gates/gates_renderer.cpp`
 
-- [ ] **Step 4.1: Extend `run_material_gate` first — the red**
+- [x] **Step 4.1: Extend `run_material_gate` first — the red**
 
 In `packages/sandbox/src/gates/gates_renderer.cpp`, in `run_material_gate`,
 add a third extract after the existing `before` / `after` pair. It mirrors
@@ -676,7 +676,7 @@ from before the instancing refactor, when `FrameConstants` was 400. It is 336
 now, and the gate asserts 336 while printing 400. Fix it while here: a gate
 message that prints the wrong number is worse than one that prints none.
 
-- [ ] **Step 4.2: Build and watch it fail**
+- [x] **Step 4.2: Build and watch it fail**
 
 ```bash
 cmake --build build --config Debug 2>&1 | head -20
@@ -686,7 +686,7 @@ Expected: a **compile error** — `Material` has no member `opacity`, `DrawItem`
 has no member `opacity`. That is the red for this task: the assertion names
 fields that do not exist yet.
 
-- [ ] **Step 4.3: Add the field to `scene::Material`**
+- [x] **Step 4.3: Add the field to `scene::Material`**
 
 In `packages/scene/include/engine/scene/world.hpp`:
 
@@ -703,7 +703,7 @@ struct Material {
 };
 ```
 
-- [ ] **Step 4.4: Add it to `ExtractInstance`**
+- [x] **Step 4.4: Add it to `ExtractInstance`**
 
 In `packages/renderer/include/engine/renderer/extract.hpp`, beside `roughness`:
 
@@ -713,7 +713,7 @@ In `packages/renderer/include/engine/renderer/extract.hpp`, beside `roughness`:
     f32 opacity = 1.f;
 ```
 
-- [ ] **Step 4.5: Add it to `DrawItem`**
+- [x] **Step 4.5: Add it to `DrawItem`**
 
 In `packages/renderer/include/engine/renderer/render_snapshot.hpp`, beside
 `roughness`:
@@ -724,7 +724,7 @@ In `packages/renderer/include/engine/renderer/render_snapshot.hpp`, beside
     f32 opacity = 1.f;
 ```
 
-- [ ] **Step 4.6: Carry it through extract**
+- [x] **Step 4.6: Carry it through extract**
 
 In `packages/renderer/src/extract.cpp`, where `DrawItem` is filled from
 `ExtractInstance`, add `item.opacity = instance.opacity;` beside the
@@ -742,7 +742,7 @@ Then in the instance-fill loop, replace the `material_params` line:
                         = {draw.metallic, draw.roughness, draw.opacity, 0.f};
 ```
 
-- [ ] **Step 4.7: Copy it in the scene bridge and pick the pipeline**
+- [x] **Step 4.7: Copy it in the scene bridge and pick the pipeline**
 
 In `packages/sandbox/src/world_extract.cpp`, replace:
 
@@ -770,7 +770,7 @@ and add beside the `roughness` copy:
         item.opacity = material.opacity;
 ```
 
-- [ ] **Step 4.8: Build and confirm green**
+- [x] **Step 4.8: Build and confirm green**
 
 ```bash
 cmake --build build --config Debug
@@ -785,7 +785,7 @@ message. 98 pass, 0 FAIL. `Instancing gate` still exactly 3 batches of 3/2/2 —
 its world has no transparent materials, so batching is untouched. Confirm that
 line rather than assuming it.
 
-- [ ] **Step 4.9: Commit**
+- [x] **Step 4.9: Commit**
 
 ```bash
 git add packages/scene/include/engine/scene/world.hpp packages/renderer/include/engine/renderer/extract.hpp packages/renderer/include/engine/renderer/render_snapshot.hpp packages/renderer/src/extract.cpp packages/sandbox/src/world_extract.cpp packages/sandbox/src/gates/gates_renderer.cpp
@@ -799,7 +799,7 @@ git commit -m "feat(scene): material opacity, carried to the instance array (Ren
 **Files:**
 - Modify: `packages/sandbox/content/shaders/forward.hlsl`
 
-- [ ] **Step 5.1: Widen the interpolant and use the alpha**
+- [x] **Step 5.1: Widen the interpolant and use the alpha**
 
 In `packages/sandbox/content/shaders/forward.hlsl`, three edits.
 
@@ -840,7 +840,7 @@ and the return:
     return float4(lit, albedo_sample.a * input.material.z);
 ```
 
-- [ ] **Step 5.2: Build, and check every shader still compiles for both targets**
+- [x] **Step 5.2: Build, and check every shader still compiles for both targets**
 
 ```bash
 cmake --build build --config Debug
@@ -855,7 +855,7 @@ compiles to both DXIL and SPIR-V with the widened interpolant; a SM 6.0
 `float3` interpolant is unremarkable in both, but confirm rather than assume,
 because this is the only shader edit in the row.
 
-- [ ] **Step 5.3: Commit**
+- [x] **Step 5.3: Commit**
 
 ```bash
 git add packages/sandbox/content/shaders/forward.hlsl
@@ -872,7 +872,7 @@ git commit -m "feat(shaders): forward alpha from texture and material opacity (R
 - Modify: `packages/renderer/src/standard_frame.cpp`
 - Modify: `packages/sandbox/src/gates/gates_renderer.cpp`
 
-- [ ] **Step 6.1: Assert the pass order first — the red**
+- [x] **Step 6.1: Assert the pass order first — the red**
 
 In `packages/sandbox/src/gates/gates_renderer.cpp`, in `run_transparency_gate`,
 add a pass-order section. There is no `pass_index` helper — `run_motion_gate`
@@ -914,7 +914,7 @@ inventing a second one:
 Add `order_ok` to `passed`, and all four indices to the message, so a wrong
 order says which pass sits where rather than just `order=no`.
 
-- [ ] **Step 6.2: Build and watch it fail**
+- [x] **Step 6.2: Build and watch it fail**
 
 ```bash
 cmake --build build --config Debug && ./solengine.bat gates
@@ -923,7 +923,7 @@ cmake --build build --config Debug && ./solengine.bat gates
 Expected: `Transparency gate` **FAILs** with `transparent_i=-1` — the pass does
 not exist. That is the red.
 
-- [ ] **Step 6.3: Declare the recorder**
+- [x] **Step 6.3: Declare the recorder**
 
 In `packages/renderer/include/engine/renderer/render_snapshot.hpp`, beside the
 other recorders:
@@ -933,7 +933,7 @@ void record_opaque_draws(PassContext& ctx);
 void record_transparent_draws(PassContext& ctx);
 ```
 
-- [ ] **Step 6.4: Define it**
+- [x] **Step 6.4: Define it**
 
 In `packages/renderer/src/render_graph.cpp`, `record_opaque_draws` and
 `record_transparent_draws` differ only in which batches they take, so factor
@@ -988,7 +988,7 @@ ones. That is correct for shadows — a tinted window should still cast
 something — and for motion it is what keeps `DepthTest::Equal` matching
 forward's rasterization. Leave both alone.
 
-- [ ] **Step 6.5: Register the pass**
+- [x] **Step 6.5: Register the pass**
 
 In `packages/renderer/src/standard_frame.cpp`, immediately after the `sky`
 registration:
@@ -1020,7 +1020,7 @@ registration:
     graph.add_pass(std::move(transparent));
 ```
 
-- [ ] **Step 6.6: Build and confirm green**
+- [x] **Step 6.6: Build and confirm green**
 
 ```bash
 cmake --build build --config Debug
@@ -1035,7 +1035,7 @@ Expected: `Transparency gate` `(pass)` with `transparent_i` between `sky` and
 `TAA gate` still `(pass)` — their pass-order comparisons are relative, so an
 insertion satisfies them, but confirm both lines.
 
-- [ ] **Step 6.7: Commit**
+- [x] **Step 6.7: Commit**
 
 ```bash
 git add packages/renderer/include/engine/renderer/render_snapshot.hpp packages/renderer/src/render_graph.cpp packages/renderer/src/standard_frame.cpp packages/sandbox/src/gates/gates_renderer.cpp
@@ -1051,7 +1051,7 @@ git commit -m "feat(renderer): a transparent pass after the sky (Renderer #16)"
   materials are built — find it with
   `grep -rn "materials\[" packages/sandbox/src/`)
 
-- [ ] **Step 7.1: Make one demo material transparent**
+- [x] **Step 7.1: Make one demo material transparent**
 
 Give one of the demo world's materials `opacity = 0.45f`, with a comment:
 
@@ -1067,7 +1067,7 @@ Give one of the demo world's materials `opacity = 0.45f`, with a comment:
 Pick the index whose instances sit both in front of and behind opaque ones, so
 the depth test is visibly doing its job.
 
-- [ ] **Step 7.2: Look at it on both backends**
+- [x] **Step 7.2: Look at it on both backends**
 
 ```bash
 ./solengine.bat run-gpu
@@ -1084,7 +1084,7 @@ arithmetic; only a frame shows whether it looks like glass.** If the objects
 are invisible, the pipeline fell back or the pass is not executing; if they are
 opaque, the alpha is not reaching the shader.
 
-- [ ] **Step 7.3: Confirm the frustum gate's floors still hold**
+- [x] **Step 7.3: Confirm the frustum gate's floors still hold**
 
 ```bash
 ./solengine.bat gates-gpu
@@ -1094,7 +1094,7 @@ Expected: `Frustum gate` `(pass)` with `visible >= 5` and `skipped >= 16`. The
 demo gains a transparent material, not fewer instances, so this should be
 untouched — confirm, because those floors are content-dependent.
 
-- [ ] **Step 7.4: Commit**
+- [x] **Step 7.4: Commit**
 
 ```bash
 git add packages/sandbox/src/main.cpp
@@ -1105,7 +1105,7 @@ git commit -m "feat(sandbox): a transparent material in the demo world (Renderer
 
 ## Task 8: Verify and ship
 
-- [ ] **Step 8.1: All three gate suites**
+- [x] **Step 8.1: All three gate suites**
 
 ```bash
 ./solengine.bat gates-gpu
@@ -1123,7 +1123,7 @@ Expected: D3D12 and Release at 99 pass / 0 FAIL / 0 skip; Vulkan at 98 pass /
 0 FAIL / 1 skip (the mesh-reload VRAM skip). Debug layer 0/0/0, validation
 silent. Both new gate lines present on both backends with matching numbers.
 
-- [ ] **Step 8.2: Invariants**
+- [x] **Step 8.2: Invariants**
 
 ```bash
 pwsh -NoProfile -File tools/check-invariants.ps1
@@ -1132,14 +1132,14 @@ pwsh -NoProfile -File tools/check-invariants.ps1
 Expected: all 17 pass, including `shader-target` over the new gate shader's
 compile site and `roadmap-audit` once Step 8.3 is done.
 
-- [ ] **Step 8.3: Refresh the ROADMAP LOC audit**
+- [x] **Step 8.3: Refresh the ROADMAP LOC audit**
 
 The audit paragraph in `docs/ROADMAP.md` is an implicit dependency of every
 source change and `roadmap-audit` fails if it is stale. Recount and update
 total lines, file count, `sandbox`, `main.cpp`, and the per-package figures
 that moved.
 
-- [ ] **Step 8.4: Ship it**
+- [x] **Step 8.4: Ship it**
 
 Run `/ship-feature`, which writes the ROADMAP Why/Choice/Gate/Do-not entry,
 flips Renderer #16 to **Done** with recounted subtotals and header totals, sets

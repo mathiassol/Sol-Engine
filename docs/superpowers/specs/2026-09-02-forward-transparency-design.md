@@ -1,7 +1,7 @@
 # Forward transparency — alpha blending on the forward path
 
 Date: 2 Sep 2026
-Status: spec
+Status: implemented
 
 ENGINE_MAP **Renderer #16**, "Transparency / alpha (forward; keep out of
 deferred)". Ready with no blockers.
