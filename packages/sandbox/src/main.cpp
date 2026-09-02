@@ -580,7 +580,13 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         // working and a failure here should name that rather than surface as a
         // pipeline that would not create.
         return false;
-    } else {
+    }
+#ifdef ENGINE_HAS_D3D12
+    // Guarded like the Vulkan block below. This function takes an IDevice& and
+    // is otherwise backend-agnostic, so it compiles off Windows - naming a
+    // backend factory in it is the one thing that breaks that, and the Linux
+    // job is what caught it.
+    else if (!parity_path.empty()) {
         engine::rhi::DeviceDesc offscreen{};
         offscreen.window_handle = nullptr;
         offscreen.width = 64;
@@ -603,6 +609,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
             return false;
         }
     }
+#endif
 
     // The comparison this whole pass exists for. Reported even when it passes,
     // because "the two backends agree" means nothing without both numbers next
