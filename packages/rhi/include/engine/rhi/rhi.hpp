@@ -25,6 +25,14 @@ enum class GraphicsAPI : u8 {
 enum class DepthConvention : u8 { Standard, Reversed };
 
 struct DeviceDesc {
+    // Null means an offscreen device: no surface, no swapchain, no
+    // presentation, everything else identical. swapchain(), swapchain_color()
+    // and swapchain_depth() are then programming errors and assert by name - a
+    // null-object swapchain whose present() quietly does nothing is the failure
+    // mode this engine is built to avoid.
+    //
+    // Beyond a second backend this is real capability: a GPU gate that needs no
+    // window, on a machine or a runner that has none.
     void* window_handle = nullptr;
     u32 width  = 0;
     u32 height = 0;

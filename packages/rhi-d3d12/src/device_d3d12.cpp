@@ -184,6 +184,19 @@ void fill_runtime_sampler(D3D12_SAMPLER_DESC& out, const SamplerDesc& desc) {
     out.BorderColor[3] = 1.f;
 }
 
+// Tightly-packed size of one texel. read_texture repacks rows, so it needs the
+// tight pitch that GetCopyableFootprints deliberately does not give it.
+u32 format_bytes(Format format) {
+    switch (format) {
+    case Format::RGBA8_UNORM:      return 4;
+    case Format::RGBA8_UNORM_SRGB: return 4;
+    case Format::RGBA16_FLOAT:     return 8;
+    case Format::D32_FLOAT:        return 4;
+    case Format::Unknown:          return 0;
+    }
+    return 0;
+}
+
 DXGI_FORMAT to_dxgi(Format format) {
     switch (format) {
     case Format::RGBA8_UNORM:  return DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1034,6 +1047,24 @@ bool D3D12Device::init(const DeviceDesc& desc) {
     set_object_name(device_.get(), "engine/device");
     set_object_name(queue_.get(), "engine/direct_queue");
 
+    if (hwnd_ == nullptr) {
+        // Offscreen: no surface, so no swapchain, no backbuffers and no
+        // swapchain depth. Frame resources still exist - the command
+        // allocators, the fence and the upload ring are what makes a frame,
+        // not the presentation.
+        factory->Release();
+        if (!create_frame_resources()) {
+            return false;
+        }
+        frame_index_ = 0;
+        char offscreen_message[128];
+        std::snprintf(offscreen_message, sizeof(offscreen_message),
+            "D3D12 offscreen device initialized (FL 11_0 SM %u.%u, no swapchain)",
+            (baseline_.shader_model >> 4) & 0xFu, baseline_.shader_model & 0xFu);
+        log(LogLevel::Info, LogChannel::Render, offscreen_message);
+        return true;
+    }
+
     DXGI_SWAP_CHAIN_DESC1 sd{};
     sd.Width       = width_;
     sd.Height      = height_;
@@ -1373,11 +1404,21 @@ bool D3D12Device::release_command_list_resource_refs() {
     return true;
 }
 
-ISwapchain& D3D12Device::swapchain() { return swapchain_wrapper_; }
+ISwapchain& D3D12Device::swapchain() {
+    // A programming error, not a recoverable one. Returning a null-object
+    // swapchain whose present() quietly does nothing is the failure mode this
+    // engine exists to avoid - the caller would render every frame into
+    // nothing and never be told.
+    ENGINE_ASSERT_MSG(hwnd_ != nullptr, "offscreen device has no swapchain");
+    return swapchain_wrapper_;
+}
 ICommandList& D3D12Device::command_list() { return cmd_wrapper_; }
 
 void D3D12Device::begin_frame() {
-    frame_index_ = swapchain_->GetCurrentBackBufferIndex();
+    // Offscreen has no backbuffer to ask, so it cycles the slots itself. The
+    // slot count is what bounds frames in flight either way.
+    frame_index_ = swapchain_ ? swapchain_->GetCurrentBackBufferIndex()
+                              : (frame_index_ + 1) % kFrameCount;
     wait_for_frame(frame_index_);
     flush_retired();
     read_gpu_time(frame_index_);
@@ -1776,6 +1817,87 @@ void D3D12Device::read_buffer(IBuffer& buffer, usize offset, void* data, usize s
     d3d_buffer.resource()->Unmap(0, nullptr);
 }
 
+bool D3D12Device::read_texture(ITexture& texture, void* out, usize size) {
+    auto& d3d_texture = static_cast<D3D12Texture&>(texture);
+    ENGINE_ASSERT(out != nullptr);
+    if (d3d_texture.resource() == nullptr) {
+        log(LogLevel::Error, LogChannel::Render, "read_texture: texture has no resource");
+        return false;
+    }
+    if (d3d_texture.sample_count() != 1) {
+        log(LogLevel::Error, LogChannel::Render,
+            "read_texture: source is multisampled - resolve it first");
+        return false;
+    }
+
+    const u32 bytes_per_texel = format_bytes(d3d_texture.format());
+    if (bytes_per_texel == 0) {
+        log(LogLevel::Error, LogChannel::Render, "read_texture: format cannot be packed");
+        return false;
+    }
+    const usize tight_row = static_cast<usize>(d3d_texture.width()) * bytes_per_texel;
+    const usize expected = tight_row * d3d_texture.height();
+    if (size != expected) {
+        char message[176];
+        std::snprintf(message, sizeof(message),
+            "read_texture: size %zu does not match %ux%u x%u bytes = %zu", size,
+            d3d_texture.width(), d3d_texture.height(), bytes_per_texel, expected);
+        log(LogLevel::Error, LogChannel::Render, message);
+        return false;
+    }
+
+    // The copy destination's rows are aligned to 256 bytes, which is not the
+    // tight pitch in general, so the rows are repacked below rather than
+    // memcpy'd whole. GetCopyableFootprints is what says how wide the padded
+    // rows actually are; computing that by hand is how a texture whose width is
+    // not a multiple of 64 reads back sheared.
+    const D3D12_RESOURCE_DESC source_desc = d3d_texture.resource()->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT64 total_bytes = 0;
+    device_->GetCopyableFootprints(
+        &source_desc, 0, 1, 0, &footprint, nullptr, nullptr, &total_bytes);
+
+    ID3D12Resource* staging = create_committed_buffer(D3D12_HEAP_TYPE_READBACK,
+        static_cast<usize>(total_bytes), D3D12_RESOURCE_STATE_COPY_DEST);
+    if (!staging) {
+        log(LogLevel::Error, LogChannel::Render, "read_texture: staging buffer failed");
+        return false;
+    }
+    set_object_name(staging, "engine/read_texture_staging");
+
+    begin_copy();
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = d3d_texture.resource();
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = staging;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = footprint;
+    copy_list_->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    // end_copy() submits and returns a fence value; it does not wait. The
+    // upload path relies on that and retires its staging buffer against the
+    // value instead - here the CPU reads the bytes immediately, so it waits.
+    const UINT64 fence_value = end_copy();
+    wait_for_fence_blocking(fence_event_, fence_.get(), fence_value);
+
+    void* mapped = nullptr;
+    if (FAILED(staging->Map(0, nullptr, &mapped)) || !mapped) {
+        log(LogLevel::Error, LogChannel::Render, "read_texture: Map failed");
+        retire_resource(staging);
+        return false;
+    }
+    const u8* rows = static_cast<const u8*>(mapped);
+    u8* destination = static_cast<u8*>(out);
+    for (u32 y = 0; y < d3d_texture.height(); ++y) {
+        std::memcpy(destination + static_cast<usize>(y) * tight_row,
+            rows + static_cast<usize>(y) * footprint.Footprint.RowPitch, tight_row);
+    }
+    staging->Unmap(0, nullptr);
+    retire_resource(staging);
+    return true;
+}
+
 FrameAllocation D3D12Device::alloc_frame_memory(usize size) {
     ENGINE_ASSERT(size > 0);
     ENGINE_ASSERT_MSG(
@@ -1820,10 +1942,12 @@ void D3D12Device::set_debug_name(ITexture& texture, std::string_view name) {
 }
 
 ITexture& D3D12Device::swapchain_color() {
+    ENGINE_ASSERT_MSG(hwnd_ != nullptr, "offscreen device has no swapchain colour target");
     return color_targets_[frame_index_];
 }
 
 ITexture& D3D12Device::swapchain_depth() {
+    ENGINE_ASSERT_MSG(hwnd_ != nullptr, "offscreen device has no swapchain depth target");
     return depth_target_;
 }
 

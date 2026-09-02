@@ -307,6 +307,152 @@ bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompile
     return passed;
 }
 
+bool run_backend_parity_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api, engine::u32& lit_out) {
+    // The gate that makes "the contract survives a second backend" checkable
+    // rather than asserted. One function, one shader, two devices - so a
+    // divergence is a backend difference and cannot be a difference in the
+    // test.
+    //
+    // Five things, none of which is "it did not crash":
+    //   1. the device reports itself offscreen
+    //   2. the bytecode's magic word matches the target that was asked for, so
+    //      a backend can never be handed the other API's bytecode
+    //   3. an interior texel of the drawn half carries the cbuffer's tint,
+    //      byte-exact - which covers pipeline, descriptor binding and readback
+    //      in one value
+    //   4. the mirrored texel across the diagonal is still the clear colour.
+    //      This is the Y-direction check: a backend that flips it draws the
+    //      other half, and a coverage count would average that away
+    //   5. the covered-texel count, returned rather than asserted - the caller
+    //      compares the two backends, because only both numbers together mean
+    //      anything
+
+    constexpr engine::u32 kExtent = 64;
+    // Exactly representable in UNORM8, so no channel sits on a .5 rounding tie
+    // and the readback can be an equality instead of a tolerance.
+    constexpr engine::f32 kTint[4] = {51.f / 255.f, 153.f / 255.f, 204.f / 255.f, 1.f};
+    constexpr engine::u8 kTintBytes[4] = {51, 153, 204, 255};
+
+    lit_out = 0;
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps);
+
+    engine::u32 magic = 0;
+    if (vs.data.size() >= 4) {
+        std::memcpy(&magic, vs.data.data(), 4);
+    }
+    // 'DXBC' little-endian for DXIL containers, SPIR-V's own magic otherwise.
+    const engine::u32 expected_magic =
+        target == engine::shaders::ShaderTarget::Spirv ? 0x07230203u : 0x43425844u;
+    const bool bytecode_ok = compiled && magic == expected_magic;
+
+    engine::rhi::TextureDesc color{};
+    color.width = kExtent;
+    color.height = kExtent;
+    color.format = engine::rhi::Format::RGBA8_UNORM;
+    color.usage = engine::rhi::TextureUsage::RenderTarget;
+    auto target_texture = device.create_texture(color, nullptr);
+
+    engine::rhi::BufferDesc constants{};
+    constants.size = sizeof(engine::f32) * 4;
+    constants.usage = engine::rhi::BufferUsage::Uniform;
+    auto tint_buffer = device.create_buffer(constants, kTint);
+
+    engine::rhi::GraphicsPipelineDesc pipeline{};
+    pipeline.vertex_shader = std::span<const engine::u8>(vs.data);
+    pipeline.pixel_shader = std::span<const engine::u8>(ps.data);
+    pipeline.uniform_buffer_count = 1;
+    pipeline.color_format = engine::rhi::Format::RGBA8_UNORM;
+    pipeline.depth = engine::rhi::DepthTest::Disabled;
+    pipeline.depth_write = false;
+    pipeline.cull = engine::rhi::CullMode::None;
+    pipeline.debug_name = "backend_parity";
+    auto pso = bytecode_ok ? device.create_graphics_pipeline(pipeline) : nullptr;
+
+    std::vector<engine::u8> pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    bool read_ok = false;
+    const bool ready = bytecode_ok && target_texture && tint_buffer && pso;
+
+    if (ready) {
+        using State = engine::rhi::ResourceState;
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*target_texture, State::Common, State::RenderTarget);
+
+        engine::rhi::RenderPassInfo pass{};
+        pass.color = target_texture.get();
+        pass.clear_color_target = true;
+        pass.clear_depth = false;
+        cmd.begin_render_pass(pass);
+        cmd.set_pipeline(*pso);
+        cmd.set_constant_buffer(0, *tint_buffer);
+        cmd.draw(3, 0);
+        cmd.end_render_pass();
+
+        cmd.transition(*target_texture, State::RenderTarget, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        read_ok = device.read_texture(*target_texture, pixels.data(), pixels.size());
+    }
+
+    // (8, 8) is inside the drawn half; (55, 55) is its mirror in the half that
+    // must stay clear. An inverted Y swaps which is which.
+    auto texel = [&pixels](engine::u32 x, engine::u32 y) {
+        return &pixels[(static_cast<engine::usize>(y) * kExtent + x) * 4];
+    };
+    const engine::u8* inside = texel(8, 8);
+    const engine::u8* outside = texel(55, 55);
+    const bool tint_ok = read_ok && inside[0] == kTintBytes[0] && inside[1] == kTintBytes[1]
+        && inside[2] == kTintBytes[2] && inside[3] == kTintBytes[3];
+    const bool clear_ok = read_ok && outside[0] == 0 && outside[1] == 0 && outside[2] == 0
+        && outside[3] == 255;
+
+    engine::u32 lit = 0;
+    if (read_ok) {
+        lit = count_lit_texels(pixels.data(), kExtent, kExtent);
+    }
+    lit_out = lit;
+    // Half the target, give or take the diagonal's own width. Derived from the
+    // geometry, not from whatever the first run happened to print.
+    const bool coverage_ok = lit > (kExtent * kExtent / 2) - 2 * kExtent
+        && lit < (kExtent * kExtent / 2) + 2 * kExtent;
+
+    const bool offscreen_ok = device.offscreen();
+    const bool passed =
+        offscreen_ok && bytecode_ok && read_ok && tint_ok && clear_ok && coverage_ok;
+
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Backend parity gate [%s]: offscreen=%s magic=0x%08X inside=(%u,%u,%u,%u) "
+        "outside=(%u,%u,%u,%u) lit=%u (%s)",
+        api, offscreen_ok ? "yes" : "no", magic, inside[0], inside[1], inside[2], inside[3],
+        outside[0], outside[1], outside[2], outside[3], lit, passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_pix_gate(engine::rhi::IDevice* device) {
     if (!device) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,

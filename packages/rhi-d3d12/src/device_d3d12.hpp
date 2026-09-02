@@ -223,6 +223,8 @@ public:
 
     // Fixed at device creation. Every depth decision in the frame reads this.
     DepthConvention depth_convention() const override { return depth_convention_; }
+    // Null window at creation. See DeviceDesc::window_handle.
+    bool offscreen() const override { return hwnd_ == nullptr; }
 
     ISwapchain& swapchain() override;
     ICommandList& command_list() override;
@@ -244,6 +246,7 @@ public:
     FrameAllocation alloc_frame_memory(usize size) override;
     void write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) override;
     void read_buffer(IBuffer& buffer, usize offset, void* data, usize size) override;
+    bool read_texture(ITexture& texture, void* out, usize size) override;
     void set_debug_name(IBuffer& buffer, std::string_view name) override;
     void set_debug_name(ITexture& texture, std::string_view name) override;
     ITexture& swapchain_color() override;

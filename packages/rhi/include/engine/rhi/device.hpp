@@ -70,6 +70,9 @@ public:
     // Every depth decision in the frame derives from this. See DepthConvention.
     virtual DepthConvention depth_convention() const = 0;
 
+    // True when created with a null window_handle. See DeviceDesc.
+    virtual bool offscreen() const = 0;
+
     virtual ISwapchain& swapchain() = 0;
     virtual ICommandList& command_list() = 0;
 
@@ -102,6 +105,17 @@ public:
     virtual FrameAllocation alloc_frame_memory(usize size) = 0;
     virtual void write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) = 0;
     virtual void read_buffer(IBuffer& buffer, usize offset, void* data, usize size) = 0;
+    // Copies mip 0 of a texture into CPU memory, tightly packed, rows top-down.
+    // Submits and waits, so it is for gates and tools and never for a frame.
+    //
+    // The twin of read_buffer, which existed alone. Its absence is why the MSAA
+    // gate reads its render target back through a compute pass writing a
+    // storage buffer - a lot of machinery to fetch four numbers.
+    //
+    // False, with the reason logged, when `size` does not match
+    // width * height * bytes_per_texel or the format cannot be packed. Never a
+    // partial read into a buffer the caller believes is full.
+    virtual bool read_texture(ITexture& texture, void* out, usize size) = 0;
     virtual void set_debug_name(IBuffer& buffer, std::string_view name) = 0;
     virtual void set_debug_name(ITexture& texture, std::string_view name) = 0;
     virtual ITexture& swapchain_color() = 0;

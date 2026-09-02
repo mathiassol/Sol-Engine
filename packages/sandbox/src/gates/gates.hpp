@@ -156,6 +156,14 @@ bool run_rhi_contract_gate(
 bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path);
 
+// RHI #12: the same shader, the same asserted pixels, once per backend. Takes
+// the device and the shader target, so one function covers both - a per-backend
+// copy would be a place for the parity comparison to be wrong in the test
+// rather than in the backend. `lit_out` goes to the caller, which compares.
+bool run_backend_parity_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api, engine::u32& lit_out);
+
 // RHI #18: a 4x target reports its count, a mismatched pipeline is diagnosed by
 // name, the resolve lands single-sample, and the resolved edge has the partial
 // coverage a single-sample raster cannot produce.

@@ -544,6 +544,46 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
+    // An offscreen device, not the sandbox's windowed one: the contract's new
+    // null-window mode needs a caller, and this gate is the only one that wants
+    // a device with no swapchain. It also means the reference pixels are
+    // established through the *new* API before a second backend exists to
+    // disagree with them.
+    //
+    // parity_path is declared here and used again by the Vulkan call site
+    // below: resolving the same mount twice is two places for them to differ.
+    std::string parity_path;
+    engine::u32 d3d12_lit = 0;
+    if (!resolve_content(loader, kBackendParityGateShader, parity_path)) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "backend_parity_gate.hlsl missing");
+        if (fail_on_gate) {
+            return false;
+        }
+    } else {
+        engine::rhi::DeviceDesc offscreen{};
+        offscreen.window_handle = nullptr;
+        offscreen.width = 64;
+        offscreen.height = 64;
+        offscreen.preferred_api = engine::rhi::GraphicsAPI::D3D12;
+        auto offscreen_rhi = engine::rhi::d3d12::create_rhi();
+        auto offscreen_device = offscreen_rhi ? offscreen_rhi->create_device(offscreen) : nullptr;
+        if (!offscreen_device) {
+            // A FAIL, not a skip: this build compiled the D3D12 backend and the
+            // windowed device already came up, so a null-window one failing is
+            // the new contract mode being broken, not the environment.
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+                "Backend parity gate [d3d12]: offscreen device creation failed (FAIL)");
+            if (fail_on_gate) {
+                return false;
+            }
+        } else if (!run_backend_parity_gate(*offscreen_device, compiler, parity_path,
+                       engine::shaders::ShaderTarget::Dxil, "d3d12", d3d12_lit)
+            && fail_on_gate) {
+            return false;
+        }
+    }
+
     std::string srgb_gate_path;
     if (!resolve_content(loader, kSrgbGateShader, srgb_gate_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,

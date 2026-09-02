@@ -531,4 +531,16 @@ engine::Cvar cv_fuzz_seed{"gate.fuzz_seed", 1589279043, "Parser fuzz gate: PRNG 
 engine::Cvar cv_fuzz_iterations{
     "gate.fuzz_iterations", 4000, "Parser fuzz gate: mutations per run"};
 
+engine::u32 count_lit_texels(const engine::u8* rgba, engine::u32 width, engine::u32 height) {
+    engine::u32 lit = 0;
+    const engine::usize count = static_cast<engine::usize>(width) * height;
+    for (engine::usize i = 0; i < count; ++i) {
+        const engine::u8* texel = rgba + i * 4;
+        if (texel[0] != 0 || texel[1] != 0 || texel[2] != 0) {
+            ++lit;
+        }
+    }
+    return lit;
+}
+
 } // namespace sandbox

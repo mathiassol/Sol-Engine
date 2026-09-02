@@ -609,15 +609,24 @@ inside=(51,153,204,255) outside=(0,0,0,255) lit=<n> (pass)`.
 match:
 
 ```
-measured lit (d3d12) = ____
+measured lit (d3d12) = 2016
 ```
+
+Which is the same 2,016 the MSAA gate's single-sample reference already
+produces for the same triangle — so the new API reaches the number the old
+workaround reached.
 
 - [ ] **Step 1.11: Falsify it**
 
 Change the shader's `corners` to the *other* half — `float2(1.0, -1.0)` in place
 of `float2(-1.0, 1.0)` — rebuild, and confirm the gate goes red at
-`inside=(0,0,0,255) outside=(51,153,204,255)`. That is the proof the Y-direction
-probes work. Revert.
+`inside=(0,0,0,255) outside=(51,153,204,255)`. Revert.
+
+**Measured, and it settled the design question.** The flip moved `lit` from
+**2,016 to 2,080** — one diagonal's worth, and still inside the geometric
+window the gate allows. So the coverage count alone would have *passed* a fully
+inverted image. Only the mirror probes caught it. That is the concrete reason
+the probes are the assertion and the count is only reported.
 
 - [ ] **Step 1.12: Debug layer, then commit**
 

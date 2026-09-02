@@ -103,6 +103,7 @@ constexpr const char* kComputeGateShader = "/shaders/compute_gate.hlsl";
 constexpr const char* kSrgbGateShader = "/shaders/srgb_gate.hlsl";
 constexpr const char* kStorageTextureGateShader = "/shaders/storage_texture_gate.hlsl";
 constexpr const char* kMsaaGateShader = "/shaders/msaa_gate.hlsl";
+constexpr const char* kBackendParityGateShader = "/shaders/backend_parity_gate.hlsl";
 constexpr engine::u32 kComputeGateMagic = 0xC0DE0001u;
 constexpr const char* kCubeMesh = "/content/meshes/cube.obj";
 constexpr const char* kHuskyMesh = "/content/meshes/cartoon_husky.gltf";
@@ -405,5 +406,13 @@ std::string read_text_file(const std::filesystem::path& path);
 // inf in f32 and would poison scene_color, and the exposure gate asserts the
 // clamp rather than trusting the range.
 engine::f32 exposure_from_ev(engine::f32 ev);
+
+// Texels the draw covered rather than left at the clear colour - any channel of
+// RGB non-zero.
+//
+// Shared so both backends are counted by the same code. A per-backend counter
+// is a place for a parity comparison to be wrong in the *measurement* instead
+// of in the backend, which is the one failure a parity gate must not have.
+engine::u32 count_lit_texels(const engine::u8* rgba, engine::u32 width, engine::u32 height);
 
 } // namespace sandbox
