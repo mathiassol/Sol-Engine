@@ -31,21 +31,33 @@ swap test this engine is built to pass.
 - Every pass declares its reads/writes on the graph explicitly. Avoid pass
   side effects that aren't expressed as a graph dependency.
 - **Two** GPU backends since 2 Sep 2026: `rhi-d3d12` and `rhi-vulkan`. D3D12
-  remains the daily driver; `rhi-vulkan` is offscreen-only (no swapchain) and
-  exists to keep the contract honest, which it does on every `--gates` run —
+  remains the daily driver and the only shipped player backend, but since
+  RHI #24 `rhi-vulkan` presents and runs the **whole** gate suite:
+  `solengine gates-vk` is `--rhi vulkan --gates` with the validation layer
+  armed, and a `-DENGINE_RHI_D3D12=OFF` configure builds and runs the engine on
+  Vulkan alone. Every `--gates` run also stands a Vulkan device up inside it —
   `Backend parity gate` draws one HLSL source through both devices and asserts
   byte-identical readback.
-  - So a contract change now costs **two** implementations. That is the reason
-    the 1 Sep pass front-loaded RHI #15, #9 and #18: they were API-neutral and
-    cheaper with one backend present.
-  - A third backend waits on RHI #24 (Vulkan parity), not on #12. See
-    ENGINE_MAP.md category 3.
+  - So a contract change costs **two** implementations, and **two gate runs**:
+    `solengine gates-gpu` and `solengine gates-vk`, each with its debug layer
+    on. Shipping GPU work with only one of them is how a defect reaches the
+    other backend.
+  - Treat the validation layer exactly like the D3D12 debug layer: any message
+    is a build-breaking bug. RHI #24's swapchain synchronisation was found that
+    way and nothing else would have found it.
+  - A third backend waits on Platform #9, a non-Windows platform package — not
+    on the RHI contract, which a second backend has now taken all the way
+    through a frame. See ENGINE_MAP.md category 3.
 
 ## Adding a render pass — the whole checklist
 
 `add_pass` is where the pass is *registered*, but a working pass spans two
-packages and five files: the shader, the pipeline, two adjacent lines in
+packages and six files: the shader, the pipeline, two adjacent lines in
 `frame_pipelines.hpp`, the registration, and the recorder — plus its gate.
+A pass that compiles a shader must also name its `ShaderTarget`; the
+`shader-target` invariant fails a default-constructed `ShaderCompileDesc` that
+does not, because DXIL handed to a Vulkan device is refused at pipeline
+creation and takes every gate after it out of the run silently.
 Missing a step is no longer silent. A field with no `kFramePipelines` entry
 fails the `static_assert`; a pipeline that is never created turns
 `Pipeline set gate` red and names itself. A `should_execute` predicate still
