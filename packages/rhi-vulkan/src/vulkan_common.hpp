@@ -13,6 +13,8 @@
 #include <engine/core/types.hpp>
 
 #include <cstdio>
+#include <cstring>
+#include <span>
 
 namespace engine::rhi::vulkan {
 
@@ -57,6 +59,29 @@ inline bool vk_failed(VkResult result, const char* what) {
     std::snprintf(message, sizeof(message), "Vulkan %s failed: %s", what, to_string(result));
     log(LogLevel::Error, LogChannel::Render, message);
     return true;
+}
+
+// True when the bytecode is a SPIR-V module, checked before the API sees it.
+//
+// Handing DXIL to vkCreateShaderModule is a validation error whose message is
+// about a magic number, from a layer the caller may not have enabled at all -
+// so it is worth one comparison to say "this is the other backend's bytecode"
+// in the engine's own words instead. 0x07230203 is SPIR-V's magic; DXIL
+// containers start with 'DXBC', 0x43425844.
+inline bool is_spirv(std::span<const u8> bytecode, const char* what) {
+    u32 magic = 0;
+    if (bytecode.size() >= 4) {
+        std::memcpy(&magic, bytecode.data(), 4);
+    }
+    if (bytecode.size() >= 4 && bytecode.size() % 4 == 0 && magic == 0x07230203u) {
+        return true;
+    }
+    char message[176];
+    std::snprintf(message, sizeof(message),
+        "%s is not SPIR-V: %zu bytes, first word 0x%08X (SPIR-V is 0x07230203, DXIL is "
+        "0x43425844)", what, bytecode.size(), magic);
+    log(LogLevel::Error, LogChannel::Render, message);
+    return false;
 }
 
 // Says so, once per name, the first time it is reached.

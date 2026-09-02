@@ -99,10 +99,19 @@ public:
     // the same trade the D3D12 upload heap makes.
     void* mapped() const { return mapped_; }
 
+    // A VkBufferView for use as a storage *texel* buffer, created on first use.
+    //
+    // R32_UINT, matching the format the other backend hard-codes for a buffer
+    // UAV - which is itself an implicit contract fact: HLSL's RWBuffer<uint> is
+    // the only `u` buffer type the engine uses, and both backends have to agree
+    // on its element format or the shader reads shifted data.
+    VkBufferView texel_view();
+
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkBuffer buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VkBufferView texel_view_ = VK_NULL_HANDLE;
     usize size_ = 0;
     void* mapped_ = nullptr;
 };
@@ -234,9 +243,55 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
 };
 
-// Exists so create_compute_pipeline has something to return once it is
-// implemented; creating one reaches not_implemented until then.
-class VulkanComputePipeline final : public IComputePipeline {};
+// One `u` register can be three different Vulkan descriptor types, and the
+// contract does not say which.
+//
+//   RWTexture2D<T>          -> VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+//   RWBuffer<T>             -> VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
+//   RWStructuredBuffer<T>   -> VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+//
+// `storage_texture_count` says how many `u` slots a pipeline uses, not what
+// kind each one is. The other backend does not need to know: a descriptor
+// there is typed by the *view* created at bind time, so the bind call decides.
+// Vulkan needs the type in the set layout, which is baked into the pipeline at
+// creation - before any bind has happened.
+//
+// Exactly the shape of the vertex-stride problem, and it takes the same answer:
+// the pipeline is a recipe, and the variant for a given set of kinds is built
+// by the first dispatch that knows them. In this engine that is one variant per
+// compute pipeline for the whole run.
+//
+// The alternative was VK_DESCRIPTOR_TYPE_MUTABLE_EXT, which lets one binding
+// hold either - an extension, for a cache this small.
+struct ComputeVariant {
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+};
+
+class VulkanComputePipeline final : public IComputePipeline {
+public:
+    VulkanComputePipeline(VkDevice device, VkShaderModule module, u32 uniform_count,
+        u32 sampled_count, u32 storage_count)
+        : device_(device), module_(module), uniform_count_(uniform_count),
+          sampled_count_(sampled_count), storage_count_(storage_count) {}
+    ~VulkanComputePipeline() override;
+
+    VulkanComputePipeline(const VulkanComputePipeline&) = delete;
+    VulkanComputePipeline& operator=(const VulkanComputePipeline&) = delete;
+
+    // `image_mask` bit i set means `u`-slot i is an image rather than a
+    // texel buffer. Built on first use and cached.
+    const ComputeVariant* variant(u32 image_mask);
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkShaderModule module_ = VK_NULL_HANDLE;
+    u32 uniform_count_ = 0;
+    u32 sampled_count_ = 0;
+    u32 storage_count_ = 0;
+    std::unordered_map<u32, ComputeVariant> variants_;
+};
 
 class VulkanCommandList final : public ICommandList {
 public:
@@ -289,6 +344,7 @@ private:
         VkDescriptorSetLayoutBinding slots[kMaxWritesPerSet]{};
         VkDescriptorBufferInfo buffers[kMaxWritesPerSet]{};
         VkDescriptorImageInfo images[kMaxWritesPerSet]{};
+        VkBufferView views[kMaxWritesPerSet]{};
         u32 count = 0;
     };
 
@@ -299,6 +355,7 @@ private:
         const VkDescriptorBufferInfo& buffer);
     void queue_write(u32 set, u32 binding, VkDescriptorType type,
         const VkDescriptorImageInfo& image);
+    void queue_texel_buffer(u32 set, u32 binding, VulkanBuffer& buffer);
 
     static constexpr u32 kMaxDebugEvents = 16;
 
@@ -309,6 +366,9 @@ private:
     // Which stride variant is currently bound, so set_vertex_buffer only
     // rebinds when the stride actually changes. ~0u means none yet.
     u32 bound_stride_ = ~0u;
+    // Bit i set means `u`-slot i was bound as an image. Reset with the
+    // pipeline; read by dispatch to pick the compute variant.
+    u32 storage_image_mask_ = 0;
     VulkanTexture* pass_color_ = nullptr;
     u32 event_depth_ = 0;
     std::string event_stack_[kMaxDebugEvents];

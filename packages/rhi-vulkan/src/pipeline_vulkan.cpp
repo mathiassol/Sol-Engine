@@ -109,9 +109,7 @@ VkShaderModule make_module(VkDevice device, std::span<const u8> bytecode) {
     if (bytecode.empty()) {
         return VK_NULL_HANDLE;
     }
-    if (bytecode.size() % 4 != 0) {
-        log(LogLevel::Error, LogChannel::Render,
-            "SPIR-V length is not a multiple of 4 - this is probably DXIL");
+    if (!is_spirv(bytecode, "graphics shader")) {
         return VK_NULL_HANDLE;
     }
     VkShaderModuleCreateInfo info{};

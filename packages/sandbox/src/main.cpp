@@ -655,6 +655,15 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                 engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;
+        } else if (!storage_tex_path.empty()
+            // The same gate the D3D12 device ran, against the Vulkan one. It
+            // asserts exact packed probe values, so this is compute, a storage
+            // image and a storage buffer all checked against numbers that were
+            // already true rather than newly invented.
+            && !run_storage_texture_gate(*vk_device, compiler, storage_tex_path,
+                engine::shaders::ShaderTarget::Spirv, "vulkan")
+            && fail_on_gate) {
+            return false;
         }
     }
 #endif

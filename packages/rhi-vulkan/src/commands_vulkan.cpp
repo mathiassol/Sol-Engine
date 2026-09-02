@@ -310,6 +310,23 @@ void VulkanCommandList::queue_write(
     ++pending.count;
 }
 
+void VulkanCommandList::queue_texel_buffer(u32 set, u32 binding, VulkanBuffer& buffer) {
+    PendingWrites& pending = pending_[set];
+    if (pending.count >= kMaxWritesPerSet) {
+        log(LogLevel::Error, LogChannel::Render,
+            "descriptor writes exceeded the per-set cap - raise kMaxWritesPerSet");
+        return;
+    }
+    const VkBufferView view = buffer.texel_view();
+    if (view == VK_NULL_HANDLE) {
+        return;
+    }
+    pending.slots[pending.count].binding = binding;
+    pending.slots[pending.count].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+    pending.views[pending.count] = view;
+    ++pending.count;
+}
+
 void VulkanCommandList::flush_descriptors(
     VkPipelineBindPoint bind_point, VkPipelineLayout layout) {
     if (layout == VK_NULL_HANDLE || device_.cmd() == VK_NULL_HANDLE) {
@@ -320,9 +337,16 @@ void VulkanCommandList::flush_descriptors(
         if (pending.count == 0) {
             continue;
         }
-        VkDescriptorSetLayout set_layout = bound_pipeline_ != nullptr
-            ? bound_pipeline_->set_layout(set)
-            : VK_NULL_HANDLE;
+        VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+        if (bound_pipeline_ != nullptr) {
+            set_layout = bound_pipeline_->set_layout(set);
+        } else if (bound_compute_ != nullptr && set == 0) {
+            // Compute has one set. A write queued for set 1 from a compute
+            // pass is a caller mistake, and dropping it silently is what the
+            // count check below turns into a visible zero.
+            const ComputeVariant* variant = bound_compute_->variant(storage_image_mask_);
+            set_layout = variant != nullptr ? variant->set_layout : VK_NULL_HANDLE;
+        }
         if (set_layout == VK_NULL_HANDLE) {
             pending.count = 0;
             continue;
@@ -347,13 +371,20 @@ void VulkanCommandList::flush_descriptors(
             writes[i].dstBinding = pending.slots[i].binding;
             writes[i].descriptorCount = 1;
             writes[i].descriptorType = pending.slots[i].descriptorType;
-            const bool is_image =
-                pending.slots[i].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
-                || pending.slots[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            if (is_image) {
+            // Three kinds of payload, and the descriptor type says which.
+            // A texel buffer takes pTexelBufferView, not pBufferInfo - passing
+            // the wrong one is a validation error rather than a wrong read.
+            switch (pending.slots[i].descriptorType) {
+            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
                 writes[i].pImageInfo = &pending.images[i];
-            } else {
+                break;
+            case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                writes[i].pTexelBufferView = &pending.views[i];
+                break;
+            default:
                 writes[i].pBufferInfo = &pending.buffers[i];
+                break;
             }
         }
         vkUpdateDescriptorSets(device_.handle(), pending.count, writes, 0, nullptr);
@@ -398,14 +429,15 @@ void VulkanCommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize o
 
 void VulkanCommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
     auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
-    VkDescriptorBufferInfo info{};
-    info.buffer = vk_buffer.handle();
-    info.range = vk_buffer.size();
-    queue_write(0, kBindingBaseStorageTexture + slot, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, info);
+    // Bit stays clear: a `u` buffer is a *texel* buffer, and the variant's set
+    // layout has to say so before the pipeline is created.
+    storage_image_mask_ &= ~(1u << slot);
+    queue_texel_buffer(0, kBindingBaseStorageTexture + slot, vk_buffer);
 }
 
 void VulkanCommandList::set_unordered_access(u32 slot, ITexture& texture) {
     auto& vk_texture = static_cast<VulkanTexture&>(texture);
+    storage_image_mask_ |= 1u << slot;
     VkDescriptorImageInfo info{};
     info.imageView = vk_texture.view();
     // A storage image is read and written through GENERAL, which is the one
@@ -486,8 +518,15 @@ void VulkanCommandList::copy_texture(ITexture& src, ITexture& dst) {
 
 
 void VulkanCommandList::set_compute_pipeline(IComputePipeline& pipeline) {
-    (void)pipeline;
-    not_implemented("set_compute_pipeline");
+    // No vkCmdBindPipeline here: which variant this is depends on whether each
+    // `u` slot is an image or a texel buffer, and that is known only once the
+    // binds have arrived. dispatch() resolves it. See ComputeVariant.
+    bound_compute_ = &static_cast<VulkanComputePipeline&>(pipeline);
+    bound_pipeline_ = nullptr;
+    bound_stride_ = ~0u;
+    storage_image_mask_ = 0;
+    pending_[0].count = 0;
+    pending_[1].count = 0;
 }
 
 void VulkanCommandList::set_vertex_buffer(
@@ -542,10 +581,16 @@ void VulkanCommandList::draw_indexed(
 }
 
 void VulkanCommandList::dispatch(u32 group_count_x, u32 group_count_y, u32 group_count_z) {
-    (void)group_count_x;
-    (void)group_count_y;
-    (void)group_count_z;
-    not_implemented("dispatch");
+    if (device_.cmd() == VK_NULL_HANDLE || bound_compute_ == nullptr) {
+        return;
+    }
+    const ComputeVariant* variant = bound_compute_->variant(storage_image_mask_);
+    if (variant == nullptr) {
+        return;
+    }
+    vkCmdBindPipeline(device_.cmd(), VK_PIPELINE_BIND_POINT_COMPUTE, variant->pipeline);
+    flush_descriptors(VK_PIPELINE_BIND_POINT_COMPUTE, variant->layout);
+    vkCmdDispatch(device_.cmd(), group_count_x, group_count_y, group_count_z);
 }
 
 } // namespace engine::rhi::vulkan

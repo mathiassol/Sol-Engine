@@ -25,9 +25,27 @@ VulkanBuffer::VulkanBuffer(
     VkDevice device, VkBuffer buffer, VkDeviceMemory memory, usize size, void* mapped)
     : device_(device), buffer_(buffer), memory_(memory), size_(size), mapped_(mapped) {}
 
+VkBufferView VulkanBuffer::texel_view() {
+    if (texel_view_ != VK_NULL_HANDLE || device_ == VK_NULL_HANDLE) {
+        return texel_view_;
+    }
+    VkBufferViewCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
+    info.buffer = buffer_;
+    info.format = VK_FORMAT_R32_UINT;
+    info.range = VK_WHOLE_SIZE;
+    if (vk_failed(vkCreateBufferView(device_, &info, nullptr, &texel_view_), "buffer view")) {
+        texel_view_ = VK_NULL_HANDLE;
+    }
+    return texel_view_;
+}
+
 VulkanBuffer::~VulkanBuffer() {
     if (device_ == VK_NULL_HANDLE) {
         return;
+    }
+    if (texel_view_ != VK_NULL_HANDLE) {
+        vkDestroyBufferView(device_, texel_view_, nullptr);
     }
     if (mapped_ != nullptr) {
         vkUnmapMemory(device_, memory_);
@@ -209,6 +227,8 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
         // VK_ERROR_OUT_OF_POOL_MEMORY and others silently tolerate - which is
         // the worst kind of difference to ship.
         {VK_DESCRIPTOR_TYPE_SAMPLER, 64},
+        // An HLSL RWBuffer<T> lands here rather than in STORAGE_BUFFER.
+        {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 64},
     };
     VkDescriptorPoolCreateInfo descriptor_info{};
     descriptor_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -382,10 +402,14 @@ std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, con
         usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         break;
     case BufferUsage::Storage:
-        // A StructuredBuffer is a storage buffer in SPIR-V, and the engine also
-        // reads one back through copy_buffer, hence TRANSFER_SRC.
-        usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-            | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        // Three usages because one BufferUsage covers three HLSL types. A
+        // StructuredBuffer is a storage buffer; an RWBuffer<T> is a storage
+        // *texel* buffer and needs its own bit before a VkBufferView of it is
+        // legal; and the engine reads results back through copy_buffer, hence
+        // TRANSFER_SRC. The other backend needs no equivalent - a UAV there is
+        // typed entirely by the view.
+        usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT
+            | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         break;
     }
 
@@ -928,9 +952,111 @@ FrameAllocation VulkanDevice::alloc_frame_memory(usize size) {
 
 std::unique_ptr<IComputePipeline> VulkanDevice::create_compute_pipeline(
     const ComputePipelineDesc& desc) {
-    (void)desc;
-    not_implemented("create_compute_pipeline");
-    return nullptr;
+    if (device_ == VK_NULL_HANDLE) {
+        return nullptr;
+    }
+    if (!is_spirv(desc.compute_shader, "compute shader")) {
+        return nullptr;
+    }
+    VkShaderModuleCreateInfo module_info{};
+    module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    module_info.codeSize = desc.compute_shader.size();
+    module_info.pCode = reinterpret_cast<const u32*>(desc.compute_shader.data());
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vk_failed(vkCreateShaderModule(device_, &module_info, nullptr, &module),
+            "compute shader module")) {
+        return nullptr;
+    }
+    // No VkPipeline yet: the set layout depends on whether each `u` slot is an
+    // image or a texel buffer, and only a bind knows that. See ComputeVariant.
+    return std::make_unique<VulkanComputePipeline>(device_, module,
+        desc.uniform_buffer_count, desc.sampled_texture_count, desc.storage_texture_count);
+}
+
+VulkanComputePipeline::~VulkanComputePipeline() {
+    if (device_ == VK_NULL_HANDLE) {
+        return;
+    }
+    for (const auto& [mask, variant] : variants_) {
+        (void)mask;
+        vkDestroyPipeline(device_, variant.pipeline, nullptr);
+        vkDestroyPipelineLayout(device_, variant.layout, nullptr);
+        vkDestroyDescriptorSetLayout(device_, variant.set_layout, nullptr);
+    }
+    if (module_ != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, module_, nullptr);
+    }
+}
+
+const ComputeVariant* VulkanComputePipeline::variant(u32 image_mask) {
+    const auto found = variants_.find(image_mask);
+    if (found != variants_.end()) {
+        return &found->second;
+    }
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    auto add = [&bindings](u32 binding, VkDescriptorType type) {
+        VkDescriptorSetLayoutBinding entry{};
+        entry.binding = binding;
+        entry.descriptorType = type;
+        entry.descriptorCount = 1;
+        entry.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings.push_back(entry);
+    };
+    for (u32 i = 0; i < uniform_count_; ++i) {
+        add(kBindingBaseUniform + i, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    }
+    for (u32 i = 0; i < sampled_count_; ++i) {
+        add(kBindingBaseSampledTexture + i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+    }
+    for (u32 i = 0; i < storage_count_; ++i) {
+        // The kind the caller actually bound. An RWBuffer<T> is a *texel*
+        // buffer in SPIR-V, not a storage buffer - OpTypeImage with
+        // Dim = Buffer - which is the distinction validation catches and the
+        // other backend never has to make.
+        const bool is_image = (image_mask & (1u << i)) != 0;
+        add(kBindingBaseStorageTexture + i,
+            is_image ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                     : VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
+    }
+
+    ComputeVariant variant{};
+    VkDescriptorSetLayoutCreateInfo set_info{};
+    set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    set_info.bindingCount = static_cast<u32>(bindings.size());
+    set_info.pBindings = bindings.empty() ? nullptr : bindings.data();
+    if (vk_failed(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &variant.set_layout),
+            "compute descriptor set layout")) {
+        return nullptr;
+    }
+
+    VkPipelineLayoutCreateInfo layout_info{};
+    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = 1;
+    layout_info.pSetLayouts = &variant.set_layout;
+    if (vk_failed(vkCreatePipelineLayout(device_, &layout_info, nullptr, &variant.layout),
+            "compute pipeline layout")) {
+        vkDestroyDescriptorSetLayout(device_, variant.set_layout, nullptr);
+        return nullptr;
+    }
+
+    VkComputePipelineCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    info.stage.module = module_;
+    // DXC keeps the HLSL entry point name, so cs_main survives.
+    info.stage.pName = "cs_main";
+    info.layout = variant.layout;
+    if (vk_failed(
+            vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr,
+                &variant.pipeline),
+            "compute pipeline")) {
+        vkDestroyPipelineLayout(device_, variant.layout, nullptr);
+        vkDestroyDescriptorSetLayout(device_, variant.set_layout, nullptr);
+        return nullptr;
+    }
+    return &variants_.emplace(image_mask, variant).first->second;
 }
 
 } // namespace engine::rhi::vulkan

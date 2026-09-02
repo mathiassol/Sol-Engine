@@ -5,6 +5,13 @@
 // reads four texels *other* threads wrote and packs them into a buffer the gate
 // can read back. Writing and reading the same texel from one thread would prove
 // nothing; reading another thread's write is the actual claim.
+// [[vk::image_format]] is a SPIR-V-backend annotation the DXIL path ignores,
+// so this stays one shader source. Without it DXC gives an unannotated
+// RWTexture2D<float4> the Rgba32f format operand, and Vulkan says a storage
+// image whose shader format disagrees with its view format produces undefined
+// values for the *whole* image - not just the texel being written. The other
+// backend takes the format from the view and never notices.
+[[vk::image_format("rgba8")]]
 RWTexture2D<float4> OutTex : register(u0);
 RWBuffer<uint> OutBuf : register(u1);
 

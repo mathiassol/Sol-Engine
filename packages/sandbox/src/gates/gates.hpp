@@ -196,8 +196,15 @@ bool run_backend_parity_gate(engine::rhi::IDevice& device,
 bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
     const std::string& shader_path);
 
+// Called once per backend since RHI #24. It asserts exact packed probe values,
+// so running the same function against the second device is a stronger compute
+// parity check than a new gate with new expected numbers would be - and it
+// covers create_compute_pipeline, dispatch, a storage image and a storage
+// buffer in one pass. The `api` label only reaches the log line.
 bool run_storage_texture_gate(engine::rhi::IDevice& device,
-    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target = engine::shaders::ShaderTarget::Dxil,
+    const char* api = "d3d12");
 
 bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
     const std::string& compute_path);

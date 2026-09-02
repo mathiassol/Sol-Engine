@@ -10,7 +10,8 @@
 namespace sandbox {
 
 bool run_storage_texture_gate(engine::rhi::IDevice& device,
-    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path) {
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api) {
     // RHI #9. Until this landed, a compute pass could be *ordered* against a
     // graph resource but not write one - no Access mapped to the storage state,
     // so PassKind::Compute carried half a feature.
@@ -18,7 +19,11 @@ bool run_storage_texture_gate(engine::rhi::IDevice& device,
     cs_desc.file_path = shader_path;
     cs_desc.entry_point = "cs_main";
     cs_desc.target_profile = "cs_6_0";
-    cs_desc.target = engine::shaders::ShaderTarget::Dxil;
+    // From the caller: the same gate runs against both devices, and handing
+    // DXIL to a Vulkan device is what this parameter exists to prevent. The
+    // first version of the Vulkan call omitted it and vkCreateShaderModule
+    // rejected 'DXBC' as a magic number.
+    cs_desc.target = target;
     engine::shaders::ShaderBytecode cs{};
     std::string error;
     const bool compiled = compiler.compile(cs_desc, cs, error) && !cs.data.empty();
@@ -80,9 +85,10 @@ bool run_storage_texture_gate(engine::rhi::IDevice& device,
     const bool passed = compiled && pso != nullptr && created && values_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Storage texture gate: created=%s dispatch=%s probes=%u,%u,%u,%u "
+        "Storage texture gate [%s]: created=%s dispatch=%s probes=%u,%u,%u,%u "
         "cross_thread_readback=%s (%s)",
-        created ? "yes" : "no", pso ? "yes" : "no", probes[0], probes[1], probes[2], probes[3],
+        api, created ? "yes" : "no", pso ? "yes" : "no", probes[0], probes[1], probes[2],
+        probes[3],
         values_ok ? "yes" : "NO", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
