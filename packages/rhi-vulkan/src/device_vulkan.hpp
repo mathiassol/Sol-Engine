@@ -38,7 +38,7 @@ struct VulkanInstance {
 
 // Creates instance, picks a physical device, finds a graphics queue family.
 // False with the reason logged on any failure. instance_vulkan.cpp.
-bool create_vulkan_instance(VulkanInstance& out);
+bool create_vulkan_instance(VulkanInstance& out, bool want_surface);
 void destroy_vulkan_instance(VulkanInstance& state);
 
 // Layout, access mask and stage mask together. D3D12 has one state enum
@@ -118,8 +118,13 @@ private:
 
 class VulkanTexture final : public ITexture {
 public:
+    // A swapchain image belongs to the swapchain, so a texture wrapping one
+    // owns its view and nothing else. Destroying the image would be a double
+    // free at the first resize.
+    enum class Ownership : u8 { All, ViewOnly };
+
     VulkanTexture(VkDevice device, VkImage image, VkDeviceMemory memory, VkImageView view,
-        const TextureDesc& desc);
+        const TextureDesc& desc, Ownership ownership = Ownership::All);
     ~VulkanTexture() override;
 
     VulkanTexture(const VulkanTexture&) = delete;
@@ -161,6 +166,7 @@ private:
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
     VkImageView view_ = VK_NULL_HANDLE;
     VkImageLayout layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    Ownership ownership_ = Ownership::All;
     TextureDesc desc_{};
 };
 
@@ -299,6 +305,18 @@ private:
     std::unordered_map<u32, ComputeVariant> variants_;
 };
 
+class VulkanDevice;
+
+class VulkanSwapchain final : public ISwapchain {
+public:
+    explicit VulkanSwapchain(VulkanDevice& device) : device_(device) {}
+    void present() override;
+    u32 current_back_buffer_index() const override;
+
+private:
+    VulkanDevice& device_;
+};
+
 class VulkanCommandList final : public ICommandList {
 public:
     explicit VulkanCommandList(VulkanDevice& device) : device_(device) {}
@@ -383,7 +401,7 @@ private:
 
 class VulkanDevice final : public IDevice {
 public:
-    VulkanDevice() : commands_(*this) {}
+    VulkanDevice() : commands_(*this), swapchain_wrapper_(*this) {}
     ~VulkanDevice() override;
 
     VulkanDevice(const VulkanDevice&) = delete;
@@ -405,8 +423,11 @@ public:
     bool resize(u32 width, u32 height) override;
     void wait_idle() override;
 
-    u32 width() const override { return width_; }
-    u32 height() const override { return height_; }
+    // The swapchain's real extent when windowed, because engine.cpp
+    // early-returns on a zero-sized swapchain and a minimised window reports
+    // zero. Reporting the requested size instead would render into nothing.
+    u32 width() const override { return offscreen_ ? width_ : swapchain_extent_.width; }
+    u32 height() const override { return offscreen_ ? height_ : swapchain_extent_.height; }
     bool device_lost() const override { return device_lost_; }
 
     std::unique_ptr<IBuffer> create_buffer(const BufferDesc& desc, const void* data) override;
@@ -457,6 +478,11 @@ public:
     VkCommandBuffer cmd() const { return cmd_buffers_[frame_index_]; }
     VkDescriptorPool descriptor_pool() const { return descriptor_pools_[frame_index_]; }
     const std::string& device_name() const { return state_.device_name; }
+    // Which swapchain image this frame acquired. Not frame_index_: a swapchain
+    // hands back whatever image it likes and the two drift apart as soon as
+    // one is skipped.
+    u32 acquired_image() const { return acquired_image_; }
+    void present();
     // maxUniformBufferRange, read once at init.
     //
     // set_constant_buffer(slot, buffer, offset) has no *size*: a root CBV on
@@ -495,7 +521,29 @@ private:
     u64 frame_ring_exhausted_frames_ = 0;
     bool frame_ring_exhausted_ = false;
 
+    static constexpr u32 kMaxSwapchainImages = 8;
+
+    bool create_surface(void* window_handle);
+    bool create_swapchain(u32 width, u32 height);
+    void destroy_swapchain();
+
+    VkSurfaceKHR surface_ = VK_NULL_HANDLE;
+    VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
+    VkExtent2D swapchain_extent_{};
+    Format swapchain_format_ = Format::RGBA8_UNORM;
+    std::unique_ptr<VulkanTexture> backbuffer_[kMaxSwapchainImages];
+    std::unique_ptr<ITexture> swapchain_depth_;
+    u32 swapchain_image_count_ = 0;
+    u32 acquired_image_ = 0;
+    bool swapchain_stale_ = false;
+    // One pair per slot. The acquire semaphore is waited by the frame's submit
+    // and the render-finished one by the present, so both have to be per-slot
+    // or two frames in flight signal the same semaphore twice.
+    VkSemaphore acquire_[kFrameCount]{};
+    VkSemaphore render_finished_[kFrameCount]{};
+
     VulkanCommandList commands_;
+    VulkanSwapchain swapchain_wrapper_;
     DepthConvention depth_convention_ = DepthConvention::Standard;
     bool offscreen_ = true;
     bool device_lost_ = false;

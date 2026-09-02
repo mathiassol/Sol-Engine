@@ -56,18 +56,18 @@ echo   Sol Engine
 echo   ==========
 echo.
 echo   RUN                              GATE
-echo     1  sandbox (Debug)               10  gates (Debug)
-echo     2  sandbox + GPU debug           11  gates + GPU debug and validation
-echo     3  sandbox, custom args          12  gates (Release game)
-echo     4  game (Release)                13  gates, CPU-only (no device)
-echo                                      14  invariants
-echo   BUILD                              15  invariants under PowerShell 5.1
-echo     5  build Debug                   16  check - GPU gates + invariants
-echo     6  build Release game
-echo     7  configure                    LOOK
-echo     8  rebuild (wipe build/)         17  environment report
-echo     9  prerequisite check           18  newest log
-echo                                      19  clear the shader cache
+echo     1  sandbox (Debug)               11  gates (Debug)
+echo     2  sandbox + GPU debug           12  gates + GPU debug and validation
+echo     3  sandbox on Vulkan             13  gates on Vulkan
+echo     4  sandbox, custom args          14  gates (Release game)
+echo     5  game (Release)                15  gates, CPU-only (no device)
+echo   BUILD                              16  invariants
+echo     6  build Debug                   17  invariants under PowerShell 5.1
+echo     7  build Release game            18  check - GPU gates + invariants
+echo     8  configure                     LOOK
+echo     9  rebuild (wipe build/)         19  environment report
+echo    10  prerequisite check            20  newest log
+echo                                      21  clear the shader cache
 echo.
 echo     h  every command, for the CLI    q  quit
 echo.
@@ -76,23 +76,25 @@ set /p CHOICE=^>
 set "ARGS="
 if "%CHOICE%"=="1"  set "CMD=run"
 if "%CHOICE%"=="2"  set "CMD=run-gpu"
-if "%CHOICE%"=="3"  goto ask_args
-if "%CHOICE%"=="4"  set "CMD=game"
-if "%CHOICE%"=="5"  set "CMD=build"
-if "%CHOICE%"=="6"  set "CMD=build-release"
-if "%CHOICE%"=="7"  set "CMD=configure"
-if "%CHOICE%"=="8"  set "CMD=rebuild"
-if "%CHOICE%"=="9"  set "CMD=prereqs"
-if "%CHOICE%"=="10" set "CMD=gates"
-if "%CHOICE%"=="11" set "CMD=gates-gpu"
-if "%CHOICE%"=="12" set "CMD=gates-release"
-if "%CHOICE%"=="13" set "CMD=gates-cpu"
-if "%CHOICE%"=="14" set "CMD=invariants"
-if "%CHOICE%"=="15" set "CMD=invariants-51"
-if "%CHOICE%"=="16" set "CMD=check"
-if "%CHOICE%"=="17" set "CMD=env"
-if "%CHOICE%"=="18" set "CMD=logs"
-if "%CHOICE%"=="19" set "CMD=clean-shaders"
+if "%CHOICE%"=="3"  set "CMD=run-vk"
+if "%CHOICE%"=="4"  goto ask_args
+if "%CHOICE%"=="5"  set "CMD=game"
+if "%CHOICE%"=="6"  set "CMD=build"
+if "%CHOICE%"=="7"  set "CMD=build-release"
+if "%CHOICE%"=="8"  set "CMD=configure"
+if "%CHOICE%"=="9"  set "CMD=rebuild"
+if "%CHOICE%"=="10" set "CMD=prereqs"
+if "%CHOICE%"=="11" set "CMD=gates"
+if "%CHOICE%"=="12" set "CMD=gates-gpu"
+if "%CHOICE%"=="13" set "CMD=gates-vk"
+if "%CHOICE%"=="14" set "CMD=gates-release"
+if "%CHOICE%"=="15" set "CMD=gates-cpu"
+if "%CHOICE%"=="16" set "CMD=invariants"
+if "%CHOICE%"=="17" set "CMD=invariants-51"
+if "%CHOICE%"=="18" set "CMD=check"
+if "%CHOICE%"=="19" set "CMD=env"
+if "%CHOICE%"=="20" set "CMD=logs"
+if "%CHOICE%"=="21" set "CMD=clean-shaders"
 if /i "%CHOICE%"=="h" set "CMD=help"
 if /i "%CHOICE%"=="q" exit /b 0
 if not defined CMD (
@@ -119,9 +121,11 @@ rem ---------------------------------------------------------------------------
 echo.
 if /i "%CMD%"=="run"            goto do_run
 if /i "%CMD%"=="run-gpu"        goto do_run_gpu
+if /i "%CMD%"=="run-vk"         goto do_run_vk
 if /i "%CMD%"=="game"           goto do_game
 if /i "%CMD%"=="gates"          goto do_gates
 if /i "%CMD%"=="gates-gpu"      goto do_gates_gpu
+if /i "%CMD%"=="gates-vk"       goto do_gates_vk
 if /i "%CMD%"=="gates-release"  goto do_gates_release
 if /i "%CMD%"=="gates-cpu"      goto do_gates_cpu
 if /i "%CMD%"=="invariants"     goto do_invariants
@@ -163,6 +167,18 @@ echo Running sandbox (Debug) with ENGINE_GPU_DEBUG=1 %ARGS%
 set "CODE=%ERRORLEVEL%"
 goto finish
 
+:do_run_vk
+call :require_exe "%DEBUG_EXE%" Debug || goto finish
+call :warn_if_stale
+rem --rhi picks the backend at startup, and a build without rhi-vulkan says so
+rem and exits 1 rather than quietly running on D3D12. Validation on, because a
+rem Vulkan run with the layer off tells you nothing about whether it was legal.
+set "ENGINE_GPU_DEBUG=1"
+echo Running sandbox (Debug) on Vulkan %ARGS%
+"%DEBUG_EXE%" --rhi vulkan %ARGS%
+set "CODE=%ERRORLEVEL%"
+goto finish
+
 :do_game
 call :require_exe "%RELEASE_EXE%" "Release game" || goto finish
 set "ENGINE_GPU_DEBUG="
@@ -183,6 +199,13 @@ call :require_exe "%DEBUG_EXE%" Debug || goto finish
 call :warn_if_stale
 set "ENGINE_GPU_DEBUG=1"
 call :run_gates "%DEBUG_EXE%" --gates
+goto finish
+
+:do_gates_vk
+call :require_exe "%DEBUG_EXE%" Debug || goto finish
+call :warn_if_stale
+set "ENGINE_GPU_DEBUG=1"
+call :run_gates "%DEBUG_EXE%" --rhi vulkan --gates
 goto finish
 
 :do_gates_release
@@ -364,14 +387,25 @@ rem ---------------------------------------------------------------------------
 :do_help
 echo   solengine ^<command^> [args]     - or no command for the menu
 echo.
+echo   Args after the command go to the exe. The ones it understands:
+echo     --gates             run the gate sequence and exit 0/1
+echo     --gates-cpu         the device-free subset
+echo     --rhi d3d12^|vulkan  which backend to run on. Default d3d12.
+echo     --set ^<cvar^>=^<v^>    override a cvar before config.cfg loads
+echo.
 echo   run             sandbox, Debug. Trailing args go to the exe.
 echo   run-gpu         the same with ENGINE_GPU_DEBUG=1 - D3D12 debug layer
 echo                   and the Vulkan validation layer.
+echo   run-vk          sandbox on Vulkan, validation on. Shorthand for
+echo                   `run-gpu --rhi vulkan`.
 echo   game            game.exe, Release.
 echo.
 echo   gates           sandbox --gates.
 echo   gates-gpu       --gates with both debug layers armed. This is the one
 echo                   to run before shipping GPU work.
+echo   gates-vk        --gates on Vulkan, validation on. The parity gates run
+echo                   on both backends either way; this runs *everything*
+echo                   on the second one.
 echo   gates-release   --gates on the Release game build.
 echo   gates-cpu       --gates-cpu, the device-free subset CI runs on Linux.
 echo   invariants      tools\check-invariants.ps1 - no compiler, no GPU.

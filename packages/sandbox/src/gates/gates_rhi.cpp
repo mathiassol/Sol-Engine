@@ -323,7 +323,6 @@ bool run_vulkan_device_gate() {
     desc.window_handle = nullptr;
     desc.width = 64;
     desc.height = 64;
-    desc.preferred_api = engine::rhi::GraphicsAPI::Vulkan;
     auto rhi = engine::rhi::vulkan::create_rhi();
     const bool factory_ok = rhi != nullptr && rhi->api() == engine::rhi::GraphicsAPI::Vulkan
         && rhi->name() == "Vulkan";

@@ -87,7 +87,8 @@ $apiRules = @(
     @{ Pattern = '#include\s*[<"](vulkan/|volk\.h)'
        Allowed = @('rhi-vulkan'); What = 'Vulkan' }
     @{ Pattern = '#include\s*[<"](windows\.h|Windows\.h|wincodec|xaudio2|xinput|objbase|wrl/)'
-       Allowed = @('platform-win32', 'rhi-d3d12', 'shaders-dxc', 'audio-xaudio2', 'assets-png-wic'); What = 'Win32' }
+       Allowed = @('platform-win32', 'rhi-d3d12', 'rhi-vulkan', 'shaders-dxc',
+                    'audio-xaudio2', 'assets-png-wic'); What = 'Win32' }
 )
 $apiViolations = @()
 $scanned = 0

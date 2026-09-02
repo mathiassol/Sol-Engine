@@ -7,6 +7,9 @@
 // definitions rather than from here, so a translation unit that forgets to
 // include this header fails to compile instead of quietly declaring the API
 // twice.
+// volk, pointed at vulkan_headers_sol.h - see that file for why the platform
+// headers are gathered rather than included here. This is still the only door
+// to the vendored surface: everything else in the package includes this.
 #include <volk.h>
 
 #include <engine/core/log.hpp>

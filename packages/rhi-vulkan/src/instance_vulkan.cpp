@@ -12,9 +12,11 @@ bool gpu_debug_enabled() {
     return false;
 #else
     // Same switch the D3D12 backend reads for its debug layer, so one variable
-    // turns on whichever backend's validation is in play.
-    const char* value = std::getenv("ENGINE_GPU_DEBUG");
-    return value != nullptr && value[0] == '1';
+    // turns on whichever backend's validation is in play - and read the same
+    // way, because std::getenv is a C4996 deprecation warning under MSVC.
+    char value[8]{};
+    return GetEnvironmentVariableA("ENGINE_GPU_DEBUG", value, sizeof(value)) > 0
+        && value[0] == '1';
 #endif
 }
 
@@ -79,6 +81,27 @@ u32 device_score(const VkPhysicalDeviceProperties& properties) {
 // VkRenderPass/VkFramebuffer cache behind it - and a cache keyed on an
 // attachment set is exactly the kind of per-backend machinery the rhi contract
 // is shaped to avoid needing.
+bool supports_swapchain(VkPhysicalDevice gpu) {
+    u32 count = 0;
+    if (vk_failed(vkEnumerateDeviceExtensionProperties(gpu, nullptr, &count, nullptr),
+            "device extension enumeration")) {
+        return false;
+    }
+    std::vector<VkExtensionProperties> extensions(count);
+    if (count > 0
+        && vk_failed(
+            vkEnumerateDeviceExtensionProperties(gpu, nullptr, &count, extensions.data()),
+            "device extension enumeration")) {
+        return false;
+    }
+    for (const VkExtensionProperties& extension : extensions) {
+        if (std::strcmp(extension.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool supports_dynamic_rendering(VkPhysicalDevice gpu) {
     VkPhysicalDeviceVulkan13Features features13{};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -107,7 +130,7 @@ u32 find_graphics_family(VkPhysicalDevice gpu) {
 
 } // namespace
 
-bool create_vulkan_instance(VulkanInstance& out) {
+bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
     if (vk_failed(volkInitialize(), "loader initialisation")) {
         log(LogLevel::Error, LogChannel::Render,
             "No Vulkan loader found. vulkan-1.dll ships with the GPU driver, so this "
@@ -133,6 +156,12 @@ bool create_vulkan_instance(VulkanInstance& out) {
 
     std::vector<const char*> layers;
     std::vector<const char*> extensions;
+    if (want_surface) {
+        // Requested only when a window was given, so an offscreen device still
+        // works on a machine or a driver with no presentation support at all.
+        extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+    }
     if (want_validation) {
         layers.push_back(kValidationLayer);
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -198,6 +227,12 @@ bool create_vulkan_instance(VulkanInstance& out) {
         if (!supports_dynamic_rendering(gpu)) {
             continue;
         }
+        // Only demanded when presenting. A device that can render but not
+        // present is still a perfectly good offscreen device, and refusing it
+        // would make the parity gates unavailable on one.
+        if (want_surface && !supports_swapchain(gpu)) {
+            continue;
+        }
         const u32 family = find_graphics_family(gpu);
         if (family == ~0u) {
             continue;
@@ -212,9 +247,9 @@ bool create_vulkan_instance(VulkanInstance& out) {
 
     if (out.gpu == VK_NULL_HANDLE) {
         log(LogLevel::Error, LogChannel::Render,
-            "No Vulkan device with a graphics queue, dynamic rendering and "
-            "synchronization2. Software devices are skipped deliberately, the same way "
-            "the D3D12 backend skips software adapters.");
+            "No Vulkan device with a graphics queue, dynamic rendering, synchronization2 "
+            "and (when presenting) a swapchain. Software devices are skipped deliberately, "
+            "the same way the D3D12 backend skips software adapters.");
         return false;
     }
 

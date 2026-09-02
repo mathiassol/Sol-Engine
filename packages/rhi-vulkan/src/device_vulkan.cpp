@@ -59,8 +59,9 @@ VulkanBuffer::~VulkanBuffer() {
 }
 
 VulkanTexture::VulkanTexture(VkDevice device, VkImage image, VkDeviceMemory memory,
-    VkImageView view, const TextureDesc& desc)
-    : device_(device), image_(image), memory_(memory), view_(view), desc_(desc) {}
+    VkImageView view, const TextureDesc& desc, Ownership ownership)
+    : device_(device), image_(image), memory_(memory), view_(view), ownership_(ownership),
+      desc_(desc) {}
 
 VulkanTexture::~VulkanTexture() {
     if (device_ == VK_NULL_HANDLE) {
@@ -68,6 +69,11 @@ VulkanTexture::~VulkanTexture() {
     }
     if (view_ != VK_NULL_HANDLE) {
         vkDestroyImageView(device_, view_, nullptr);
+    }
+    // A swapchain image is the swapchain's. Freeing it here is a double free
+    // the first time the window is resized.
+    if (ownership_ == Ownership::ViewOnly) {
+        return;
     }
     if (image_ != VK_NULL_HANDLE) {
         vkDestroyImage(device_, image_, nullptr);
@@ -134,8 +140,23 @@ VulkanDevice::~VulkanDevice() {
         if (cmd_pool_ != VK_NULL_HANDLE) {
             vkDestroyCommandPool(device_, cmd_pool_, nullptr);
         }
+        swapchain_depth_.reset();
+        destroy_swapchain();
+        for (u32 i = 0; i < kFrameCount; ++i) {
+            if (acquire_[i] != VK_NULL_HANDLE) {
+                vkDestroySemaphore(device_, acquire_[i], nullptr);
+            }
+            if (render_finished_[i] != VK_NULL_HANDLE) {
+                vkDestroySemaphore(device_, render_finished_[i], nullptr);
+            }
+        }
         vkDestroyDevice(device_, nullptr);
         device_ = VK_NULL_HANDLE;
+    }
+    // After the device: the surface belongs to the instance.
+    if (surface_ != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(state_.instance, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
     }
     destroy_vulkan_instance(state_);
 }
@@ -147,17 +168,7 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     present_interval_ = desc.present_interval == 0 ? 0u : 1u;
     offscreen_ = desc.window_handle == nullptr;
 
-    if (!offscreen_) {
-        // Presentation is a separate pass. Refusing here rather than ignoring
-        // the handle means a caller cannot believe it has a windowed Vulkan
-        // device and then wonder why nothing appears.
-        log(LogLevel::Error, LogChannel::Render,
-            "rhi-vulkan has no swapchain yet - create it with a null window_handle for an "
-            "offscreen device. Presentation lands with the parity pass.");
-        return false;
-    }
-
-    if (!create_vulkan_instance(state_)) {
+    if (!create_vulkan_instance(state_, !offscreen_)) {
         return false;
     }
 
@@ -176,11 +187,17 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     features13.dynamicRendering = VK_TRUE;
     features13.synchronization2 = VK_TRUE;
 
+    const char* device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.pNext = &features13;
     device_info.queueCreateInfoCount = 1;
     device_info.pQueueCreateInfos = &queue_info;
+    if (!offscreen_) {
+        device_info.enabledExtensionCount = 1;
+        device_info.ppEnabledExtensionNames = device_extensions;
+    }
 
     if (vk_failed(vkCreateDevice(state_.gpu, &device_info, nullptr, &device_),
             "device creation")) {
@@ -306,6 +323,24 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     // GpuBaseline - the struct is D3D-shaped - and it is recorded rather than
     // papered over, because finding out where the contract is D3D-shaped is
     // what a second backend is for.
+    if (!offscreen_) {
+        VkSemaphoreCreateInfo semaphore_info{};
+        semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        for (u32 i = 0; i < kFrameCount; ++i) {
+            if (vk_failed(vkCreateSemaphore(device_, &semaphore_info, nullptr, &acquire_[i]),
+                    "acquire semaphore")
+                || vk_failed(
+                    vkCreateSemaphore(device_, &semaphore_info, nullptr,
+                        &render_finished_[i]),
+                    "render-finished semaphore")) {
+                return false;
+            }
+        }
+        if (!create_surface(desc.window_handle) || !create_swapchain(width_, height_)) {
+            return false;
+        }
+    }
+
     VkPhysicalDeviceProperties gpu_properties{};
     vkGetPhysicalDeviceProperties(state_.gpu, &gpu_properties);
     max_uniform_range_ = gpu_properties.limits.maxUniformBufferRange;
@@ -313,39 +348,231 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     baseline_.shader_model = kGpuShaderModel_6_0;
     baseline_.feature_level = 0;
 
-    char message[192];
+    char message[224];
     std::snprintf(message, sizeof(message),
-        "Vulkan offscreen device initialized (%s, SM %u.%u, no swapchain)",
-        state_.device_name.c_str(), (baseline_.shader_model >> 4) & 0xFu,
-        baseline_.shader_model & 0xFu);
+        "Vulkan device initialized (%s, SM %u.%u, %s)", state_.device_name.c_str(),
+        (baseline_.shader_model >> 4) & 0xFu, baseline_.shader_model & 0xFu,
+        offscreen_ ? "offscreen, no swapchain" : "windowed");
     log(LogLevel::Info, LogChannel::Render, message);
     return true;
 }
 
+// ── Presentation ────────────────────────────────────────────────────────────
+
+bool VulkanDevice::create_surface(void* window_handle) {
+    VkWin32SurfaceCreateInfoKHR info{};
+    info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    info.hinstance = GetModuleHandleW(nullptr);
+    info.hwnd = static_cast<HWND>(window_handle);
+    return !vk_failed(
+        vkCreateWin32SurfaceKHR(state_.instance, &info, nullptr, &surface_), "surface");
+}
+
+bool VulkanDevice::create_swapchain(u32 width, u32 height) {
+    VkSurfaceCapabilitiesKHR caps{};
+    if (vk_failed(
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state_.gpu, surface_, &caps),
+            "surface capabilities")) {
+        return false;
+    }
+    // A minimised window reports a zero extent, and a zero-extent swapchain is
+    // illegal. The frame loop already skips a zero-sized swapchain (engine.cpp
+    // early-returns on swapchain_color().width() == 0), so reporting zero and
+    // creating nothing is the honest answer rather than clamping to 1 and
+    // rendering into a pixel nobody sees.
+    if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0) {
+        swapchain_extent_ = {0, 0};
+        return true;
+    }
+    VkExtent2D extent = caps.currentExtent;
+    if (extent.width == 0xFFFFFFFFu) {
+        extent.width = width;
+        extent.height = height;
+    }
+
+    u32 format_count = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(state_.gpu, surface_, &format_count, nullptr);
+    std::vector<VkSurfaceFormatKHR> formats(format_count);
+    if (format_count > 0) {
+        vkGetPhysicalDeviceSurfaceFormatsKHR(
+            state_.gpu, surface_, &format_count, formats.data());
+    }
+    // A UNORM format, never an _SRGB one. resources.hpp says a presented
+    // surface stays UNORM and the encode happens in-shader, because the other
+    // backend's flip-model swapchain refuses _SRGB - so picking an _SRGB
+    // surface here would double-encode and make the same shader look different
+    // on the two backends.
+    VkSurfaceFormatKHR chosen = formats.empty()
+        ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}
+        : formats[0];
+    for (const VkSurfaceFormatKHR& format : formats) {
+        if (format.format == VK_FORMAT_B8G8R8A8_UNORM
+            || format.format == VK_FORMAT_R8G8B8A8_UNORM) {
+            chosen = format;
+            break;
+        }
+    }
+
+    u32 mode_count = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(state_.gpu, surface_, &mode_count, nullptr);
+    std::vector<VkPresentModeKHR> modes(mode_count);
+    if (mode_count > 0) {
+        vkGetPhysicalDeviceSurfacePresentModesKHR(
+            state_.gpu, surface_, &mode_count, modes.data());
+    }
+    // FIFO is the only mode required to exist, so it is the fallback for both
+    // settings. present_interval 0 means "tear if you can", which is
+    // IMMEDIATE - the closest thing to the other backend's ALLOW_TEARING.
+    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    if (present_interval_ == 0) {
+        for (const VkPresentModeKHR mode : modes) {
+            if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                present_mode = mode;
+                break;
+            }
+        }
+    }
+
+    u32 image_count = kFrameCount;
+    if (image_count < caps.minImageCount) {
+        image_count = caps.minImageCount;
+    }
+    if (caps.maxImageCount != 0 && image_count > caps.maxImageCount) {
+        image_count = caps.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR info{};
+    info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    info.surface = surface_;
+    info.minImageCount = image_count;
+    info.imageFormat = chosen.format;
+    info.imageColorSpace = chosen.colorSpace;
+    info.imageExtent = extent;
+    info.imageArrayLayers = 1;
+    // TRANSFER_DST because the anti-aliasing copy pass writes the backbuffer
+    // with copy_texture rather than by rendering into it - the frame trace
+    // found that, and without this bit `aa_copy` is a validation error.
+    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.preTransform = caps.currentTransform;
+    info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    info.presentMode = present_mode;
+    info.clipped = VK_TRUE;
+    info.oldSwapchain = swapchain_;
+
+    VkSwapchainKHR created = VK_NULL_HANDLE;
+    if (vk_failed(vkCreateSwapchainKHR(device_, &info, nullptr, &created), "swapchain")) {
+        return false;
+    }
+    destroy_swapchain();
+    swapchain_ = created;
+    swapchain_extent_ = extent;
+    swapchain_format_ = chosen.format == VK_FORMAT_B8G8R8A8_UNORM ? Format::RGBA8_UNORM
+                                                                  : Format::RGBA8_UNORM;
+
+    u32 actual = 0;
+    vkGetSwapchainImagesKHR(device_, swapchain_, &actual, nullptr);
+    std::vector<VkImage> images(actual);
+    vkGetSwapchainImagesKHR(device_, swapchain_, &actual, images.data());
+
+    TextureDesc backbuffer{};
+    backbuffer.width = extent.width;
+    backbuffer.height = extent.height;
+    backbuffer.format = swapchain_format_;
+    backbuffer.usage = TextureUsage::RenderTarget;
+    for (u32 i = 0; i < actual && i < kMaxSwapchainImages; ++i) {
+        VkImageViewCreateInfo view_info{};
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.image = images[i];
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = chosen.format;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.levelCount = 1;
+        view_info.subresourceRange.layerCount = 1;
+        VkImageView view = VK_NULL_HANDLE;
+        if (vk_failed(vkCreateImageView(device_, &view_info, nullptr, &view),
+                "swapchain image view")) {
+            return false;
+        }
+        // Owns the view but not the image: the swapchain owns those, so a
+        // VulkanTexture that freed one would be a double free at resize.
+        backbuffer_[i] = std::make_unique<VulkanTexture>(device_, images[i], VK_NULL_HANDLE,
+            view, backbuffer, VulkanTexture::Ownership::ViewOnly);
+    }
+    swapchain_image_count_ = actual < kMaxSwapchainImages ? actual : kMaxSwapchainImages;
+
+    // The depth buffer the frame renders against. The graph pins the swapchain
+    // depth to DepthWrite and never transitions it, so it is settled at
+    // creation like any other depth attachment.
+    TextureDesc depth{};
+    depth.width = extent.width;
+    depth.height = extent.height;
+    depth.format = Format::D32_FLOAT;
+    depth.usage = TextureUsage::DepthStencil;
+    swapchain_depth_ = create_texture(depth, nullptr);
+    return swapchain_depth_ != nullptr;
+}
+
+void VulkanDevice::destroy_swapchain() {
+    for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
+        backbuffer_[i].reset();
+    }
+    swapchain_image_count_ = 0;
+    if (swapchain_ != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device_, swapchain_, nullptr);
+        swapchain_ = VK_NULL_HANDLE;
+    }
+}
+
 ISwapchain& VulkanDevice::swapchain() {
-    // Unreachable by construction: init refuses a non-null window handle, so
-    // every device here is offscreen. Asserting rather than returning something
-    // fake keeps that true when presentation lands.
-    ENGINE_ASSERT_MSG(false, "offscreen device has no swapchain");
-    static struct NoSwapchain final : ISwapchain {
-        void present() override {}
-        u32 current_back_buffer_index() const override { return 0; }
-    } unreachable;
-    return unreachable;
+    ENGINE_ASSERT_MSG(!offscreen_, "offscreen device has no swapchain");
+    return swapchain_wrapper_;
 }
 
 ITexture& VulkanDevice::swapchain_color() {
-    ENGINE_ASSERT_MSG(false, "offscreen device has no swapchain colour target");
-    static VulkanTexture unreachable(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
-        VK_NULL_HANDLE, TextureDesc{});
-    return unreachable;
+    ENGINE_ASSERT_MSG(!offscreen_, "offscreen device has no swapchain colour target");
+    // The acquired image, not frame_index_'s. A swapchain hands back whatever
+    // image it likes and the two indices drift apart the moment one is
+    // skipped - which is precisely the bug that makes a frame render into the
+    // image being displayed.
+    return *backbuffer_[acquired_image_];
 }
 
 ITexture& VulkanDevice::swapchain_depth() {
-    ENGINE_ASSERT_MSG(false, "offscreen device has no swapchain depth target");
-    static VulkanTexture unreachable(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
-        VK_NULL_HANDLE, TextureDesc{});
-    return unreachable;
+    ENGINE_ASSERT_MSG(!offscreen_, "offscreen device has no swapchain depth target");
+    return *swapchain_depth_;
+}
+
+void VulkanSwapchain::present() { device_.present(); }
+
+u32 VulkanSwapchain::current_back_buffer_index() const { return device_.acquired_image(); }
+
+void VulkanDevice::present() {
+    if (offscreen_ || swapchain_ == VK_NULL_HANDLE || swapchain_extent_.width == 0) {
+        return;
+    }
+    VkPresentInfoKHR info{};
+    info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    info.waitSemaphoreCount = 1;
+    // Waits on the semaphore submit() signalled, not on a fence: presentation
+    // is a queue operation and has to be ordered against the rendering on the
+    // GPU, not on the CPU.
+    info.pWaitSemaphores = &render_finished_[frame_index_];
+    info.swapchainCount = 1;
+    info.pSwapchains = &swapchain_;
+    info.pImageIndices = &acquired_image_;
+    const VkResult result = vkQueuePresentKHR(queue_, &info);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        // Not an error: the window changed size or the display did. Rebuilt on
+        // the next begin_frame, which is where waiting is already legal.
+        swapchain_stale_ = true;
+        return;
+    }
+    if (result == VK_ERROR_DEVICE_LOST) {
+        device_lost_ = true;
+        return;
+    }
+    vk_failed(result, "present");
 }
 
 void VulkanDevice::begin_frame() {
@@ -366,6 +593,39 @@ void VulkanDevice::begin_frame() {
     vkResetDescriptorPool(device_, descriptor_pools_[frame_index_], 0);
     frame_ring_offset_ = 0;
     frame_ring_exhausted_ = false;
+
+    if (offscreen_) {
+        return;
+    }
+    if (swapchain_stale_ || swapchain_ == VK_NULL_HANDLE) {
+        // Rebuilt here rather than in present(), because this is the point at
+        // which waiting for the GPU is already legal.
+        vkQueueWaitIdle(queue_);
+        swapchain_stale_ = false;
+        if (!create_swapchain(width_, height_)) {
+            return;
+        }
+    }
+    if (swapchain_extent_.width == 0) {
+        return;
+    }
+    const VkResult acquired = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
+        acquire_[frame_index_], VK_NULL_HANDLE, &acquired_image_);
+    if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
+        swapchain_stale_ = true;
+        return;
+    }
+    if (acquired == VK_ERROR_DEVICE_LOST) {
+        device_lost_ = true;
+        return;
+    }
+    // SUBOPTIMAL is a hint, not a failure: the image is usable, so the frame
+    // is rendered and the swapchain rebuilt next time round.
+    if (acquired == VK_SUBOPTIMAL_KHR) {
+        swapchain_stale_ = true;
+    } else {
+        vk_failed(acquired, "acquire next image");
+    }
 }
 
 void VulkanDevice::submit() {
@@ -376,6 +636,17 @@ void VulkanDevice::submit() {
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd_buffers_[frame_index_];
+    // The acquire semaphore gates the colour write; the render-finished one
+    // gates the present. Without the wait, the frame can start writing an
+    // image the display is still scanning out.
+    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    if (!offscreen_ && swapchain_extent_.width != 0) {
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &acquire_[frame_index_];
+        submit.pWaitDstStageMask = &wait_stage;
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &render_finished_[frame_index_];
+    }
     if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fences_[frame_index_]), "queue submit")) {
         // A lost device never recovers, and the frame loop has to stop rather
         // than keep submitting into it - the same latch the D3D12 backend uses.
@@ -384,8 +655,18 @@ void VulkanDevice::submit() {
 }
 
 void VulkanDevice::end_frame() {
-    // Nothing to present. Named rather than left to the pure virtual so it is
-    // clear this is complete for an offscreen device, not missing.
+    // The frame trace found that nothing outside the gates calls submit():
+    // RenderGraph::execute calls end_frame and expects it to submit *and*
+    // present, which is what the other backend's end_frame does. An end_frame
+    // that only presented would render nothing and log nothing.
+    //
+    // The gates call submit() themselves and then wait, so an offscreen device
+    // must not submit twice - hence the guard rather than an unconditional
+    // submit here.
+    if (!offscreen_) {
+        submit();
+        present();
+    }
 }
 
 void VulkanDevice::wait_idle() {
@@ -399,10 +680,14 @@ void VulkanDevice::wait_idle() {
 }
 
 bool VulkanDevice::resize(u32 width, u32 height) {
-    // No swapchain to resize; the extent is whatever the caller asked for.
     width_ = width;
     height_ = height;
-    return true;
+    if (offscreen_) {
+        // Nothing to rebuild; the extent is whatever the caller asked for.
+        return true;
+    }
+    vkQueueWaitIdle(queue_);
+    return create_swapchain(width, height);
 }
 
 GpuMemoryStats VulkanDevice::gpu_memory_stats() const {

@@ -26,5 +26,9 @@ target_include_directories(rhi-vulkan PRIVATE
 # API directly and the link needs an import library.
 target_compile_definitions(rhi-vulkan PRIVATE
     VK_NO_PROTOTYPES
-    VOLK_VULKAN_H_PATH="vulkan/vulkan_core.h"
+    VOLK_VULKAN_H_PATH="vulkan_headers_sol.h"
+    # volk guards its Win32 entry points on this define, not on whether the
+    # header is present - without it vkCreateWin32SurfaceKHR is simply not
+    # declared, and the only symptom is one unresolved identifier.
+    VK_USE_PLATFORM_WIN32_KHR
 )

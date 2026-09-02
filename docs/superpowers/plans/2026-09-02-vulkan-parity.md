@@ -227,27 +227,27 @@ accident.
 
 ## Phase 11: presentation, and `--rhi vulkan`
 
-- [ ] **11.1** Vendor `vulkan/vulkan_win32.h` (16 KB) into
+- [x] **11.1** Vendor `vulkan/vulkan_win32.h` (16 KB) into
   `packages/rhi-vulkan/third_party/vulkan/` and note it in that directory's
   README, which currently says it joins "when presentation does".
-- [ ] **11.2** Instance extensions `VK_KHR_surface` +
+- [x] **11.2** Instance extensions `VK_KHR_surface` +
   `VK_KHR_win32_surface`; device extension `VK_KHR_swapchain`. A non-null
   `window_handle` stops being refused and creates a surface.
-- [ ] **11.3** Swapchain: `kFrameCount` images, `VK_FORMAT_B8G8R8A8_UNORM` or
+- [x] **11.3** Swapchain: `kFrameCount` images, `VK_FORMAT_B8G8R8A8_UNORM` or
   the surface's preferred UNORM — **not** an `_SRGB` format, matching the note
   in `resources.hpp` that a presented surface stays UNORM and the encode is
   in-shader. `presentMode` from `present_interval`: 0 → `IMMEDIATE` if
   supported else `FIFO`, 1 → `FIFO`.
-- [ ] **11.4** Per-slot acquire and render-finished semaphores;
+- [x] **11.4** Per-slot acquire and render-finished semaphores;
   `vkAcquireNextImageKHR` in `begin_frame`, `vkQueuePresentKHR` in
   `ISwapchain::present`. `swapchain_color()` returns the acquired image's
   `VulkanTexture`; `swapchain_depth()` returns the device's own depth buffer.
   `resize` recreates on `VK_ERROR_OUT_OF_DATE_KHR` / `VK_SUBOPTIMAL_KHR`.
-- [ ] **11.5** `--rhi vulkan|d3d12` in `main.cpp` picks the factory into
+- [x] **11.5** `--rhi vulkan|d3d12` in `main.cpp` picks the factory into
   `Modules`, defaulting to D3D12. Add it to `solengine.bat`'s help and a
   `run-vk` command.
-- [ ] **11.6** Delete `DeviceDesc::preferred_api` and its four call sites.
-- [ ] **11.7** Commit: `feat(rhi-vulkan): surface, swapchain and --rhi vulkan (RHI #24)`
+- [x] **11.6** Delete `DeviceDesc::preferred_api` and its four call sites.
+- [x] **11.7** Commit: `feat(rhi-vulkan): surface, swapchain and --rhi vulkan (RHI #24)`
 
 ## Phase 12: the suite, and the record
 

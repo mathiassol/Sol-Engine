@@ -13,6 +13,7 @@ revision.
 | Path | Upstream | Licence |
 |------|----------|---------|
 | `vulkan/vulkan_core.h`, `vulkan/vk_platform.h` | [KhronosGroup/Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | Apache-2.0 OR MIT (SPDX header in the file) |
+| `vulkan/vulkan_win32.h` | KhronosGroup/Vulkan-Headers | Apache-2.0 OR MIT |
 | `vk_video/*` (12 files) | KhronosGroup/Vulkan-Headers | Apache-2.0 OR MIT |
 | `volk.h`, `volk.c` | [zeux/volk](https://github.com/zeux/volk) | MIT (notice at the end of `volk.h`) |
 
@@ -41,8 +42,9 @@ copy in the Windows SDK cannot emit SPIR-V at all.
   `src/vulkan_common.hpp` has a hand-written `to_string(VkResult)` covering the
   results this backend can produce, which fits on a screen.
 - **`vulkan.h`** — it pulls in every platform's surface header behind `#ifdef`s.
-  `volk.h` includes `vulkan_core.h` directly, which is all an offscreen device
-  needs. `vulkan_win32.h` joins this directory when presentation does.
+  `volk.h` includes `vulkan_core.h` directly, and `vulkan_win32.h` is included
+  explicitly beside it for the surface. Every *other* platform's surface header
+  stays out, which is the reason `vulkan.h` itself is not vendored.
 
 ## Do not reformat
 

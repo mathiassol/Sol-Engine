@@ -602,7 +602,6 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         // runs in - the depth gate printed `convention=standard` and gave this
         // away.
         offscreen.depth_convention = device->depth_convention();
-        offscreen.preferred_api = engine::rhi::GraphicsAPI::D3D12;
         auto offscreen_rhi = engine::rhi::d3d12::create_rhi();
         auto offscreen_device = offscreen_rhi ? offscreen_rhi->create_device(offscreen) : nullptr;
         if (!offscreen_device) {
@@ -652,7 +651,6 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         vk_desc.width = 64;
         vk_desc.height = 64;
         vk_desc.depth_convention = device->depth_convention();
-        vk_desc.preferred_api = engine::rhi::GraphicsAPI::Vulkan;
         auto vk_rhi = engine::rhi::vulkan::create_rhi();
         auto vk_device = vk_rhi ? vk_rhi->create_device(vk_desc) : nullptr;
         if (!vk_device) {
@@ -1103,14 +1101,37 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
 
 // The engine body. main() below is only the exception boundary around it.
 int run_app(int argc, char** argv) {
+    // Named once rather than #ifdef'd at each message: a line that says
+    // "unknown backend" without saying which ones exist sends the reader to the
+    // source to find out.
+    constexpr const char* kBackends =
+#if defined(ENGINE_HAS_D3D12) && defined(ENGINE_HAS_VULKAN)
+        "d3d12, vulkan";
+#elif defined(ENGINE_HAS_D3D12)
+        "d3d12";
+#elif defined(ENGINE_HAS_VULKAN)
+        "vulkan";
+#else
+        "none";
+#endif
+
     bool gates_mode = false;
     bool headless_gates = false;
+    // Which backend the session runs on. Both spellings, because --rhi=vulkan
+    // is what gets typed and --rhi vulkan is what gets scripted.
+    std::string_view rhi_name = "d3d12";
     for (int i = 1; i < argc; ++i) {
-        if (std::string_view(argv[i]) == "--gates") {
+        const std::string_view arg(argv[i]);
+        if (arg == "--gates") {
             gates_mode = true;
         }
-        if (std::string_view(argv[i]) == "--gates-cpu") {
+        if (arg == "--gates-cpu") {
             headless_gates = true;
+        }
+        if (arg == "--rhi" && i + 1 < argc) {
+            rhi_name = argv[i + 1];
+        } else if (arg.starts_with("--rhi=")) {
+            rhi_name = arg.substr(6);
         }
     }
 
@@ -1183,9 +1204,34 @@ int run_app(int argc, char** argv) {
     modules.physics = engine::physics::cpu::create_physics();
 #endif
 
-#ifdef ENGINE_HAS_D3D12
-    modules.rhi = engine::rhi::d3d12::create_rhi();
+    // --rhi picks the backend, and asking for one that is not in the build is
+    // fatal rather than a fallback. A fallback would draw a perfectly good
+    // frame with the other backend, and the entire value of having two is being
+    // able to say which one drew the picture.
+    if (rhi_name == "vulkan") {
+#ifdef ENGINE_HAS_VULKAN
+        modules.rhi = engine::rhi::vulkan::create_rhi();
 #endif
+    } else if (rhi_name == "d3d12") {
+#ifdef ENGINE_HAS_D3D12
+        modules.rhi = engine::rhi::d3d12::create_rhi();
+#endif
+    } else {
+        char unknown[192];
+        std::snprintf(unknown, sizeof(unknown),
+            "--rhi %.40s is not a backend. This build has: %s.",
+            std::string(rhi_name).c_str(), kBackends);
+        engine::log(engine::LogLevel::Fatal, engine::LogChannel::Render, unknown);
+        return 1;
+    }
+    if (!modules.rhi) {
+        char missing[192];
+        std::snprintf(missing, sizeof(missing),
+            "--rhi %.40s was not compiled into this build. This build has: %s.",
+            std::string(rhi_name).c_str(), kBackends);
+        engine::log(engine::LogLevel::Fatal, engine::LogChannel::Render, missing);
+        return 1;
+    }
 
     engine::Engine app(std::move(modules));
     SandboxState state;
@@ -1382,7 +1428,6 @@ int run_app(int argc, char** argv) {
     config.window.title = kWindowTitle;
     config.window.width  = 1280;
     config.window.height = 720;
-    config.device.preferred_api = engine::rhi::GraphicsAPI::D3D12;
     // Reversed-Z: near maps to 1, far to 0, which is where D32_FLOAT keeps its
     // precision. One value - the projection, the depth clear, every depth
     // compare, the shadow sampler and the shadow bias sign all derive from it,
