@@ -142,7 +142,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 18 | MSAA render targets on `TextureDesc` | **Done** |  |
 | 9 | UAV textures (compute write) | **Done** |  |
 | 24 | `rhi-vulkan` parity: surface, swapchain, and every virtual the offscreen slice left calling `not_implemented` — then `--rhi vulkan` and the whole gate suite on it | **Done** |  |
-| 25 | `--rhi vulkan` renders a **live frame**: stop the present reporting `VK_ERROR_DEVICE_LOST`, and add a gate that covers the frame loop rather than only the gate suite — the gates never call `Engine::render()`, which is how #24 shipped green with a frame that crashed. Found by Renderer #16; see its ROADMAP entry for the two causes already fixed | **Ready** | |
+| 25 | `--rhi vulkan` under **FIFO**: the second present answers `VK_ERROR_DEVICE_LOST`, so the backend takes IMMEDIATE and warns. Remove that fallback, and add a gate that runs the frame loop under FIFO — the frame-loop gate runs in whatever mode the session chose, which with the fallback is never FIFO. The live frame itself renders now, and `run_frame_loop_gate` covers the present; see the ROADMAP entry for the seven causes measured and ruled out | **Ready** | |
 | 19 | Copy queue: uploads off the graphics timeline | Later | Uploads big enough to stall the graphics queue. Async loading is what would keep a copy queue busy, and it can start on the graphics queue. |
 | 20 | Transient memory pool / resource aliasing for graph transients | Later | Renderer #18 depth+normals — enough transients that peak VRAM is the wall. |
 | 21 | Indirect draw (`ExecuteIndirect`) on the contract | Later | A pass submitting more draws than the CPU can afford to record. Instanced draws already cut that cost a long way. |

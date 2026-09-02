@@ -1394,6 +1394,139 @@ for something the renderer does not actually expose.
 
 ---
 
+## RHI #25 — a live Vulkan frame, and the gate that had never presented (in progress)
+
+**Why:** RHI #24 shipped the whole gate suite green on Vulkan and a first
+windowed frame that crashed. Renderer #16 found it by looking at a frame,
+because no gate could: **every GPU gate drives begin_frame / record / submit /
+wait_idle / read_texture and never presents.** Acquire, the swapchain
+semaphores, the layout the backbuffer must be in, and the driver executing a
+whole 26-pass frame had no coverage at all.
+
+**Gate:** `run_frame_loop_gate` runs the real compiled graph through the app's
+own `on_extract` callback — not a copy of it — for eight frames, which is what
+wraps three frame slots and cycles three swapchain images. It asserts no device
+loss and no ring exhaustion, and it reports the frames it completed rather than
+a boolean. It went red on Vulkan at `frames=2/8` and green on D3D12 at
+`frames=8/8` the moment it existed, which is the only reason any of the rest of
+this was findable.
+
+**State:** `--rhi vulkan` renders continuously — 22 seconds of live frames,
+zero device losses, zero validation messages, on both a windowed session and
+the gate. 100 pass / 0 FAIL on D3D12 Debug and Release with the debug layer at
+0/0/0; 99 / 0 / 1 skip on Vulkan with validation silent.
+
+**Not done:** FIFO. See the bottom of this entry.
+
+**Choice: measure, and stop trusting the reasoning.** Four hypotheses were
+wrong before the right one — semaphore reuse, image layout, per-image fences,
+and a double submit — and each was disproved by an experiment rather than by
+more thought. The two that mattered:
+
+*The four-way experiment.* All 26 passes with the present skipped ran 8/8
+clean; a frame with **no passes at all** and a present died. That moved the
+whole search off the GPU work and onto the present in one run.
+
+*`vkQueueWaitIdle` before the present returned `VK_SUCCESS`.* The device was
+healthy immediately before the call that reported it lost — which is what
+finally pointed at the dispatch table rather than at the hardware.
+
+**Diagnostics were the real deliverable.** The default validation set was
+*silent* through a device loss, so three were added, all under
+ENGINE_GPU_DEBUG:
+
+- **Synchronization validation**, which found a genuine WRITE_AFTER_READ hazard
+  on its first run: the acquire semaphore was waited at
+  `COLOR_ATTACHMENT_OUTPUT`, while the first thing a frame does to a freshly
+  acquired image is a *layout barrier*, which runs at no such stage. The wait is
+  now `ALL_COMMANDS`.
+- **GPU-assisted validation**, which instruments shaders for out-of-bounds
+  descriptor access.
+- **`VK_EXT_device_fault`**, which answered the important question by
+  *failing*: `VK_ERROR_UNKNOWN`, with validation objecting that the device was
+  not in the lost state. A present returning `DEVICE_LOST` on a demonstrably
+  healthy device is not a GPU fault, and that is what redirected the search.
+
+Also added: the acquire and present paths both `return`ed before `vk_failed`
+could log, so a lost device reached the frame loop's FATAL with nothing naming
+the call that reported it. Both now say.
+
+**Five defects, none of which any existing gate could see:**
+
+*1. volk's device dispatch, completely this time.* RHI #24 replaced the direct
+`volkLoadDevice` in `init()` with `make_current()`, which was necessary and not
+sufficient: the destructor never called it and never cleared the record, so a
+destroyed device could remain "current" and a driver reusing that handle would
+make `make_current()` skip its load. `~VulkanDevice` now makes itself current
+before tearing down and forgets itself after.
+
+*2. An ordering inversion in `Engine::render`.* It probed
+`swapchain_color().width()`, and touching the backbuffer is what makes a
+backend acquire — so the acquire ran *before* `RenderGraph::execute` called
+`begin_frame` and the fence that bounds frames in flight. It now asks the
+device for its extent, which is all the check ever wanted. The new gate had
+faithfully reproduced the inversion, and no longer does: a gate that reproduces
+the bug keeps it alive in the one place meant to catch it.
+
+*3. Per-image in-flight tracking, and the deadlock adding it caused.* An image
+can be re-acquired while the frame that last drew it is still in flight, so
+each image remembers that frame's fence. That introduced a hang, because
+`begin_frame` resets the slot's fence and an image pointing at it would wait on
+work not yet submitted. Stale entries are cleared on slot reuse. Measured as a
+hang, not reasoned about: the gate stopped producing output and the process sat
+at a few seconds of CPU forever.
+
+*4. `Common` barriers had an empty source scope.* In synchronization2
+`TOP_OF_PIPE` names *no* stage in a barrier's first synchronization scope, so
+every `Common -> X` transition — including the backbuffer's first barrier each
+frame — synchronised with nothing before it.
+
+*5. The swapchain reported a format it might not have.* The selection loop
+accepted B8G8R8A8 or R8G8B8A8 and the ternary recording the result had
+`RGBA8_UNORM` in **both arms**. `Format` has no BGRA member, so a BGRA surface
+is one this contract cannot name, and the four passes that render straight into
+the backbuffer would hand dynamic rendering a pipeline whose colour format
+disagrees with the attachment. RGBA is preferred now, and a surface that is not
+it says so.
+
+**And one on D3D12, from the same gate.** `TextureDesc` now carries the clear
+colour, because the clear that happens has to match the one the resource was
+created expecting. `scene_color` clears to `{0.08, 0.08, 0.12, 1}` and *two*
+creation paths baked opaque black — eight `ClearRenderTargetView: The clear
+values do not match those passed to resource creation` warnings per eight-frame
+run, invisible until something rendered twice under the debug layer. `Color4`
+moved to `rhi.hpp` so both `commands.hpp` and `resources.hpp` can name it.
+
+### What remains: FIFO
+
+With vsync — `present_interval = 1`, so `VK_PRESENT_MODE_FIFO_KHR` — the
+**second** `vkQueuePresentKHR` of a session answers `VK_ERROR_DEVICE_LOST`.
+With `IMMEDIATE` the identical frame presents 4,946 times in 25 seconds with
+nothing wrong. Ruled out, each by measurement: the GPU work (a no-pass frame
+fails too, and `vkQueueWaitIdle` succeeds immediately before), the image layout
+(verified `PRESENT_SRC_KHR`), semaphore reuse (both rings are nine deep),
+per-image fences (waited), the dispatch table (identical device, queue,
+swapchain and function pointer across both calls), queue present support
+(queried, supported), and the surface format (R8G8B8A8_UNORM).
+
+So the backend takes IMMEDIATE and **says so once per swapchain, at Warn**,
+naming this row. That is a backend which tears and admits it, rather than one
+that does not render. Removing the fallback is the rest of RHI #25, and it owes
+a gate that runs the frame loop under FIFO — because the frame-loop gate as
+written runs in whatever mode the session chose, and with the fallback in place
+that is never FIFO.
+
+**Do not:** do not call `volkLoadDevice` directly — `make_current()` exists so
+the record and the table cannot disagree, and both times that record was wrong
+the symptom was a healthy device returning nonsense. Do not touch
+`swapchain_color()` outside a frame; it acquires. Do not index render-finished
+semaphores by frame slot or by image. Do not add a gate that reproduces the
+ordering it is meant to protect. Do not bake a clear value that the pass does
+not clear to. And do not read a green gate suite as a working backend — that
+sentence is in RHI #24's Do-not list too, and this row is what it cost.
+
+---
+
 ## Renderer #16 — transparency, and three defects a live frame found (done)
 
 **Why:** Nothing in the engine blended. `BlendMode::Alpha` had sat in the RHI

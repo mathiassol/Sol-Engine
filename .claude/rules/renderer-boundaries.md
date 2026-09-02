@@ -38,12 +38,18 @@ swap test this engine is built to pass.
   `--gates` run also stands a Vulkan device up inside it: `Backend parity gate`
   draws one HLSL source through both devices and asserts byte-identical
   readback.
-  - **It does not yet render a live frame.** The present reports
-    `VK_ERROR_DEVICE_LOST` on the first windowed frame, which is RHI #25. The
-    gates cannot see it because they never call `Engine::render()`, and that is
-    the lesson worth carrying: a green suite is not a working backend. Renderer
-    #16 found it by looking at a frame, which is the only way it could have
-    been found.
+  - **It renders a live frame since RHI #25**, and `run_frame_loop_gate` is
+    what keeps it that way: it drives the real compiled graph for eight frames
+    and *presents*, which no other gate does. Before it existed, acquire, the
+    swapchain semaphores, the backbuffer's layout and the driver executing a
+    whole frame had no coverage, and RHI #24 shipped green with a frame that
+    crashed on the first present.
+  - **Vulkan still takes `IMMEDIATE` regardless of vsync**, because FIFO loses
+    the device on the second present (RHI #25). It warns once per swapchain.
+    Expect tearing there; D3D12 honours vsync normally.
+  - The lesson worth carrying past both rows: a green suite is not a working
+    backend. If a change touches presentation, the frame loop, or a barrier,
+    run the app and look at it - `solengine run-gpu` and `solengine run-vk`.
   - So a contract change costs **two** implementations, and **two gate runs**:
     `solengine gates-gpu` and `solengine gates-vk`, each with its debug layer
     on. Shipping GPU work with only one of them is how a defect reaches the
