@@ -368,24 +368,42 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     sandbox::extract_world(translucent, camera.position, assets, false, nullptr,
         arena_translucent, translucent_snapshot);
 
-    // Every draw is either the probe value or 1. Anything else means the field
-    // is being overwritten somewhere along the road.
-    bool opacity_reaches_draw = !translucent_snapshot.draws.empty();
-    for (const engine::renderer::DrawItem& draw : translucent_snapshot.draws) {
-        if (draw.opacity != kProbeOpacity && draw.opacity != 1.f) {
+    // Exactly the probe material's draws changed, and nothing else moved.
+    //
+    // Compared against the baseline draw-by-draw rather than against literal
+    // values: `draws` keeps scene order and the cull is identical, so index i
+    // is the same instance in both snapshots. The first version of this
+    // assertion required every draw to be the probe value or exactly 1, which
+    // silently encoded "every other material is opaque" - and went red the
+    // moment the demo world gained a translucent husky variant. An assertion
+    // that depends on the content it is measuring is an assertion that will
+    // fail for the wrong reason.
+    bool opacity_reaches_draw = !translucent_snapshot.draws.empty()
+        && translucent_snapshot.draws.size() == before.draws.size();
+    engine::usize changed_draws = 0;
+    for (engine::usize i = 0; i < translucent_snapshot.draws.size() && opacity_reaches_draw;
+         ++i) {
+        const engine::f32 was = before.draws[i].opacity;
+        const engine::f32 now = translucent_snapshot.draws[i].opacity;
+        if (now == kProbeOpacity && was != kProbeOpacity) {
+            changed_draws += 1;
+        } else if (now != was) {
             opacity_reaches_draw = false;
         }
     }
-    bool opacity_reaches_instance = !translucent_snapshot.instances.empty();
-    bool probe_instance_found = false;
+    opacity_reaches_draw = opacity_reaches_draw && changed_draws > 0;
+
+    // The same count in the instance array. Counted rather than indexed: the
+    // instance array is a permutation of `draws` grouped by batch, so index i
+    // is not the same instance across two snapshots whose batching differs -
+    // which is precisely what making a material translucent changes.
+    engine::usize probe_instances = 0;
     for (const engine::renderer::InstanceData& inst : translucent_snapshot.instances) {
         if (inst.material_params.z == kProbeOpacity) {
-            probe_instance_found = true;
-        } else if (inst.material_params.z != 1.f) {
-            opacity_reaches_instance = false;
+            probe_instances += 1;
         }
     }
-    opacity_reaches_instance = opacity_reaches_instance && probe_instance_found;
+    const bool opacity_reaches_instance = changed_draws > 0 && probe_instances == changed_draws;
 
     // The pipeline choice, not only the value: some batches must now carry the
     // transparent pipeline and some must still carry the opaque one. This is
@@ -417,12 +435,13 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     // refactor took FrameConstants to 336, which is what it asserts.
     std::snprintf(message, sizeof(message),
         "Material gate: materials=%u handles=%s roughness_is_data=%s opacity_is_data=%s "
-        "probe_material=%u transparent_batches=%zu/%zu layout=%s (%s)",
+        "probe_material=%u changed_draws=%zu probe_instances=%zu "
+        "transparent_batches=%zu/%zu layout=%s (%s)",
         world.material_count, handles_ok ? "yes" : "no",
         (draws_ok && changed) ? "yes" : "no",
         (opacity_reaches_draw && opacity_reaches_instance) ? "yes" : "no",
-        probe_material, transparent_batches, translucent_snapshot.batches.size(),
-        layout_ok ? "336" : "bad",
+        probe_material, changed_draws, probe_instances, transparent_batches,
+        translucent_snapshot.batches.size(), layout_ok ? "336" : "bad",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
@@ -1524,16 +1543,52 @@ bool run_transparency_gate(engine::rhi::IDevice& device,
     const bool opaque_ok = read_opaque && opaque_texel[0] == kSrc[0]
         && opaque_texel[1] == kSrc[1] && opaque_texel[2] == kSrc[2];
 
-    const bool passed = ready && read_blended && read_opaque && blend_ok && blend_alpha_ok
-        && control_ok && opaque_ok;
+    // Where the transparent pass sits, and why each neighbour matters:
+    //   after forward - it blends against opaque geometry
+    //   after motion  - the motion pass needs forward's depth untouched
+    //   after sky     - the sky fills what forward did not, and a glass pane
+    //                   must have the sky behind it
+    //   before bloom  - a bright transparent surface should glow like
+    //                   everything else
+    //
+    // Indices resolved by name, the way run_motion_gate does it. There is no
+    // pass_index helper and this does not add one - a second mechanism for the
+    // same question is how the two drift.
+    engine::renderer::RenderGraph probe;
+    engine::renderer::StandardFrameDesc frame{};
+    frame.log_ready = false;
+    const bool graph_ok = engine::renderer::setup_standard_frame(probe, std::move(frame));
+    int forward_i = -1;
+    int sky_i = -1;
+    int transparent_i = -1;
+    int bloom_i = -1;
+    for (engine::u32 i = 0; i < probe.pass_count(); ++i) {
+        const std::string_view name = probe.pass_name(i);
+        if (name == "forward") {
+            forward_i = static_cast<int>(i);
+        } else if (name == "sky") {
+            sky_i = static_cast<int>(i);
+        } else if (name == "transparent") {
+            transparent_i = static_cast<int>(i);
+        } else if (name == "bloom_down0") {
+            bloom_i = static_cast<int>(i);
+        }
+    }
+    const bool order_ok = graph_ok && forward_i >= 0 && sky_i > forward_i
+        && transparent_i > sky_i && bloom_i > transparent_i;
 
-    char message[320];
+    const bool passed = ready && read_blended && read_opaque && blend_ok && blend_alpha_ok
+        && control_ok && opaque_ok && order_ok;
+
+    char message[384];
     std::snprintf(message, sizeof(message),
         "Transparency gate [%s]: blended=(%u,%u,%u,%u) want=(%d,%d,%d,255) "
-        "control=(%u,%u,%u) want=(%u,%u,%u) opaque_passthrough=(%u,%u,%u) (%s)",
+        "control=(%u,%u,%u) want=(%u,%u,%u) opaque_passthrough=(%u,%u,%u) "
+        "order=forward%d<sky%d<transparent%d<bloom%d (%s)",
         api, over_texel[0], over_texel[1], over_texel[2], over_texel[3], want_r, want_g,
         want_b, control[0], control[1], control[2], kDst[0], kDst[1], kDst[2],
-        opaque_texel[0], opaque_texel[1], opaque_texel[2], passed ? "pass" : "FAIL");
+        opaque_texel[0], opaque_texel[1], opaque_texel[2],
+        forward_i, sky_i, transparent_i, bloom_i, passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
     return passed;

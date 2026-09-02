@@ -169,6 +169,10 @@ struct PassContext {
 };
 
 void record_opaque_draws(PassContext& ctx);
+// The blended half of the forward geometry. Same constants, same bindings,
+// same batch rules as the opaque one - it differs only in which pipeline's
+// batches it takes, so both are defined in terms of one body.
+void record_transparent_draws(PassContext& ctx);
 void record_shadow_draws(PassContext& ctx);
 void record_motion_draws(PassContext& ctx);
 void record_sky(PassContext& ctx);

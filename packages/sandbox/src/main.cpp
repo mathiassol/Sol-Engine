@@ -921,6 +921,17 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         mat.albedo = i;
         mat.metallic = husky_metallic;
         mat.roughness = (i == 0) ? husky_roughness : (0.12f + static_cast<engine::f32>(i) * 0.22f);
+        // One variant translucent, so the blended path is exercised in a real
+        // frame and not only in the gate. The variants are cycled across 63
+        // instances, so these end up scattered in front of and behind opaque
+        // ones - which is what makes the depth test visibly do its job.
+        //
+        // It also shows the documented limitation honestly: where two of them
+        // overlap each other, the blend order is scene order until
+        // Renderer #34 sorts. Better seen here than discovered in a game.
+        if (i == sandbox::kHuskyVariantCount - 1) {
+            mat.opacity = 0.45f;
+        }
         husky_mats[i] = engine::scene::add_material(demo->world, mat);
     }
     for (engine::u32 i = 0; i < kHuskyCount; ++i) {

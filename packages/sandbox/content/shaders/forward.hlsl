@@ -46,7 +46,8 @@ struct PSInput {
     float3 world_pos : TEXCOORD1;
     // Constant across the instance, so nointerpolation - the pixel shader
     // needs it and SV_InstanceID is a vertex-stage input only.
-    nointerpolation float2 material : TEXCOORD2;
+    // x = metallic, y = roughness, z = opacity.
+    nointerpolation float3 material : TEXCOORD2;
 };
 
 PSInput vs_main(VSInput input, uint id : SV_InstanceID) {
@@ -56,7 +57,7 @@ PSInput vs_main(VSInput input, uint id : SV_InstanceID) {
     output.pos = mul(view_proj, world);
     output.world_pos = world.xyz;
     output.normal = mul((float3x3)inst.model, input.normal);
-    output.material = inst.material.xy;
+    output.material = inst.material.xyz;
     output.uv = float2(input.uv.x, 1.0 - input.uv.y);
     return output;
 }
@@ -171,7 +172,8 @@ float3 sample_normal(float3 n, float3 world_pos, float2 uv) {
 
 float4 ps_main(PSInput input) : SV_TARGET {
     float3 n = sample_normal(normalize(input.normal), input.world_pos, input.uv);
-    float3 albedo = albedo_map.Sample(albedo_sampler, input.uv).rgb;
+    float4 albedo_sample = albedo_map.Sample(albedo_sampler, input.uv);
+    float3 albedo = albedo_sample.rgb;
     float4 mr = metallic_roughness_map.Sample(albedo_sampler, input.uv);
     float metallic = saturate(input.material.x * mr.b);
     float roughness = clamp(input.material.y * mr.g, kMinPerceptualRoughness, 1.0);
@@ -200,5 +202,17 @@ float4 ps_main(PSInput input) : SV_TARGET {
         }
     }
 
-    return float4(lit, 1.0);
+    // Texture alpha times material opacity, both of them: the texture gives
+    // per-texel shape - a window frame, a decal - and the material gives a
+    // uniform dimmer. Using only one means faking the other somewhere else.
+    //
+    // The opaque pipeline runs this same shader. Under BlendMode::Opaque the
+    // alpha channel is written but never read as a blend factor, so opaque
+    // output is unchanged - and nothing samples scene_color.a: bloom, TAA and
+    // tonemap all take .rgb.
+    //
+    // This is blending with texture alpha, which is a different thing from
+    // Renderer #33's alpha *test* - a `discard` on a threshold, for foliage
+    // and fences. That row still has work to do.
+    return float4(lit, albedo_sample.a * input.material.z);
 }

@@ -131,6 +131,32 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
     sky.execute = record_sky;
     graph.add_pass(std::move(sky));
 
+    // Transparency, after the sky and before bloom reads scene_color.
+    //
+    // Access::DepthWrite is declared even though the pipeline does not write
+    // depth: the graph's access is about the *attachment binding*, and the
+    // pass has to bind the depth target to test against it. The pipeline's
+    // depth_write = false is what stops the write.
+    //
+    // Unsorted, deliberately - Renderer #34 owns draw ordering. Transparency
+    // against opaque geometry and against the sky is correct because depth
+    // testing still runs; two transparent surfaces that overlap each other
+    // blend in scene order until that row lands.
+    RenderPassDesc transparent{};
+    transparent.name = "transparent";
+    transparent.writes[0] = {scene_color, Access::ColorWrite};
+    transparent.writes[1] = {depth, Access::DepthWrite};
+    transparent.write_count = 2;
+    transparent.reads[0] = {shadow, Access::ShaderRead};
+    transparent.read_count = 1;
+    transparent.clear_color_target = false;
+    transparent.clear_depth = false;
+    transparent.should_execute = [](const RenderSnapshot& snapshot) {
+        return snapshot.pipelines.forward_transparent != nullptr;
+    };
+    transparent.execute = record_transparent_draws;
+    graph.add_pass(std::move(transparent));
+
     for (u32 i = 0; i < bloom::kMips; ++i) {
         const bool first = i == 0;
         RenderPassDesc down{};

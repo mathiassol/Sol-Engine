@@ -153,13 +153,23 @@ rhi::FrameAllocation upload_instances(rhi::IDevice& device,
 // forward pass); otherwise every batch shares one pipeline (shadow, motion).
 template <typename Constants, typename FillFn, typename BindFn>
 void record_draws(PassContext& ctx, rhi::IGraphicsPipeline* pipeline, Constants& constants,
-    FillFn&& fill, BindFn&& bind) {
+    FillFn&& fill, BindFn&& bind, rhi::IGraphicsPipeline* only_pipeline = nullptr) {
     const rhi::FrameAllocation instance_slice = ctx.instances;
     if (!instance_slice.buffer) {
         return;  // nothing to draw, or the frame's upload failed
     }
 
     for (const DrawBatch& batch : ctx.snapshot.batches) {
+        // `only_pipeline` splits one batch list between two passes, which is
+        // what forward and transparent need. Null means every batch, which is
+        // what shadow and motion need - they draw all geometry, transparent
+        // included, each with one pipeline of its own. For motion that is not
+        // optional: it rasterizes with DepthTest::Equal against forward's
+        // depth, so skipping a batch there would write no motion vectors for
+        // it.
+        if (only_pipeline != nullptr && batch.pipeline != only_pipeline) {
+            continue;
+        }
         rhi::IGraphicsPipeline* pso = pipeline ? pipeline : batch.pipeline;
         if (!pso || !batch.vertex_buffer || !batch.index_buffer || batch.instance_count == 0) {
             continue;
@@ -189,7 +199,13 @@ void record_draws(PassContext& ctx, rhi::IGraphicsPipeline* pipeline, Constants&
 
 } // namespace
 
-void record_opaque_draws(PassContext& ctx) {
+// The two geometry passes over scene_color share every constant, every
+// binding and every batch rule; they differ only in which pipeline's batches
+// they take. Factored rather than copied, because the thing most likely to
+// drift between two copies is the lighting constants - and a divergence there
+// is transparent surfaces lit differently from opaque ones, which reads as an
+// art problem.
+static void record_forward_draws(PassContext& ctx, bool transparent) {
     FrameConstants constants{};
     math::Mat4 projection = ctx.snapshot.projection;
     if (!taa::nearly_zero(ctx.snapshot.taa_jitter)) {
@@ -209,6 +225,8 @@ void record_opaque_draws(PassContext& ctx) {
         constants.point_color_intensity[i] = lighting.point_color_intensity[i];
     }
     rhi::ITexture* shadow = ctx.shader_read_count > 0 ? ctx.shader_reads[0] : nullptr;
+    rhi::IGraphicsPipeline* only = transparent ? ctx.snapshot.pipelines.forward_transparent
+                                               : ctx.snapshot.pipelines.forward;
 
     record_draws(ctx, nullptr, constants,
         [](FrameConstants&, const DrawBatch&) {},
@@ -234,8 +252,13 @@ void record_opaque_draws(PassContext& ctx) {
             if (draw.normal_map) {
                 c.cmd.set_shader_resource(6, *draw.normal_map);
             }
-        });
+        },
+        only);
 }
+
+void record_opaque_draws(PassContext& ctx) { record_forward_draws(ctx, false); }
+
+void record_transparent_draws(PassContext& ctx) { record_forward_draws(ctx, true); }
 
 void record_shadow_draws(PassContext& ctx) {
     if (!ctx.snapshot.pipelines.shadow) {

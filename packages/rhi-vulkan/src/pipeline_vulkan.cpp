@@ -244,6 +244,7 @@ std::unique_ptr<IGraphicsPipeline> VulkanDevice::create_graphics_pipeline(
     if (device_ == VK_NULL_HANDLE) {
         return nullptr;
     }
+    make_current();
 
     PipelineRecipe recipe{};
     for (u32 i = 0; i < desc.attribute_count; ++i) {

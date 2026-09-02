@@ -142,7 +142,7 @@ VulkanDevice::~VulkanDevice() {
         }
         swapchain_depth_.reset();
         destroy_swapchain();
-        for (u32 i = 0; i < kFrameCount; ++i) {
+        for (u32 i = 0; i < kAcquireSemaphores; ++i) {
             if (acquire_[i] != VK_NULL_HANDLE) {
                 vkDestroySemaphore(device_, acquire_[i], nullptr);
             }
@@ -283,8 +283,16 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
         VkBufferCreateInfo ring_info{};
         ring_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         ring_info.size = kFrameRingBytes;
+        // STORAGE_BUFFER as well, because the frame's per-instance array is a
+        // ring slice bound with set_structured_buffer - RenderGraph::execute
+        // uploads it once and every geometry pass reads it as a structured
+        // buffer. Without the bit that bind is
+        // VUID-VkWriteDescriptorSet-descriptorType-00331, ten times a frame,
+        // and no gate sees it: the gates bind ring slices as vertex and
+        // uniform buffers but only a real frame binds one as storage.
         ring_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
-            | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+            | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+            | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         VkBuffer ring = VK_NULL_HANDLE;
         if (vk_failed(vkCreateBuffer(device_, &ring_info, nullptr, &ring), "frame ring")) {
             return false;
@@ -328,7 +336,7 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     if (!offscreen_) {
         VkSemaphoreCreateInfo semaphore_info{};
         semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        for (u32 i = 0; i < kFrameCount; ++i) {
+        for (u32 i = 0; i < kAcquireSemaphores; ++i) {
             if (vk_failed(vkCreateSemaphore(device_, &semaphore_info, nullptr, &acquire_[i]),
                     "acquire semaphore")) {
                 return false;
@@ -536,6 +544,10 @@ ISwapchain& VulkanDevice::swapchain() {
 
 ITexture& VulkanDevice::swapchain_color() {
     ENGINE_ASSERT_MSG(!offscreen_, "offscreen device has no swapchain colour target");
+    // Before the acquire, and this is the site that found the bug: it is the
+    // first Vulkan call a live frame makes, because engine.cpp probes the
+    // backbuffer's width here before anything else.
+    make_current();
     // The acquire, on first use. See holds_image_.
     ensure_acquired();
     // The acquired image, not frame_index_'s. A swapchain hands back whatever
@@ -561,6 +573,7 @@ void VulkanDevice::present() {
         return;
     }
     holds_image_ = false;
+    pending_acquire_ = VK_NULL_HANDLE;
     VkPresentInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     info.waitSemaphoreCount = 1;
@@ -579,6 +592,10 @@ void VulkanDevice::present() {
         return;
     }
     if (result == VK_ERROR_DEVICE_LOST) {
+        // Logged, because this site and the acquire below both `return` before
+        // vk_failed would have said anything - so a lost device reached the
+        // frame loop's FATAL with nothing naming the call that reported it.
+        log(LogLevel::Error, LogChannel::Render, "Vulkan present reported VK_ERROR_DEVICE_LOST");
         device_lost_ = true;
         return;
     }
@@ -589,6 +606,7 @@ void VulkanDevice::begin_frame() {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
+    make_current();
     // Advance, then wait *this* slot. Offscreen has no backbuffer index to
     // follow, so the slot count is what bounds frames in flight - the same
     // shape the other backend's offscreen path uses.
@@ -603,7 +621,6 @@ void VulkanDevice::begin_frame() {
     vkResetDescriptorPool(device_, descriptor_pools_[frame_index_], 0);
     frame_ring_offset_ = 0;
     frame_ring_exhausted_ = false;
-    holds_image_ = false;
 
     if (offscreen_) {
         return;
@@ -619,18 +636,36 @@ void VulkanDevice::begin_frame() {
     }
 }
 
+// The device volk's globals currently point at. File-static because volk's
+// table is process-wide - a member would not know about the other devices.
+namespace {
+VkDevice g_current_device = VK_NULL_HANDLE;
+}
+
+void VulkanDevice::make_current() {
+    if (device_ == VK_NULL_HANDLE || g_current_device == device_) {
+        return;
+    }
+    volkLoadDevice(device_);
+    g_current_device = device_;
+}
+
 void VulkanDevice::ensure_acquired() {
     if (holds_image_ || offscreen_ || swapchain_ == VK_NULL_HANDLE
         || swapchain_extent_.width == 0) {
         return;
     }
-    const VkResult acquired = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
-        acquire_[frame_index_], VK_NULL_HANDLE, &acquired_image_);
+    const VkSemaphore semaphore = acquire_[acquire_cursor_];
+    acquire_cursor_ = (acquire_cursor_ + 1) % kAcquireSemaphores;
+    const VkResult acquired = vkAcquireNextImageKHR(
+        device_, swapchain_, UINT64_MAX, semaphore, VK_NULL_HANDLE, &acquired_image_);
     if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchain_stale_ = true;
         return;
     }
     if (acquired == VK_ERROR_DEVICE_LOST) {
+        log(LogLevel::Error, LogChannel::Render,
+            "Vulkan image acquire reported VK_ERROR_DEVICE_LOST");
         device_lost_ = true;
         return;
     }
@@ -642,12 +677,14 @@ void VulkanDevice::ensure_acquired() {
         return;
     }
     holds_image_ = true;
+    pending_acquire_ = semaphore;
 }
 
 void VulkanDevice::submit() {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
+    make_current();
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
@@ -662,9 +699,9 @@ void VulkanDevice::submit() {
     // present in front of it. Wiring these in unconditionally is two validation
     // errors - a wait with no matching signal, and a signal on a semaphore
     // still signalled from three frames ago.
-    if (holds_image_) {
+    if (holds_image_ && pending_acquire_ != VK_NULL_HANDLE) {
         submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &acquire_[frame_index_];
+        submit.pWaitSemaphores = &pending_acquire_;
         submit.pWaitDstStageMask = &wait_stage;
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &render_finished_[acquired_image_];
@@ -677,6 +714,7 @@ void VulkanDevice::submit() {
 }
 
 void VulkanDevice::end_frame() {
+    make_current();
     // The frame trace found that nothing outside the gates calls submit():
     // RenderGraph::execute calls end_frame and expects it to submit *and*
     // present, which is what the other backend's end_frame does. An end_frame
@@ -695,6 +733,7 @@ void VulkanDevice::wait_idle() {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
+    make_current();
     // The queue, not one fence: a caller that submitted nothing this frame
     // would otherwise block on a fence that was never signalled, and every
     // slot's work has to be finished before this returns anyway.
@@ -759,6 +798,7 @@ std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, con
     if (device_ == VK_NULL_HANDLE || desc.size == 0) {
         return nullptr;
     }
+    make_current();
 
     VkBufferUsageFlags usage = 0;
     // Host-visible for the kinds the offscreen path uses. Vertex, Index and
@@ -955,6 +995,7 @@ std::unique_ptr<ITexture> VulkanDevice::create_texture(
     if (device_ == VK_NULL_HANDLE) {
         return nullptr;
     }
+    make_current();
 
     const VkFormat format = to_vulkan_format(desc.format);
     if (format == VK_FORMAT_UNDEFINED) {
@@ -1167,6 +1208,7 @@ std::unique_ptr<ISampler> VulkanDevice::create_sampler(const SamplerDesc& desc) 
     if (device_ == VK_NULL_HANDLE) {
         return nullptr;
     }
+    make_current();
     const VkSampler sampler = create_vulkan_sampler(device_, desc);
     if (sampler == VK_NULL_HANDLE) {
         return nullptr;
@@ -1195,6 +1237,7 @@ void VulkanDevice::read_buffer(IBuffer& buffer, usize offset, void* data, usize 
 }
 
 bool VulkanDevice::read_texture(ITexture& texture, void* out, usize size) {
+    make_current();
     auto& vk_texture = static_cast<VulkanTexture&>(texture);
     ENGINE_ASSERT(out != nullptr);
     if (device_ == VK_NULL_HANDLE || vk_texture.image() == VK_NULL_HANDLE) {
@@ -1381,6 +1424,7 @@ void VulkanDevice::set_debug_name(ITexture& texture, std::string_view name) {
 // backend cannot be mistaken for a working one.
 
 FrameAllocation VulkanDevice::alloc_frame_memory(usize size) {
+    make_current();
     ENGINE_ASSERT(size > 0);
     if (frame_ring_[frame_index_] == nullptr) {
         return {};
@@ -1427,6 +1471,7 @@ std::unique_ptr<IComputePipeline> VulkanDevice::create_compute_pipeline(
     if (device_ == VK_NULL_HANDLE) {
         return nullptr;
     }
+    make_current();
     if (!is_spirv(desc.compute_shader, "compute shader")) {
         return nullptr;
     }

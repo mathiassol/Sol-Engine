@@ -503,6 +503,30 @@ public:
     // Acquires this frame's image if it has not already. Called from
     // swapchain_color(), which is the first thing a presenting frame touches.
     void ensure_acquired();
+
+    // Makes this device's function pointers the ones volk's globals resolve
+    // to, if they are not already.
+    //
+    // volk keeps **one** device dispatch table for the whole process:
+    // volkLoadDevice fills global pointers from vkGetDeviceProcAddr, which
+    // returns per-*device* functions. So the last device created owns the
+    // table, and calling through it with another device's handles is
+    // undefined - in practice an access violation with nothing logged, from a
+    // driver that never saw a valid call.
+    //
+    // That is not hypothetical. `--gates` stands up two offscreen Vulkan
+    // devices for the parity gates while the windowed one is alive, so by the
+    // time the frame loop runs the table belongs to a device that has already
+    // been destroyed. The first live frame died in vkAcquireNextImageKHR, and
+    // the gates could not see it because they never present.
+    //
+    // The `!=` guard is what makes this free: devices only alternate around
+    // creation and destruction, so in a running frame loop this compares two
+    // pointers and returns. volkLoadDeviceTable would avoid the global
+    // entirely, at the cost of routing every call in this package through a
+    // table member - which is a much larger change to make a rarer path
+    // cheaper.
+    void make_current();
     void present();
     // maxUniformBufferRange, read once at init.
     //
@@ -543,6 +567,9 @@ private:
     bool frame_ring_exhausted_ = false;
 
     static constexpr u32 kMaxSwapchainImages = 8;
+    // One more than the images, so an acquire never reuses a semaphore that
+    // an un-presented acquire is still holding.
+    static constexpr u32 kAcquireSemaphores = kMaxSwapchainImages + 1;
 
     bool create_surface(void* window_handle);
     bool create_swapchain(u32 width, u32 height);
@@ -556,28 +583,45 @@ private:
     std::unique_ptr<ITexture> swapchain_depth_;
     u32 swapchain_image_count_ = 0;
     u32 acquired_image_ = 0;
-    // Whether *this* frame holds an acquired image. Acquiring is paired with
-    // presenting, not with begin_frame: the gates drive begin_frame, record,
+    // Whether an acquired image is currently held. Acquiring is paired with
+    // *presenting*, not with begin_frame: the gates drive begin_frame, record,
     // submit and wait dozens of times without ever presenting, and a
     // begin_frame that acquired unconditionally handed out more images than
     // the swapchain owns - vkAcquireNextImageKHR then complains that forward
     // progress cannot be guaranteed (VUID-07783), and the submits wait on
     // semaphores nothing will signal (VUID-03238). So the acquire happens on
     // first use of the backbuffer, which only a presenting frame reaches.
+    //
+    // Cleared by present(), and deliberately **not** by begin_frame(): the
+    // first touch of the backbuffer each frame happens before begin_frame, so
+    // clearing it there made every frame acquire twice and present once.
     bool holds_image_ = false;
     bool swapchain_stale_ = false;
     // One pair per slot. The acquire semaphore is waited by the frame's submit
     // and the render-finished one by the present, so both have to be per-slot
     // or two frames in flight signal the same semaphore twice.
-    // Acquire is per frame slot because there is no image index until the
-    // acquire returns one. Render-finished is per *image*, which is the
-    // difference that matters: a binary semaphore must be unsignalled when it
-    // is signalled again, and the fence for a frame slot says the submit
-    // finished - it says nothing about whether the present that waited on the
-    // semaphore has. Indexing both by slot made the third frame signal a
-    // semaphore the first frame's present had not consumed.
-    VkSemaphore acquire_[kFrameCount]{};
+    // Neither array is indexed by frame slot, and both learned that the hard
+    // way.
+    //
+    // **Render-finished is per image.** A frame slot's fence says the submit
+    // finished; it says nothing about whether the present that waited on the
+    // semaphore has. Indexed by slot, the third frame signalled a semaphore
+    // the first frame's present had not consumed.
+    //
+    // **Acquire is per acquire**, walked by acquire_cursor_. There is no image
+    // index until the acquire returns one, so it cannot be per image - but it
+    // cannot be per frame slot either, because the acquire does not happen
+    // inside the frame that presents it. Engine::render() probes
+    // swapchain_color().width() *before* RenderGraph::execute calls
+    // begin_frame, so the acquire lands under the previous slot's index and
+    // the submit would then wait on a semaphore nothing had signalled.
+    VkSemaphore acquire_[kAcquireSemaphores]{};
     VkSemaphore render_finished_[kMaxSwapchainImages]{};
+    u32 acquire_cursor_ = 0;
+    // The semaphore the live acquire signalled, consumed by the next submit.
+    // Held explicitly rather than recomputed, because the only code that knows
+    // which one was used is the acquire itself.
+    VkSemaphore pending_acquire_ = VK_NULL_HANDLE;
 
     VulkanCommandList commands_;
     VulkanSwapchain swapchain_wrapper_;
