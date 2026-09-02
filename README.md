@@ -92,9 +92,31 @@ need a rebuild to be picked up.
 .\build\bin\Debug\sandbox.exe
 ```
 
-`run.bat` at the repo root does the same interactively — it prompts for GPU
-debug and any extra arguments (`--gates`, `--set r.aa=taa`), checks the binary
-exists and tells you how to build it if not, then prints the exit code.
+**`solengine.bat`** at the repo root is the one entry point for all of the
+above and everything below. Run it bare for a menu, or name a command:
+
+```powershell
+.\solengine.bat                                       menu
+.\solengine.bat gates-gpu                             gates, both debug layers armed
+.\solengine.bat run --set r.aa=taa --set r.quality=high
+.\solengine.bat check                                 gates + invariants
+.\solengine.bat help                                  every command
+```
+
+The exit code is the command's, so it scripts. `solengine env` reports the
+SDKs, tool versions and binary ages; `solengine logs` tails the newest engine
+log; `solengine clean-shaders` empties the shader disk cache.
+
+Three things it does that the raw commands do not:
+
+- **Warns when the binary is stale** — a source file newer than
+  `sandbox.exe` means the gates are about to pass against code that is no
+  longer on disk.
+- **Tallies the gate run** (`87 pass, 0 FAIL, 0 skip`) from a teed copy of the
+  output, so a `skip` cannot hide in three hundred lines of scrollback.
+- **Recovers `VULKAN_SDK`** from the machine environment when the shell does
+  not have it — a terminal opened before the SDK was installed otherwise looks
+  exactly like "no SPIR-V compiler".
 
 **Ship / play `game.exe`** — Release, no GPU debug layer, content,
 `content.pak`, and DXC DLLs (`dxcompiler.dll`, `dxil.dll`) next to the exe.
@@ -219,6 +241,8 @@ pwsh -NoProfile -File tools/check-invariants.ps1
 
 Without PowerShell 7, add the policy the shipped shell does not grant itself:
 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-invariants.ps1`.
+`solengine invariants` picks whichever shell is present; `solengine
+invariants-51` forces the 5.1 path CI also exercises.
 
 CI compiles Debug and Release `game`, configures with each `ENGINE_*` option
 off, and runs the invariant checks under both shells. It does **not** run
@@ -226,7 +250,10 @@ off, and runs the invariant checks under both shells. It does **not** run
 hardware one.
 Run the gates locally before pushing.
 
-**Optional:** in **Debug**, `ENGINE_GPU_DEBUG=1` enables the D3D12 debug layer and shader debug flags. Release `game.exe` ignores it.
+**Optional:** in **Debug**, `ENGINE_GPU_DEBUG=1` enables the D3D12 debug layer,
+the Vulkan validation layer where the SDK installed it, and shader debug flags.
+Release `game.exe` ignores it. `solengine gates-gpu` is that variable plus
+`--gates`, which is the combination to run before shipping GPU work.
 
 ## Project layout
 
