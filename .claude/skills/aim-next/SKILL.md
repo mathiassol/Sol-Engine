@@ -39,6 +39,10 @@ and it is the reason this skill is short:
   `available_but_blocked` (a Ready row that still names a blocker) and
   `later_without_reason` (a Later row naming neither a row nor a wall). Both are
   contradictions in the backlog rather than work, and worth one line if non-empty
+- **`open_decisions`** — how many questions an audit raised and would not
+  answer, still unanswered. Often the highest-value work available, and **not**
+  roadmap rows. If it is non-zero, run `aim decisions` and read them: a question
+  raised three times is one nobody has been willing to make
 - **`the_bar`** — the project's own standard. Judge against that, not against
   what is reasonable for its size
 
@@ -161,7 +165,7 @@ the user asked what to *consider*.
 | **Build** | Roadmap rows: one category, or a cluster across two sharing a foundation |
 | **Strengthen** | Make what exists harder to break: a ceiling, a silent failure, a missing gate. **The `high` findings with `covered_by_check: false` are this list** — you do not have to invent it |
 | **Smooth** | Reduce friction: setup, CI, docs, AI tooling, repository hygiene |
-| **Decide** | An open judgement call blocking future work, where the deliverable is the decision |
+| **Decide** | An open judgement call blocking future work, where the deliverable is the decision. **`aim decisions` is this list** — the questions audits refused to answer, with the one raised most often first |
 
 Each gets a few lines: **a name** as the user would say it; **why now** with the
 numbers from Steps 1–2; **what it looks like** — two or three example rows,

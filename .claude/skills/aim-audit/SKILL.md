@@ -273,6 +273,15 @@ Set `commit_sha` to the commit you measured (Pass 0) and `commit_subject` to its
 subject line. Staleness is computed from that later, so a wrong sha makes every
 future "how old is this" answer wrong.
 
+**Submit the decisions too.** Every question that fails the admission test in
+Pass 7 goes in `decisions[]` on the audit document — `code`, `metric`, `title`
+(the question in one line, which is also its identity), `question` (the decision
+in full), and `failed_test`. These are the audit's highest-value output, and
+until they had a home they were written to a file the next audit overwrote.
+Raising is idempotent: a question already open under the same title bumps its
+count rather than duplicating, so re-raising an unanswered one is correct and
+expected. The response reports `decisions_raised` and `decisions_re_raised`.
+
 `state_summary` is the plain-language paragraph the scorecard leads with: what
 this engine is, what it can build today, what it cannot. **No `G` codes and no
 finding codes in it, or in any grade `summary`** — the server rejects those
@@ -363,9 +372,10 @@ Execute with `/aim-fix`.
 
 ## Needs a decision — not executed
 
-### <ID> — <title>
-- **Failed:** test <n> — <why>
-- **The decision:** <the actual question the user has to answer>
+Recorded on the server by this audit; `aim decisions` is the live list. Listed
+here as an index only, so the plan reads completely on its own.
+
+- **<ID>** — <the question in one line>
 ```
 
 Task IDs match the finding codes they come from. If nothing passes the admission
@@ -378,9 +388,23 @@ Six lines in chat: the grades, one clause each on why. Then the audit's URL on
 the dashboard, the plan's task and phase counts, and anything you deliberately
 did not examine (which also goes in `notes_not_examined`).
 
-Only now may you look at previous audits. `aim audit list` and
-`aim audit show <id>` are the comparison, and the dashboard renders the history
-without you writing a "since last time" section.
+Only now may you look at previous audits, and there is a command for it:
+
+```bash
+pwsh -NoProfile -File tools/aim.ps1 audit diff
+```
+
+That returns grade movement in bands, which findings carried over, which are
+new, which are no longer reported, and **`persistent`** — the ones now reported
+three times or more. Lead your comparison with that list. A finding on its third
+audit means either the fix did not work or the diagnosis was wrong, and both
+matter more than any grade that moved a notch.
+
+Two cautions the endpoint states and you should repeat rather than smooth over:
+a finding in `gone` may be fixed, reworded past the matcher, or in an area this
+audit did not examine — only the first is good news — and anything in `possible`
+is a near-match the matcher deliberately refused to decide, so it is yours to
+confirm.
 
 ## When this goes wrong
 

@@ -119,10 +119,18 @@ Then push (standing instruction for `main`) and report:
 
 - what landed per phase, with commit hashes;
 - anything skipped, and why;
-- **everything still in Needs a decision**, as questions the user can answer.
-  That list is the real output of this step — it is the part the plan
-  deliberately would not decide for them, and it is what the next roadmap row or
-  design spec comes from.
+- **everything still open in `aim decisions`**, as questions the user can
+  answer. That list is the real output of this step — the part the plan
+  deliberately would not decide for them, and where the next roadmap row or
+  design spec comes from. It lives on the server now rather than in a section of
+  a file the next audit overwrites, so answering one is a real action:
+
+  ```bash
+  pwsh -NoProfile -File tools/aim.ps1 decisions answer <code> --note "what was decided" --ref <where it lives>
+  ```
+
+  If applying a phase happened to settle one, answer it here rather than leaving
+  it open — that is the whole point of it having a status.
 
 Delete nothing. The plan stays until the next `/aim-audit` overwrites it.
 

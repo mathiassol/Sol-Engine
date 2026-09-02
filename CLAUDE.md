@@ -94,6 +94,19 @@ directory is not on PATH, so calling `aim` bare is what fails. Start with
 endpoints by decision, so the plan is the only part of the loop the repo still
 owns end to end.
 
+Two commands worth knowing outside the skills, because they answer questions the
+repo cannot:
+
+- `tools/aim.ps1 audit diff` — what changed since the previous audit: grade
+  movement, and which findings **carried over**. A finding reported three times
+  means the fix did not work or the diagnosis was wrong. Only safe to read
+  *after* submitting an audit, which is why it is a separate command.
+- `tools/aim.ps1 decisions` — the questions an audit raised and deliberately
+  would not answer, because answering one changes behaviour, an API, or what a
+  word in the backlog means. Answer one with
+  `decisions answer <code> --note "..." --ref <where>`. These used to live only
+  in PLAN.md, which every audit overwrote.
+
 The older skills still work and are not deprecated — the whole `analizeMax`
 family is intact. **One sharp edge:** `/analizeMax-metric` derives from the
 newest `docs/analysis/*-full.md`, and `/aim-audit` writes no such file. Run it
