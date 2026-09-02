@@ -1042,6 +1042,66 @@ Add-Result 'shader-target' `
     $targetViolations
 
 
+# ── 18. Skill frontmatter says what it looks like it says ─────────────────
+# In YAML a space-then-hash starts a comment, so an unquoted value carrying a
+# row reference is silently cut at it. `description: ... Invoke as /aim-row
+# renderer #16.` parsed as `... Invoke as /aim-row renderer` - losing the worked
+# example and, in two skills, the entire "not for this, use that instead"
+# clause. Those two fields are what the model reads to decide whether a skill
+# applies, so the truncation changes behaviour while the file still looks right.
+# It went unnoticed until the harness printed a skill listing back.
+#
+# Also checks name matches its directory, because a skill is invoked by
+# directory name and a mismatched `name:` is addressable by neither reliably.
+$skillViolations = @()
+$skillScanned = 0
+$skillFiles = Get-ChildItem -Path '.claude/skills' -Recurse -File -Filter 'SKILL.md' -EA 0
+foreach ($file in $skillFiles) {
+    $lines = Get-Content -LiteralPath $file.FullName
+    $rel = ($file.FullName.Substring($repo.Length + 1)) -replace '\\', '/'
+    if ($lines.Count -lt 2 -or $lines[0].Trim() -ne '---') {
+        $skillViolations += "${rel}:1: no YAML frontmatter - the first line must be '---'."
+        continue
+    }
+    # The frontmatter is everything up to the next bare '---'.
+    $end = -1
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -eq '---') { $end = $i; break }
+    }
+    if ($end -lt 0) {
+        $skillViolations += "${rel}:1: frontmatter is never closed by a '---'."
+        continue
+    }
+    $skillScanned++
+    $dir = Split-Path -Leaf (Split-Path -Parent $file.FullName)
+    $sawName = $false
+    for ($i = 1; $i -lt $end; $i++) {
+        $line = $lines[$i]
+        if ($line -match '^name:\s*(.+?)\s*$') {
+            $sawName = $true
+            $declared = $Matches[1].Trim([char]39, [char]34)
+            if ($declared -ne $dir) {
+                $skillViolations += ("${rel}:" + ($i + 1) + ": name '$declared' does not match " +
+                    "its directory '$dir' - a skill is invoked by directory name.")
+            }
+        }
+        if ($line -match '^(description|when_to_use):\s*(.*)$') {
+            $field = $Matches[1]
+            $value = $Matches[2]
+            $quoted = $value.StartsWith([char]39) -or $value.StartsWith([char]34)
+            if ((-not $quoted) -and $value -match '\s#') {
+                $skillViolations += ("${rel}:" + ($i + 1) + ": $field is unquoted and contains ' #', " +
+                    'so YAML cuts it there and the rest is lost. Wrap the value in single quotes.')
+            }
+        }
+    }
+    if (-not $sawName) { $skillViolations += "${rel}:1: frontmatter has no 'name:'." }
+}
+Add-Result 'skill-frontmatter' `
+    "$skillScanned skills, frontmatter intact and named after its directory" `
+    $skillViolations
+
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 

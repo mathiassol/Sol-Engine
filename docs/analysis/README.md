@@ -7,7 +7,7 @@ here is overwritten or rotated on the next run.
 |---------|------|
 | `/analizeMax [core\|max\|<metrics>]` | The audit. Measures the tree, researches externally, grades six dimensions. Publishes the full report and the hub; generates metric reports only for what the argument names, by invoking `/analizeMax-metric`. Expensive. |
 | `/analizeMax-metric <name>` | Expands one dimension into a working document, and is the **only** thing that writes or publishes a metric page. Pure derivation from the newest full report — no build, no research, no re-grading. Cheap. |
-| `/analizeMax-execute` | Applies `PLAN.md`, normally or fanned out across subagents or a workflow. |
+| `/analizeMax-execute` | Applies `PLAN.md`, normally or fanned out across subagents or a workflow. Superseded by `/aim-fix`, which does the same job against the same file; both still work. |
 | `/analizeMax-repair` | Repairs drift: validates every format, creates a missing metric *file*, restores a lost registry URL, re-publishes what is actually broken. Not needed after a normal audit, and it never generates a metric report. |
 
 ## Files
@@ -16,7 +16,7 @@ here is overwritten or rotated on the next run.
 |------|-----------|
 | `LATEST.md` | The one-page summary. Its scorecard is the **hub**. **Overwritten every run.** |
 | `YYYY-MM-DD-HHMM-full.md` | The full report. The **five newest are kept**; older ones are deleted automatically. |
-| `PLAN.md` | The phased remediation plan. **Overwritten every run.** Applied by `/analizeMax-execute`. |
+| `PLAN.md` | The phased remediation plan. **Overwritten every run.** Written by `/analizeMax` or `/aim-audit`; applied by `/aim-fix` (or the older `/analizeMax-execute`). |
 | `metric-<name>.md` | One metric expanded: a 1–2 page report plus the complete ordered action list. **Overwritten per metric**, so all six coexist. |
 | `artifacts.json` | The permanent artifact URLs, including the roadmap page's. **Never deleted.** See below. |
 

@@ -9,9 +9,10 @@ file doesn't cover.
 
 - **What to work on**: [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — pick one
   **Ready** row. Picking rules: [docs/PICKING.md](docs/PICKING.md).
-  Not sure what to pick? `/whatnow` reads the tree, the gates, CI, the
-  backlog's dependency graph and the newest audit, and offers three
-  directions with the evidence for each. It suggests; it does not start.
+  Not sure what to pick? `/aim-next` reads git state, the gates and invariants,
+  and asks the service for leverage, audit staleness and the graph verdict, then
+  offers three directions with the evidence for each. It suggests; it does not
+  start. (`/whatnow` is the older equivalent that derives all of that by hand.)
 - **Canonical plan / changelog**: [docs/ROADMAP.md](docs/ROADMAP.md) — every
   shipped feature has a dated Why/Choice/Gate/Do-not entry there.
 - These two files are the source of truth. There is no separate dashboard —
@@ -39,9 +40,9 @@ Separately, `/analizeMax` audits the whole engine — code and non-code — and
 grades six dimensions against an absolute standard. It is expensive and
 deliberate: run it to get the real picture, not during feature work. Output
 lands in [docs/analysis/](docs/analysis/README.md), including a phased plan
-that `/analizeMax-execute` applies — normally, across subagents, or as a
-workflow. Only fixes that need no approval reach that plan; judgement calls
-stay on a separate list.
+that `/analizeMax-execute` applies. Only fixes that need no approval reach that
+plan; judgement calls stay on a separate list. The `/aim-audit` + `/aim-fix`
+pair below is the current path for both halves of that.
 
 By default it publishes only the report and the scorecard; `/analizeMax core`
 adds the stability, architecture and capability reports, `/analizeMax max` adds
@@ -75,6 +76,7 @@ an agent to author:
 | `/aim-row` | `/roadmap` | The row, its blockers, what waits on it and its Do-not lines come from the server |
 | `/aim-ship` | `/ship-feature` | The server names which Later rows just became Ready, and round-trips the map to catch a hand-edit the parser reads differently. No artifact to republish |
 | `/aim-audit` | `/analizeMax` | The rubric is fetched, nine validation rules are enforced server-side, and no HTML is written |
+| `/aim-fix` | `/analizeMax-execute` | Runs the plan directly instead of always asking which of three modes to use — the plan is small by construction, so the question had one answer. Modes are still there as an argument |
 
 Everything is reached through one wrapper — `pwsh -NoProfile -File tools/aim.ps1
 <cmd>` — which resolves `aim` from PATH, npm's global directory, or the sibling
@@ -82,11 +84,21 @@ checkout via node. Skills run in a non-interactive shell where npm's shim
 directory is not on PATH, so calling `aim` bare is what fails. Start with
 `tools/aim.ps1 doctor`.
 
-The older skills still work and are not deprecated: **`/analizeMax-execute` is
-still the only way to apply a plan**, since the service has no plan endpoints by
-decision, and `/aim-audit` writes `docs/analysis/PLAN.md` for it. The repo stays
-canonical for the roadmap file, the gates and the rules — if the service is down,
-commit anyway and re-import later.
+`/aim-fix` completes the set: it applies the `docs/analysis/PLAN.md` that
+`/aim-audit` writes. That one file stays local because the service has no plan
+endpoints by decision, so the plan is the only part of the loop the repo still
+owns end to end.
+
+The older skills still work and are not deprecated — the whole `analizeMax`
+family is intact. **One sharp edge:** `/analizeMax-metric` derives from the
+newest `docs/analysis/*-full.md`, and `/aim-audit` writes no such file. Run it
+after an `/aim-audit` and it will silently describe the tree the last
+`/analizeMax` measured, not the current one. For per-metric detail from a new
+audit, read the report view on the dashboard; to regenerate a metric *document*,
+run `/analizeMax` first so there is a report to derive from.
+
+The repo also stays canonical for the roadmap file, the gates and the rules: if
+the service is down, commit anyway and re-import later.
 
 ## Non-negotiables
 
@@ -137,7 +149,7 @@ is what sets `RemoteSigned`. Under 5.1 the command needs
 `-ExecutionPolicy Bypass`. The script itself is compatible with both, and CI
 runs it under both.
 
-Machine-checks the non-negotiables above plus doc-level drift. Seventeen checks:
+Machine-checks the non-negotiables above plus doc-level drift. Eighteen checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
@@ -162,6 +174,12 @@ returns early, and every gate after it in that function silently does not run.
 That cost fifty gates twice, with a green pass count both times — nothing fails,
 the gates are just absent, which no total can show. Set it from the device:
 `shader_target_for(device)`.
+And **skill-frontmatter** — every `.claude/skills/*/SKILL.md` opening with closed
+YAML frontmatter, whose `name` matches its directory, and whose `description` and
+`when_to_use` are quoted if they contain a ` #`. In YAML a space-then-hash starts
+a comment, so `Invoke as /aim-row renderer #16.` silently parsed as `Invoke as
+/aim-row renderer` — and those two fields are what the model reads to decide
+whether a skill applies, so the value was cut without the file looking wrong.
 That map check reads
 ENGINE_MAP.md as a graph: every `Category #N` in a **Finish first** must
 resolve, a Later row whose named blockers are all Done must be flipped to
