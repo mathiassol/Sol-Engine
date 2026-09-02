@@ -7,6 +7,19 @@
 
 namespace engine::rhi {
 
+// A clear colour, and the only place the RHI names one.
+//
+// Lives here rather than in commands.hpp because both commands.hpp and
+// resources.hpp need it - a render pass says what to clear to, and a texture
+// says what it was created expecting - and commands.hpp includes
+// resources.hpp, so the dependency only runs one way.
+struct Color4 {
+    f32 r = 0.f;
+    f32 g = 0.f;
+    f32 b = 0.f;
+    f32 a = 1.f;
+};
+
 enum class GraphicsAPI : u8 {
     None,
     D3D12,

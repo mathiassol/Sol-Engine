@@ -135,6 +135,24 @@ bool run_motion_gate(const ForwardDemo& demo);
 
 bool run_pcf_gate();
 
+// RHI #25: the frame loop itself, which nothing covered.
+//
+// Every other GPU gate drives begin_frame / record / submit / wait_idle /
+// read_texture and **never presents**. So the whole present path - acquire,
+// the swapchain semaphores, the layout the backbuffer must be in, and the
+// driver actually executing a full 26-pass frame - had no coverage at all,
+// and RHI #24 shipped a Vulkan backend whose suite was green and whose first
+// live frame crashed.
+//
+// This runs the real compiled graph through the real extract, the same way
+// Engine::render() does, for enough frames to wrap the slot ring and cycle
+// the swapchain images. `extract` is the app's own on_extract callback rather
+// than a copy of it: a gate that built its own snapshot would stop resembling
+// the frame it is meant to protect.
+bool run_frame_loop_gate(engine::rhi::IDevice& device, engine::renderer::RenderGraph& graph,
+    const std::function<void(engine::renderer::RenderSnapshot&, engine::Arena&)>& extract,
+    const char* api);
+
 // Renderer #16: alpha blending, measured rather than asserted. An opaque
 // underlay, a blended overlay, and a readback compared against
 // src*a + dst*(1-a) computed on the CPU.

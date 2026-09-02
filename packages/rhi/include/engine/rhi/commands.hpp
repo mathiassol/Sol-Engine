@@ -15,13 +15,6 @@ public:
     virtual ~IGraphicsPipeline() = default;
 };
 
-struct Color4 {
-    f32 r = 0.f;
-    f32 g = 0.f;
-    f32 b = 0.f;
-    f32 a = 1.f;
-};
-
 struct RenderPassInfo {
     ITexture* color = nullptr;
     ITexture* depth = nullptr;

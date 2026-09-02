@@ -529,6 +529,7 @@ ResourceHandle RenderGraph::create_transient(const TransientDesc& desc) {
     record.height = desc.height;
     record.extent_div = desc.extent_div == 0 ? 1u : desc.extent_div;
     record.sample_count = desc.sample_count == 0 ? 1u : desc.sample_count;
+    record.clear_color = desc.clear_color;
     record.is_depth = desc.usage == rhi::TextureUsage::DepthStencil
         || desc.usage == rhi::TextureUsage::DepthShaderResource
         || desc.format == rhi::Format::D32_FLOAT;
@@ -612,7 +613,6 @@ void RenderGraph::clear() {
     dirty_ = true;
     allocated_width_ = 0;
     allocated_height_ = 0;
-    swapchain_in_common_ = true;
     skip_reported_.clear();
 }
 
@@ -768,7 +768,6 @@ void RenderGraph::ensure_transients(rhi::IDevice& device) {
         }
         allocated_width_ = width;
         allocated_height_ = height;
-        swapchain_in_common_ = true;
     }
 
     for (usize i = 0; i < resources_.size(); ++i) {
@@ -789,6 +788,7 @@ void RenderGraph::ensure_transients(rhi::IDevice& device) {
         }
         desc.format = record.format;
         desc.usage = record.usage;
+        desc.clear_color = record.clear_color;
         desc.sample_count = record.sample_count;
         record.texture = device.create_texture(desc);
         if (record.texture) {
@@ -827,11 +827,28 @@ void RenderGraph::execute(rhi::IDevice& device, const RenderSnapshot& snapshot) 
 
     device.begin_frame();
     if (resources_.size() > kSwapchainDepthId) {
-        resources_[kSwapchainColorId].state = swapchain_in_common_
-            ? rhi::ResourceState::Common
-            : rhi::ResourceState::Present;
+        // **Common every frame, never Present.** A swapchain is N images and
+        // this graph tracks one state for all of them, so "it was presented,
+        // therefore it is in the present state" is only true of the image that
+        // was presented - and the next frame acquires a different one, which
+        // may never have been presented at all.
+        //
+        // Claiming Present skipped the transition entirely (transition_to
+        // returns early when the tracked state already equals the desired
+        // one), so the second frame presented an image that had never been
+        // transitioned. On D3D12 that is invisible, because
+        // D3D12_RESOURCE_STATE_COMMON and _PRESENT are both 0 - literally the
+        // same state. On Vulkan they are different layouts, and presenting an
+        // image in the wrong one cost a device loss with no validation message
+        // at all: the fault is in the presentation engine, not in a call.
+        //
+        // Common is also the honest description of what an acquire hands back:
+        // the contents are undefined by specification, so a frame must not
+        // assume anything about the image it just received. The backend
+        // resolves the real before-state from its own per-image tracking, so
+        // this only has to guarantee the transition is *requested*.
+        resources_[kSwapchainColorId].state = rhi::ResourceState::Common;
         resources_[kSwapchainDepthId].state = rhi::ResourceState::DepthWrite;
-        swapchain_in_common_ = false;
     }
 
     auto& cmd = device.command_list();

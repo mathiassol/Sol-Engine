@@ -64,6 +64,11 @@ struct TransientDesc {
     // it is the source of a RenderPassInfo::resolve into a single-sample one.
     // Appended for the same reason `storage` is last.
     u32 sample_count = 1;
+    // What the pass that clears this target clears it to, if one does. Must
+    // agree with that pass's RenderPassDesc::clear_color: one backend bakes it
+    // into the resource and warns on every clear that disagrees. Appended for
+    // the same reason as the two above.
+    rhi::Color4 clear_color{};
 };
 
 struct RenderPassDesc {
@@ -116,6 +121,7 @@ private:
         u32 height = 0;
         u32 extent_div = 1;
         u32 sample_count = 1;
+        rhi::Color4 clear_color{};
     };
 
     rhi::ITexture* resolve(rhi::IDevice& device, ResourceHandle handle);
@@ -132,7 +138,6 @@ private:
     bool dirty_ = true;
     u32 allocated_width_ = 0;
     u32 allocated_height_ = 0;
-    bool swapchain_in_common_ = true;
     // Passes already reported as skipped. Some predicates are false every frame
     // by design (AA defaults to Off), so an unlatched message would log at
     // 60 Hz - the mistake alloc_frame_memory and warn_physics_capacity both

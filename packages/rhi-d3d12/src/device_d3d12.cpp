@@ -1722,6 +1722,19 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
         ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
         : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
+    // The optimised clear value, and it has to be the value that will actually
+    // be cleared to. Both ways of getting this wrong are debug-layer warnings
+    // on every clear of every frame:
+    //
+    //   baked {0,0,0,1} while the pass clears to {0.08,0.08,0.12,1}
+    //     -> "The clear values do not match those passed to resource creation"
+    //   no value at all
+    //     -> "The application did not pass any clear value to resource creation"
+    //
+    // Both were measured, the first because the value was hard-coded here and
+    // the second when that was replaced with nullptr. Neither showed up until a
+    // gate ran the frame loop more than once - clearing happens per frame, and
+    // nothing had ever rendered two frames in a row under the debug layer.
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format = dxgi;
     if (is_depth) {
@@ -1729,7 +1742,10 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
         clear_value.DepthStencil.Depth =
             depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
     } else {
-        clear_value.Color[3] = 1.f;
+        clear_value.Color[0] = desc.clear_color.r;
+        clear_value.Color[1] = desc.clear_color.g;
+        clear_value.Color[2] = desc.clear_color.b;
+        clear_value.Color[3] = desc.clear_color.a;
     }
 
     const D3D12_RESOURCE_STATES initial = is_depth
@@ -2308,14 +2324,23 @@ std::unique_ptr<ITexture> D3D12Device::create_color_shader_resource_texture(
     resource_desc.SampleDesc.Count = 1;
     resource_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-    // Same opaque black the plain render-target path bakes, and for the same
-    // reason: this texture is a render target that happens to be sampled
-    // afterwards, so clearing it is normal and a null clear value costs the
-    // driver its fast clear and emits a debug-layer warning every time.
-    // Color4's default alpha is 1, so the two agree by construction.
+    // The caller's clear colour, like the plain render-target path. This
+    // texture is a render target that happens to be sampled afterwards, so
+    // clearing it is normal - and it is `scene_color`, the one cleared target
+    // in the standard frame that is *not* opaque black.
+    //
+    // Baking black here regardless is what produced eight
+    // `ClearRenderTargetView: The clear values do not match those passed to
+    // resource creation` warnings in an eight-frame run. The comment this
+    // replaces claimed the two agreed by construction, which was true only
+    // while nothing had ever cleared this target to anything else - and no
+    // gate rendered two frames in a row to notice.
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format = dxgi;
-    clear_value.Color[3] = 1.f;
+    clear_value.Color[0] = desc.clear_color.r;
+    clear_value.Color[1] = desc.clear_color.g;
+    clear_value.Color[2] = desc.clear_color.b;
+    clear_value.Color[3] = desc.clear_color.a;
 
     ID3D12Resource* resource = nullptr;
     if (FAILED(device_->CreateCommittedResource(

@@ -1684,8 +1684,21 @@ int run_app(int argc, char** argv) {
     return 1;
 #endif
 
-    // After setup_render_graph: this one executes the real compiled graph, so it
-    // has to run once the graph exists and the demo owns real resources.
+    // After setup_render_graph, because it executes the real compiled graph and
+    // needs the demo to own real resources. This is the gate RHI #24 did not
+    // have: it presents, which nothing else in the suite does.
+#if defined(ENGINE_HAS_D3D12) || defined(ENGINE_HAS_VULKAN)
+    // Only under --gates, unlike every other gate here. This one *presents*,
+    // and presenting eight frames during the startup of a normal session is
+    // both wasteful and wrong: the window's message queue has not been pumped
+    // yet, because that is app.run()'s job and it has not been called.
+    if (gates_mode && app.device() != nullptr && state.forward != nullptr) {
+        gates_ok = run_frame_loop_gate(*app.device(), app.render_graph(),
+                       callbacks.on_extract, api_name_for(*app.device()))
+            && gates_ok;
+    }
+#endif
+
     int exit_code = 0;
     if (gates_mode) {
         char done_message[64];

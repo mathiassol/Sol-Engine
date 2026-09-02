@@ -14,8 +14,14 @@ BarrierState to_vulkan_barrier(ResourceState state, VkImageAspectFlags aspect) {
     const bool depth = (aspect & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
     switch (state) {
     case ResourceState::Common:
+        // ALL_COMMANDS, not TOP_OF_PIPE. In synchronization2 TOP_OF_PIPE names
+        // *no* stage in a barrier's first synchronization scope, so every
+        // `Common -> X` transition had an empty source scope and synchronised
+        // with nothing before it. The access mask stays 0, which is correct -
+        // Common makes no claim about prior writes - but the stage has to be
+        // broad enough to order against whatever actually ran.
         return {VK_IMAGE_LAYOUT_UNDEFINED, VK_ACCESS_2_NONE,
-            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
+            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
     case ResourceState::RenderTarget:
         return {VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,

@@ -1,6 +1,7 @@
 #include "device_vulkan.hpp"
 
 #include <cstring>
+#include <iterator>
 #include <vector>
 
 namespace engine::rhi::vulkan {
@@ -209,11 +210,44 @@ bool create_shared_instance(SharedInstance& shared) {
     if (want_validation) {
         layers.push_back(kValidationLayer);
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
     }
+
+    // Two validation features beyond the default set, both because the default
+    // set was **silent** through a device loss.
+    //
+    // RHI #24's first live frame reported VK_ERROR_DEVICE_LOST from the present
+    // with the standard layer saying nothing at all - which is what happens
+    // when the fault is on the GPU rather than in the API calls. Standard
+    // validation checks the calls; these two check what the calls describe.
+    //
+    //   * SYNCHRONIZATION_VALIDATION tracks hazards - a resource written while
+    //     it is still being read, a pool reset while the GPU has work in it.
+    //     That is the class of bug that appears only on *reuse*, and the frame
+    //     loop gate found the loss on the third frame, the first one that
+    //     reuses a slot.
+    //   * GPU_ASSISTED instruments the shaders to catch out-of-bounds
+    //     descriptor and buffer access, which faults the device and reports
+    //     nothing on the API side.
+    //
+    // Both are expensive - GPU-assisted rewrites every shader - and both are
+    // behind ENGINE_GPU_DEBUG with everything else. A diagnostic that only
+    // exists on the machine of whoever debugged it once is worth less than the
+    // afternoon it saves.
+    const VkValidationFeatureEnableEXT enabled_features[] = {
+        VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+        VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+    };
+    VkValidationFeaturesEXT features{};
+    features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    features.enabledValidationFeatureCount
+        = static_cast<u32>(std::size(enabled_features));
+    features.pEnabledValidationFeatures = enabled_features;
 
     VkInstanceCreateInfo create{};
     create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     create.pApplicationInfo = &app;
+    create.pNext = want_validation ? &features : nullptr;
     create.enabledLayerCount = static_cast<u32>(layers.size());
     create.ppEnabledLayerNames = layers.empty() ? nullptr : layers.data();
     create.enabledExtensionCount = static_cast<u32>(extensions.size());

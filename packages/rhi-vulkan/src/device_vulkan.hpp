@@ -527,6 +527,18 @@ public:
     // table member - which is a much larger change to make a rarer path
     // cheaper.
     void make_current();
+
+    // Asks the driver what it faulted on, via VK_EXT_device_fault. Called from
+    // every site that latches device_lost_, because a lost device with no
+    // driver-side detail is the hardest thing in this backend to diagnose -
+    // measured: a present returned VK_ERROR_DEVICE_LOST with standard,
+    // synchronization and GPU-assisted validation all silent.
+    void report_device_fault();
+
+    // Drops `device` from the process-wide "current" record, so a handle the
+    // driver reuses cannot make make_current() skip its load. Static because
+    // the record outlives any one device.
+    static void forget_current(VkDevice device);
     void present();
     // maxUniformBufferRange, read once at init.
     //
@@ -600,34 +612,67 @@ private:
     // One pair per slot. The acquire semaphore is waited by the frame's submit
     // and the render-finished one by the present, so both have to be per-slot
     // or two frames in flight signal the same semaphore twice.
-    // Neither array is indexed by frame slot, and both learned that the hard
-    // way.
+    // **Both semaphore arrays are rings, indexed by their own cursor** - not by
+    // frame slot, and not by swapchain image. That took three attempts and a
+    // device loss to get right, so the reasoning is written down.
     //
-    // **Render-finished is per image.** A frame slot's fence says the submit
-    // finished; it says nothing about whether the present that waited on the
-    // semaphore has. Indexed by slot, the third frame signalled a semaphore
-    // the first frame's present had not consumed.
+    // A binary semaphore may not be signalled again until its previous signal
+    // has been waited *and retired*. Nothing the engine can observe tells it
+    // when that happened: a frame slot's fence says the submit finished, which
+    // is when the semaphore was signalled, not when the present consumed it -
+    // and `vkQueuePresentKHR` returning VK_SUCCESS does not mean its wait has
+    // retired either. Measured: two consecutive frames both acquired image 0
+    // and signalled the same render-finished semaphore, `vkQueueWaitIdle`
+    // returned VK_SUCCESS in between (so the GPU work was fine), and the
+    // second `vkQueuePresentKHR` answered VK_ERROR_DEVICE_LOST with every
+    // validation feature enabled and silent.
     //
-    // **Acquire is per acquire**, walked by acquire_cursor_. There is no image
-    // index until the acquire returns one, so it cannot be per image - but it
-    // cannot be per frame slot either, because the acquire does not happen
-    // inside the frame that presents it. Engine::render() probes
-    // swapchain_color().width() *before* RenderGraph::execute calls
-    // begin_frame, so the acquire lands under the previous slot's index and
-    // the submit would then wait on a semaphore nothing had signalled.
+    // Indexing by image does not fix it, because the swapchain can hand the
+    // same image back immediately. Indexing by frame slot does not fix it
+    // either: three slots is fewer than the in-flight presents, and the
+    // acquire does not even happen inside the frame that presents it -
+    // Engine::render() probes swapchain_color().width() *before*
+    // RenderGraph::execute calls begin_frame.
+    //
+    // A ring one longer than the maximum image count sidesteps the question
+    // entirely: by the time a semaphore comes round again, nine frames have
+    // been submitted and at least three fences waited. Cheap, and it does not
+    // depend on knowing something Vulkan does not report.
     VkSemaphore acquire_[kAcquireSemaphores]{};
-    VkSemaphore render_finished_[kMaxSwapchainImages]{};
+    VkSemaphore render_finished_[kAcquireSemaphores]{};
     u32 acquire_cursor_ = 0;
-    // The semaphore the live acquire signalled, consumed by the next submit.
-    // Held explicitly rather than recomputed, because the only code that knows
-    // which one was used is the acquire itself.
+    u32 present_cursor_ = 0;
+    // The fence of the frame that last rendered to each swapchain image, or
+    // VK_NULL_HANDLE for one never rendered to.
+    //
+    // This is the piece whose absence cost a device loss. Frame slots and
+    // swapchain images advance independently: with the images free quickly, two
+    // consecutive frames can both acquire image 0 while running in *different*
+    // slots - so `begin_frame`'s wait on `fences_[frame_index_]` waits a slot
+    // that has nothing to do with the frame still using that image. The second
+    // frame then signals `render_finished_[0]` again while the first present's
+    // wait on it may still be pending, and signalling a binary semaphore that
+    // already has an unretired signal is undefined. Measured, with both frames
+    // logging `img=0` and the same semaphore handle.
+    //
+    // Waiting the image's own fence before touching it is the fix, and it is
+    // per *image* precisely because the slot ring cannot express it.
+    VkFence image_in_flight_[kMaxSwapchainImages]{};
+    // The semaphore the live acquire signalled, consumed by the next submit,
+    // and the one that submit signalled for the present to wait on. Both held
+    // explicitly rather than recomputed, because the only code that knows
+    // which slot of the ring was used is the code that took it.
     VkSemaphore pending_acquire_ = VK_NULL_HANDLE;
+    VkSemaphore pending_present_ = VK_NULL_HANDLE;
 
     VulkanCommandList commands_;
     VulkanSwapchain swapchain_wrapper_;
     DepthConvention depth_convention_ = DepthConvention::Standard;
     bool offscreen_ = true;
     bool device_lost_ = false;
+    // VK_EXT_device_fault was requested and granted. Diagnostic only, and only
+    // under ENGINE_GPU_DEBUG.
+    bool fault_supported_ = false;
     u32 width_ = 0;
     u32 height_ = 0;
     u32 present_interval_ = 1;

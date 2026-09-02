@@ -1594,4 +1594,73 @@ bool run_transparency_gate(engine::rhi::IDevice& device,
     return passed;
 }
 
+bool run_frame_loop_gate(engine::rhi::IDevice& device, engine::renderer::RenderGraph& graph,
+    const std::function<void(engine::renderer::RenderSnapshot&, engine::Arena&)>& extract,
+    const char* api) {
+    // Eight frames, which is what makes this more than a smoke test: three
+    // frame slots and up to three swapchain images, so eight wraps both rings
+    // and reuses every slot and every image at least twice. A single frame
+    // would miss exactly the class of bug that lives in reuse - a fence not
+    // waited, a semaphore signalled twice, a descriptor pool reset while the
+    // GPU still reads from it.
+    constexpr engine::u32 kFrames = 8;
+
+    if (device.offscreen()) {
+        char skipped[192];
+        std::snprintf(skipped, sizeof(skipped),
+            "Frame loop gate [%s]: offscreen device has no swapchain, so there is no "
+            "present path to exercise (skip)", api);
+        engine::log(engine::LogLevel::Warn, engine::LogChannel::Render, skipped);
+        return true;
+    }
+
+    // The engine's own arena size. Reset per frame, as the frame loop does -
+    // without that, eight frames of extract overflow it and the gate would
+    // measure the arena instead of the frame.
+    engine::Arena arena(4 * 1024 * 1024);
+
+    engine::u32 completed = 0;
+    bool lost = false;
+    for (engine::u32 i = 0; i < kFrames && !lost; ++i) {
+        // The extent from the *device*, exactly as Engine::render() does it -
+        // and deliberately not from swapchain_color(), which is what makes a
+        // backend acquire its next image. Acquiring here would put it before
+        // the graph's begin_frame and the frame fence that bounds frames in
+        // flight, which is the inversion this row removed from engine.cpp. A
+        // gate that reproduced the old ordering would keep the bug alive in
+        // the one place meant to catch it.
+        if (device.width() == 0 || device.height() == 0) {
+            break;
+        }
+        arena.reset();
+        engine::renderer::RenderSnapshot snapshot{};
+        snapshot.width = device.width();
+        snapshot.height = device.height();
+        extract(snapshot, arena);
+        graph.execute(device, snapshot);
+        lost = device.device_lost();
+        if (!lost) {
+            completed += 1;
+        }
+    }
+
+    const engine::rhi::FrameRingStats ring = device.frame_ring_stats();
+    const bool frames_ok = completed == kFrames;
+    const bool ring_ok = ring.exhausted_frames == 0;
+    const bool passed = frames_ok && !lost && ring_ok;
+
+    char message[288];
+    std::snprintf(message, sizeof(message),
+        "Frame loop gate [%s]: frames=%u/%u device_lost=%s ring_peak=%llu/%lluK "
+        "exhausted=%llu (%s)",
+        api, completed, kFrames, lost ? "YES" : "no",
+        static_cast<unsigned long long>(ring.peak_bytes),
+        static_cast<unsigned long long>(ring.capacity_bytes / 1024),
+        static_cast<unsigned long long>(ring.exhausted_frames),
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 } // namespace sandbox

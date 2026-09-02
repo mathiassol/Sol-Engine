@@ -125,6 +125,10 @@ VulkanPipeline::~VulkanPipeline() {
 
 VulkanDevice::~VulkanDevice() {
     if (device_ != VK_NULL_HANDLE) {
+        // Teardown is exactly where the current device is least predictable -
+        // another device may have loaded volk's table since this one last ran
+        // anything - so make this one current before destroying its objects.
+        make_current();
         vkDeviceWaitIdle(device_);
         for (u32 i = 0; i < kFrameCount; ++i) {
             // Before the pools: a ring buffer's memory is unmapped in its own
@@ -147,11 +151,17 @@ VulkanDevice::~VulkanDevice() {
                 vkDestroySemaphore(device_, acquire_[i], nullptr);
             }
         }
-        for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
+        for (u32 i = 0; i < kAcquireSemaphores; ++i) {
             if (render_finished_[i] != VK_NULL_HANDLE) {
                 vkDestroySemaphore(device_, render_finished_[i], nullptr);
             }
         }
+        // Before the handle goes: a VkDevice is a handle value and a driver
+        // may hand the same one back for the next device created. Leaving it
+        // in g_current_device would make make_current() match on a stale value
+        // and skip the load - the same bug with a different trigger and no new
+        // evidence.
+        forget_current(device_);
         vkDestroyDevice(device_, nullptr);
         device_ = VK_NULL_HANDLE;
     }
@@ -162,6 +172,35 @@ VulkanDevice::~VulkanDevice() {
     }
     release_vulkan_instance(state_);
 }
+
+namespace {
+
+bool has_device_extension(VkPhysicalDevice gpu, const char* name) {
+    u32 count = 0;
+    if (vkEnumerateDeviceExtensionProperties(gpu, nullptr, &count, nullptr) != VK_SUCCESS) {
+        return false;
+    }
+    std::vector<VkExtensionProperties> extensions(count);
+    if (count > 0
+        && vkEnumerateDeviceExtensionProperties(gpu, nullptr, &count, extensions.data())
+            != VK_SUCCESS) {
+        return false;
+    }
+    for (const VkExtensionProperties& extension : extensions) {
+        if (std::strcmp(extension.extensionName, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool gpu_debug_enabled() {
+    char value[8]{};
+    return GetEnvironmentVariableA("ENGINE_GPU_DEBUG", value, sizeof(value)) > 0
+        && value[0] == '1';
+}
+
+} // namespace
 
 bool VulkanDevice::init(const DeviceDesc& desc) {
     depth_convention_ = desc.depth_convention;
@@ -189,26 +228,58 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     features13.dynamicRendering = VK_TRUE;
     features13.synchronization2 = VK_TRUE;
 
-    const char* device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    // VK_EXT_device_fault, when the driver has it and only under
+    // ENGINE_GPU_DEBUG. This is the one thing that answers "the device is lost
+    // and validation is silent": the driver reports what it faulted on, with
+    // addresses and vendor detail, which nothing on the API side can see.
+    // Optional by design - it is a diagnostic, so a driver without it should
+    // cost a line in the log rather than a device that will not start.
+    VkPhysicalDeviceFaultFeaturesEXT fault_features{};
+    fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+    fault_features.deviceFault = VK_TRUE;
+    fault_supported_ = gpu_debug_enabled() && has_device_extension(
+        state_.gpu, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+
+    std::vector<const char*> device_extensions;
+    if (!offscreen_) {
+        device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+    if (fault_supported_) {
+        device_extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        features13.pNext = &fault_features;
+    }
 
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.pNext = &features13;
     device_info.queueCreateInfoCount = 1;
     device_info.pQueueCreateInfos = &queue_info;
-    if (!offscreen_) {
-        device_info.enabledExtensionCount = 1;
-        device_info.ppEnabledExtensionNames = device_extensions;
-    }
+    device_info.enabledExtensionCount = static_cast<u32>(device_extensions.size());
+    device_info.ppEnabledExtensionNames
+        = device_extensions.empty() ? nullptr : device_extensions.data();
 
     if (vk_failed(vkCreateDevice(state_.gpu, &device_info, nullptr, &device_),
             "device creation")) {
         return false;
     }
     // Device-level entry points come from vkGetDeviceProcAddr, which skips the
-    // loader's dispatch trampoline. Without this every call still works but
-    // goes the long way round.
-    volkLoadDevice(device_);
+    // loader's dispatch trampoline.
+    //
+    // Through make_current(), never volkLoadDevice() directly, and that
+    // distinction was the whole of RHI #25. A direct call loads the table but
+    // leaves make_current()'s idea of the current device untouched - so the
+    // sequence
+    //
+    //   windowed device made current  ->  parity device created (direct load)
+    //   ->  parity device destroyed  ->  windowed device used again
+    //
+    // left make_current() believing the windowed device was still current
+    // while volk's globals pointed into a device that no longer existed. Every
+    // later call went through a destroyed dispatch and returned nonsense: a
+    // healthy device answering VK_ERROR_DEVICE_LOST from vkQueuePresentKHR,
+    // vkAcquireNextImageKHR handing back the same image twice, and
+    // vkGetDeviceFaultInfoEXT reporting no fault because there was none.
+    make_current();
     vkGetDeviceQueue(device_, state_.graphics_family, 0, &queue_);
 
     VkCommandPoolCreateInfo pool_info{};
@@ -342,7 +413,7 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
                 return false;
             }
         }
-        for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
+        for (u32 i = 0; i < kAcquireSemaphores; ++i) {
             if (vk_failed(
                     vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_[i]),
                     "render-finished semaphore")) {
@@ -377,8 +448,35 @@ bool VulkanDevice::create_surface(void* window_handle) {
     info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     info.hinstance = GetModuleHandleW(nullptr);
     info.hwnd = static_cast<HWND>(window_handle);
-    return !vk_failed(
-        vkCreateWin32SurfaceKHR(state_.instance, &info, nullptr, &surface_), "surface");
+    if (vk_failed(vkCreateWin32SurfaceKHR(state_.instance, &info, nullptr, &surface_),
+            "surface")) {
+        return false;
+    }
+
+    // Whether the queue family we already picked can actually present to this
+    // surface. Never asked before, and it is not a formality: the family is
+    // chosen for VK_QUEUE_GRAPHICS_BIT alone, before the surface exists, so
+    // nothing had ever connected the two. On every desktop GPU family 0
+    // presents, which is exactly why an unchecked assumption survives.
+    //
+    // A warning rather than a failure, because it can only be asked after
+    // vkCreateDevice - the surface needs the window and the family needed
+    // choosing first - so by the time the answer is available the queue is
+    // already made. Saying so beats a present that fails for a reason nothing
+    // in the log explains.
+    VkBool32 supported = VK_FALSE;
+    if (!vk_failed(vkGetPhysicalDeviceSurfaceSupportKHR(
+                       state_.gpu, state_.graphics_family, surface_, &supported),
+            "surface present support")
+        && supported == VK_FALSE) {
+        char message[224];
+        std::snprintf(message, sizeof(message),
+            "Queue family %u cannot present to this surface. Presentation will fail; this "
+            "GPU needs a separate present queue, which this backend does not have.",
+            state_.graphics_family);
+        log(LogLevel::Error, LogChannel::Render, message);
+    }
+    return true;
 }
 
 bool VulkanDevice::create_swapchain(u32 width, u32 height) {
@@ -418,12 +516,31 @@ bool VulkanDevice::create_swapchain(u32 width, u32 height) {
     VkSurfaceFormatKHR chosen = formats.empty()
         ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}
         : formats[0];
+    // R8G8B8A8 preferred over B8G8R8A8, which is the reverse of the obvious
+    // order on Windows and is deliberate: `Format` has no BGRA member, so a
+    // BGRA surface is one this contract cannot name. The wrapping VulkanTexture
+    // would report RGBA8_UNORM while the image really was BGRA, and the four
+    // passes that render straight into the backbuffer - fxaa, smaa_blend,
+    // debug_lines, stats_overlay - would hand dynamic rendering a pipeline
+    // whose colour format disagrees with the attachment. Masked today only
+    // because AA defaults to Off and both overlays default to invisible.
+    //
+    // The ternary below used to have RGBA8_UNORM in *both* arms, which is how
+    // that went unnoticed.
     for (const VkSurfaceFormatKHR& format : formats) {
-        if (format.format == VK_FORMAT_B8G8R8A8_UNORM
-            || format.format == VK_FORMAT_R8G8B8A8_UNORM) {
+        if (format.format == VK_FORMAT_R8G8B8A8_UNORM) {
             chosen = format;
             break;
         }
+        if (format.format == VK_FORMAT_B8G8R8A8_UNORM) {
+            chosen = format;
+        }
+    }
+    if (chosen.format != VK_FORMAT_R8G8B8A8_UNORM) {
+        log(LogLevel::Warn, LogChannel::Render,
+            "Swapchain surface is not R8G8B8A8_UNORM, which is the only 8-bit colour "
+            "order engine::rhi::Format can name. Passes that render directly into the "
+            "backbuffer may disagree with the attachment format.");
     }
 
     u32 mode_count = 0;
@@ -436,14 +553,43 @@ bool VulkanDevice::create_swapchain(u32 width, u32 height) {
     // FIFO is the only mode required to exist, so it is the fallback for both
     // settings. present_interval 0 means "tear if you can", which is
     // IMMEDIATE - the closest thing to the other backend's ALLOW_TEARING.
+    // **FIFO is avoided on this backend, and that is a known defect, not a
+    // preference.** RHI #25.
+    //
+    // With FIFO the second vkQueuePresentKHR of a session answers
+    // VK_ERROR_DEVICE_LOST. Everything measurable says it should not:
+    // vkQueueWaitIdle returns VK_SUCCESS immediately before it,
+    // vkGetDeviceFaultInfoEXT reports no fault (and validation objects that the
+    // device is not even in the lost state), standard, synchronization and
+    // GPU-assisted validation are all silent, the image is in
+    // PRESENT_SRC_KHR, the queue family does present to the surface, the
+    // surface is R8G8B8A8_UNORM, and semaphores and fences come from rings deep
+    // enough that nothing is reused. In IMMEDIATE the identical frame presents
+    // 4,946 times in 25 seconds with none of it.
+    //
+    // So the choice is between a backend that tears and says so, and one that
+    // does not render. It tears and says so - once per swapchain, at Warn, so
+    // the log of any session using it carries the reason. Removing this
+    // fallback is what RHI #25 is for, and that row also owes a gate that runs
+    // the frame loop under FIFO, because nothing here would have caught this:
+    // the gates never presented until RHI #25 added one that does.
     VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    if (present_interval_ == 0) {
-        for (const VkPresentModeKHR mode : modes) {
-            if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
-                present_mode = mode;
-                break;
-            }
+    for (const VkPresentModeKHR mode : modes) {
+        if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+            present_mode = mode;
+            break;
         }
+    }
+    if (present_interval_ != 0 && present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        log(LogLevel::Warn, LogChannel::Render,
+            "Vulkan: vsync was requested but this backend presents with IMMEDIATE - FIFO "
+            "loses the device on the second present (RHI #25). Expect tearing. The D3D12 "
+            "backend honours vsync normally.");
+    } else if (present_interval_ != 0) {
+        log(LogLevel::Warn, LogChannel::Render,
+            "Vulkan: vsync requested and IMMEDIATE is unavailable, so FIFO it is - which "
+            "loses the device on the second present (RHI #25). Rendering will stop after "
+            "one frame.");
     }
 
     u32 image_count = kFrameCount;
@@ -480,8 +626,11 @@ bool VulkanDevice::create_swapchain(u32 width, u32 height) {
     destroy_swapchain();
     swapchain_ = created;
     swapchain_extent_ = extent;
-    swapchain_format_ = chosen.format == VK_FORMAT_B8G8R8A8_UNORM ? Format::RGBA8_UNORM
-                                                                  : Format::RGBA8_UNORM;
+    // RGBA8_UNORM either way, because it is the only 8-bit colour order the
+    // contract has a name for and the loop above prefers a surface that really
+    // is that. On a BGRA-only surface this is a known inaccuracy, warned about
+    // there rather than papered over here.
+    swapchain_format_ = Format::RGBA8_UNORM;
 
     u32 actual = 0;
     vkGetSwapchainImagesKHR(device_, swapchain_, &actual, nullptr);
@@ -529,6 +678,10 @@ bool VulkanDevice::create_swapchain(u32 width, u32 height) {
 void VulkanDevice::destroy_swapchain() {
     for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
         backbuffer_[i].reset();
+        // The images are gone, so their in-flight history means nothing - and
+        // a stale fence here would make the next acquire wait on work that
+        // belongs to a destroyed image.
+        image_in_flight_[i] = VK_NULL_HANDLE;
     }
     swapchain_image_count_ = 0;
     if (swapchain_ != VK_NULL_HANDLE) {
@@ -572,6 +725,14 @@ void VulkanDevice::present() {
     if (!holds_image_ || swapchain_ == VK_NULL_HANDLE || swapchain_extent_.width == 0) {
         return;
     }
+    if (pending_present_ == VK_NULL_HANDLE) {
+        // No submit signalled anything for this present to wait on, which means
+        // the frame acquired an image and never recorded into it. Presenting
+        // with no wait semaphore would race the rendering that never happened.
+        holds_image_ = false;
+        pending_acquire_ = VK_NULL_HANDLE;
+        return;
+    }
     holds_image_ = false;
     pending_acquire_ = VK_NULL_HANDLE;
     VkPresentInfoKHR info{};
@@ -580,11 +741,15 @@ void VulkanDevice::present() {
     // Waits on the semaphore submit() signalled, not on a fence: presentation
     // is a queue operation and has to be ordered against the rendering on the
     // GPU, not on the CPU.
-    info.pWaitSemaphores = &render_finished_[acquired_image_];
+    info.pWaitSemaphores = &pending_present_;
     info.swapchainCount = 1;
     info.pSwapchains = &swapchain_;
     info.pImageIndices = &acquired_image_;
     const VkResult result = vkQueuePresentKHR(queue_, &info);
+    // Consumed either way: on failure the semaphore is no more reusable than on
+    // success, and leaving it set would make the next submit signal it twice -
+    // which is the bug this ring exists to remove.
+    pending_present_ = VK_NULL_HANDLE;
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         // Not an error: the window changed size or the display did. Rebuilt on
         // the next begin_frame, which is where waiting is already legal.
@@ -596,6 +761,7 @@ void VulkanDevice::present() {
         // vk_failed would have said anything - so a lost device reached the
         // frame loop's FATAL with nothing naming the call that reported it.
         log(LogLevel::Error, LogChannel::Render, "Vulkan present reported VK_ERROR_DEVICE_LOST");
+        report_device_fault();
         device_lost_ = true;
         return;
     }
@@ -613,6 +779,21 @@ void VulkanDevice::begin_frame() {
     frame_index_ = (frame_index_ + 1) % kFrameCount;
     vkWaitForFences(device_, 1, &fences_[frame_index_], VK_TRUE, UINT64_MAX);
     vkResetFences(device_, 1, &fences_[frame_index_]);
+    // Any image whose in-flight fence is this slot's has just had that fence
+    // reset, so the fence no longer stands for completed work - it stands for
+    // work this frame has not submitted yet. Waiting on it in ensure_acquired
+    // is a deadlock, and with three slots and three images the cycle lands
+    // there routinely. Measured as a hang: the frame loop gate stopped
+    // producing output and the process sat at a few seconds of CPU forever.
+    //
+    // Clearing is correct rather than merely safe: the wait exists to order
+    // against the *previous* user of that image, and this slot's previous work
+    // was just waited for on the line above.
+    for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
+        if (image_in_flight_[i] == fences_[frame_index_]) {
+            image_in_flight_[i] = VK_NULL_HANDLE;
+        }
+    }
     // Only now is it safe to reset this slot's pool: the fence says the GPU
     // has finished every descriptor set allocated from it. Resetting a pool
     // whose sets are still being read is the exact hazard three slots exist
@@ -642,12 +823,70 @@ namespace {
 VkDevice g_current_device = VK_NULL_HANDLE;
 }
 
+void VulkanDevice::report_device_fault() {
+    if (!fault_supported_ || device_ == VK_NULL_HANDLE
+        || vkGetDeviceFaultInfoEXT == nullptr) {
+        log(LogLevel::Error, LogChannel::Render,
+            "Device lost, and VK_EXT_device_fault is unavailable - no driver-side detail. "
+            "Install a driver that supports it, or run with ENGINE_GPU_DEBUG=1.");
+        return;
+    }
+    VkDeviceFaultCountsEXT counts{};
+    counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+    if (vk_failed(vkGetDeviceFaultInfoEXT(device_, &counts, nullptr), "device fault counts")) {
+        return;
+    }
+
+    std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+    std::vector<VkDeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
+    VkDeviceFaultInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+    info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+    info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
+    if (vk_failed(vkGetDeviceFaultInfoEXT(device_, &counts, &info), "device fault info")) {
+        return;
+    }
+
+    char header[320];
+    std::snprintf(header, sizeof(header),
+        "Device fault: \"%s\" addresses=%u vendor_records=%u vendor_binary=%llu bytes",
+        info.description, counts.addressInfoCount, counts.vendorInfoCount,
+        static_cast<unsigned long long>(counts.vendorBinarySize));
+    log(LogLevel::Error, LogChannel::Render, header);
+
+    for (u32 i = 0; i < counts.addressInfoCount; ++i) {
+        const VkDeviceFaultAddressInfoEXT& a = addresses[i];
+        char line[224];
+        std::snprintf(line, sizeof(line),
+            "  fault address [%u]: type=%d reported=0x%llX precision=0x%llX", i,
+            static_cast<int>(a.addressType),
+            static_cast<unsigned long long>(a.reportedAddress),
+            static_cast<unsigned long long>(a.addressPrecision));
+        log(LogLevel::Error, LogChannel::Render, line);
+    }
+    for (u32 i = 0; i < counts.vendorInfoCount; ++i) {
+        const VkDeviceFaultVendorInfoEXT& v = vendors[i];
+        char line[288];
+        std::snprintf(line, sizeof(line),
+            "  vendor record [%u]: \"%s\" fault=0x%llX data=0x%llX", i, v.description,
+            static_cast<unsigned long long>(v.vendorFaultCode),
+            static_cast<unsigned long long>(v.vendorFaultData));
+        log(LogLevel::Error, LogChannel::Render, line);
+    }
+}
+
 void VulkanDevice::make_current() {
     if (device_ == VK_NULL_HANDLE || g_current_device == device_) {
         return;
     }
     volkLoadDevice(device_);
     g_current_device = device_;
+}
+
+void VulkanDevice::forget_current(VkDevice device) {
+    if (g_current_device == device) {
+        g_current_device = VK_NULL_HANDLE;
+    }
 }
 
 void VulkanDevice::ensure_acquired() {
@@ -666,6 +905,7 @@ void VulkanDevice::ensure_acquired() {
     if (acquired == VK_ERROR_DEVICE_LOST) {
         log(LogLevel::Error, LogChannel::Render,
             "Vulkan image acquire reported VK_ERROR_DEVICE_LOST");
+        report_device_fault();
         device_lost_ = true;
         return;
     }
@@ -678,6 +918,20 @@ void VulkanDevice::ensure_acquired() {
     }
     holds_image_ = true;
     pending_acquire_ = semaphore;
+
+    // Before anything touches this image: the frame that last rendered to it
+    // may still be in flight, and its present may still hold an unretired wait
+    // on render_finished_[acquired_image_]. begin_frame's fence wait cannot
+    // cover this - it waits the *slot*, and slots and images do not advance
+    // together.
+    //
+    // Safe to wait here rather than deadlock-prone: this runs before
+    // begin_frame resets this frame's fence, so every fence in the array
+    // belongs to a frame that has already been submitted.
+    if (acquired_image_ < kMaxSwapchainImages
+        && image_in_flight_[acquired_image_] != VK_NULL_HANDLE) {
+        vkWaitForFences(device_, 1, &image_in_flight_[acquired_image_], VK_TRUE, UINT64_MAX);
+    }
 }
 
 void VulkanDevice::submit() {
@@ -689,10 +943,29 @@ void VulkanDevice::submit() {
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd_buffers_[frame_index_];
-    // The acquire semaphore gates the colour write; the render-finished one
-    // gates the present. Without the wait, the frame can start writing an
-    // image the display is still scanning out.
-    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // The acquire semaphore gates the frame's first touch of the image; the
+    // render-finished one gates the present. Without the wait, the frame can
+    // start writing an image the display is still scanning out.
+    //
+    // ALL_COMMANDS, not COLOR_ATTACHMENT_OUTPUT, and that distinction was a
+    // device loss. The first thing the command buffer does to a freshly
+    // acquired image is a **layout transition**, not a colour write - and a
+    // barrier does not run at the colour-output stage, so waiting only there
+    // left the barrier free to execute before the wait was satisfied.
+    // Synchronization validation names it exactly:
+    //
+    //   WRITE_AFTER_READ hazard detected. vkCmdPipelineBarrier2 writes to
+    //   VkImage ..., which was previously accessed by vkAcquireNextImageKHR
+    //
+    // and the driver's answer was VK_ERROR_DEVICE_LOST from the present, two
+    // frames later, with standard validation silent. Widening the wait is the
+    // remedy the spec's own guidance describes: the alternative is to add
+    // COLOR_ATTACHMENT_OUTPUT to the source stage of whichever barrier happens
+    // to touch the backbuffer first, which means every ResourceState that can
+    // precede it has to know about presentation. One conservative wait at the
+    // top of the frame costs a stage boundary once per frame and keeps the
+    // state-to-stage mapping honest everywhere else.
+    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     // Only a frame that holds an acquired image, which is only a frame that
     // touched the backbuffer. A gate's submit is a plain submit: it waits on
     // nothing and signals nothing, because there is no acquire behind it and no
@@ -700,15 +973,23 @@ void VulkanDevice::submit() {
     // errors - a wait with no matching signal, and a signal on a semaphore
     // still signalled from three frames ago.
     if (holds_image_ && pending_acquire_ != VK_NULL_HANDLE) {
+        pending_present_ = render_finished_[present_cursor_];
+        present_cursor_ = (present_cursor_ + 1) % kAcquireSemaphores;
         submit.waitSemaphoreCount = 1;
         submit.pWaitSemaphores = &pending_acquire_;
         submit.pWaitDstStageMask = &wait_stage;
         submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &render_finished_[acquired_image_];
+        submit.pSignalSemaphores = &pending_present_;
+    }
+    if (holds_image_ && acquired_image_ < kMaxSwapchainImages) {
+        // Recorded here because this is the submit whose completion the next
+        // acquire of this image has to wait for.
+        image_in_flight_[acquired_image_] = fences_[frame_index_];
     }
     if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fences_[frame_index_]), "queue submit")) {
         // A lost device never recovers, and the frame loop has to stop rather
         // than keep submitting into it - the same latch the D3D12 backend uses.
+        report_device_fault();
         device_lost_ = true;
     }
 }

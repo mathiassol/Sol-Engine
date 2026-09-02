@@ -24,10 +24,20 @@ bool setup_standard_frame(RenderGraph& graph, StandardFrameDesc desc) {
         desc.shadow_map_size,
         desc.shadow_map_size,
     });
+    // The clear colour travels with the transient, not just with the pass that
+    // clears it: one backend bakes it into the resource, and a clear that
+    // disagrees is a debug-layer warning on every frame. scene_color is the
+    // only cleared target in this frame that is not {0, 0, 0, 1}.
     const auto scene_color = graph.create_transient({
         "scene_color",
         rhi::Format::RGBA16_FLOAT,
         rhi::TextureUsage::ColorShaderResource,
+        0,
+        0,
+        1,
+        false,
+        1,
+        {desc.clear_r, desc.clear_g, desc.clear_b, desc.clear_a},
     });
     const auto motion_vectors = graph.create_transient({
         "motion_vectors",

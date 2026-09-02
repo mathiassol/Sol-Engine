@@ -270,6 +270,18 @@ struct TextureDesc {
     TextureDimension dimension = TextureDimension::Tex2D;
     Format format = Format::RGBA8_UNORM;
     TextureUsage usage = TextureUsage::RenderTarget;
+    // The value a render pass will clear this target to, when it clears one.
+    //
+    // One backend bakes it into the resource as an optimised clear value and
+    // the driver complains on every clear that does not match it - or, if none
+    // is given, complains that none was given. The other has no equivalent
+    // notion and ignores this entirely. So it is not a hint here, it is the
+    // clear colour, and it has to agree with RenderPassDesc::clear_color for
+    // the same target.
+    //
+    // Defaults to Color4's own {0, 0, 0, 1}, which is what every cleared
+    // target in the standard frame except scene_color uses.
+    Color4 clear_color{};
     // 1 is no multisampling. A multisampled target cannot be sampled directly -
     // it is resolved into a single-sample texture first, which is what
     // RenderPassInfo::resolve does.

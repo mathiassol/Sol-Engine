@@ -408,7 +408,20 @@ void Engine::render() {
         return;
     }
     device_->set_present_interval(window_ && window_->vsync() ? 1u : 0u);
-    if (device_->swapchain_color().width() == 0 || device_->swapchain_depth().width() == 0) {
+    // The device's extent, not the backbuffer texture's - and that is not a
+    // tidy-up, it fixes an ordering inversion.
+    //
+    // Touching swapchain_color() is what makes a backend acquire its next
+    // image, and doing it here put the acquire *before* RenderGraph::execute
+    // calls begin_frame - so before the frame fence that bounds how many
+    // frames may be in flight. Under a tearing present mode nothing notices;
+    // under FIFO the frame runs one further ahead than the swapchain has
+    // images for, and the second vkQueuePresentKHR answers
+    // VK_ERROR_DEVICE_LOST on a device that is demonstrably healthy.
+    //
+    // device_->width() reports the same extent for every backbuffer, which is
+    // the only thing this check ever wanted.
+    if (device_->width() == 0 || device_->height() == 0) {
         return;
     }
 
