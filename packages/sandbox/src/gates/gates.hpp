@@ -213,20 +213,22 @@ bool run_backend_parity_gate(engine::rhi::IDevice& device,
 // numbers and that a mismatched pipeline is diagnosed by name, so running the
 // same function against the second device is a stronger resolve parity check
 // than a new gate would be.
+// `target` and `api` are required, deliberately. They defaulted to DXIL and
+// "d3d12", and the live-device call sites took the defaults - so on a Vulkan
+// session this gate fed DXIL to a Vulkan device and reported the failure as
+// `[d3d12]`. A default that is right for one backend is a trap on the second.
 bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
-    const std::string& shader_path,
-    engine::shaders::ShaderTarget target = engine::shaders::ShaderTarget::Dxil,
-    const char* api = "d3d12");
+    const std::string& shader_path, engine::shaders::ShaderTarget target, const char* api);
 
 // Called once per backend since RHI #24. It asserts exact packed probe values,
 // so running the same function against the second device is a stronger compute
 // parity check than a new gate with new expected numbers would be - and it
 // covers create_compute_pipeline, dispatch, a storage image and a storage
 // buffer in one pass. The `api` label only reaches the log line.
+// Required for the same reason as run_msaa_gate's.
 bool run_storage_texture_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
-    engine::shaders::ShaderTarget target = engine::shaders::ShaderTarget::Dxil,
-    const char* api = "d3d12");
+    engine::shaders::ShaderTarget target, const char* api);
 
 bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
     const std::string& compute_path);

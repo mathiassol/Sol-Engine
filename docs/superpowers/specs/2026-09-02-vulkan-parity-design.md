@@ -1,7 +1,7 @@
 # Vulkan parity — the engine renders on the second backend
 
 Date: 2 Sep 2026
-Status: spec
+Status: implemented
 
 ENGINE_MAP **RHI #24**, created Ready by RHI #12 earlier today. #12 proved the
 `rhi` contract survives a second API for the surface one triangle needs; this

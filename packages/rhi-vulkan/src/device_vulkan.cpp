@@ -146,6 +146,8 @@ VulkanDevice::~VulkanDevice() {
             if (acquire_[i] != VK_NULL_HANDLE) {
                 vkDestroySemaphore(device_, acquire_[i], nullptr);
             }
+        }
+        for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
             if (render_finished_[i] != VK_NULL_HANDLE) {
                 vkDestroySemaphore(device_, render_finished_[i], nullptr);
             }
@@ -158,7 +160,7 @@ VulkanDevice::~VulkanDevice() {
         vkDestroySurfaceKHR(state_.instance, surface_, nullptr);
         surface_ = VK_NULL_HANDLE;
     }
-    destroy_vulkan_instance(state_);
+    release_vulkan_instance(state_);
 }
 
 bool VulkanDevice::init(const DeviceDesc& desc) {
@@ -168,7 +170,7 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     present_interval_ = desc.present_interval == 0 ? 0u : 1u;
     offscreen_ = desc.window_handle == nullptr;
 
-    if (!create_vulkan_instance(state_, !offscreen_)) {
+    if (!acquire_vulkan_instance(state_, !offscreen_)) {
         return false;
     }
 
@@ -328,10 +330,13 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
         semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         for (u32 i = 0; i < kFrameCount; ++i) {
             if (vk_failed(vkCreateSemaphore(device_, &semaphore_info, nullptr, &acquire_[i]),
-                    "acquire semaphore")
-                || vk_failed(
-                    vkCreateSemaphore(device_, &semaphore_info, nullptr,
-                        &render_finished_[i]),
+                    "acquire semaphore")) {
+                return false;
+            }
+        }
+        for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
+            if (vk_failed(
+                    vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_[i]),
                     "render-finished semaphore")) {
                 return false;
             }
@@ -531,6 +536,8 @@ ISwapchain& VulkanDevice::swapchain() {
 
 ITexture& VulkanDevice::swapchain_color() {
     ENGINE_ASSERT_MSG(!offscreen_, "offscreen device has no swapchain colour target");
+    // The acquire, on first use. See holds_image_.
+    ensure_acquired();
     // The acquired image, not frame_index_'s. A swapchain hands back whatever
     // image it likes and the two indices drift apart the moment one is
     // skipped - which is precisely the bug that makes a frame render into the
@@ -548,16 +555,19 @@ void VulkanSwapchain::present() { device_.present(); }
 u32 VulkanSwapchain::current_back_buffer_index() const { return device_.acquired_image(); }
 
 void VulkanDevice::present() {
-    if (offscreen_ || swapchain_ == VK_NULL_HANDLE || swapchain_extent_.width == 0) {
+    // Nothing acquired means nothing to present - a frame that never touched
+    // the backbuffer, which is every frame the gates drive.
+    if (!holds_image_ || swapchain_ == VK_NULL_HANDLE || swapchain_extent_.width == 0) {
         return;
     }
+    holds_image_ = false;
     VkPresentInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     info.waitSemaphoreCount = 1;
     // Waits on the semaphore submit() signalled, not on a fence: presentation
     // is a queue operation and has to be ordered against the rendering on the
     // GPU, not on the CPU.
-    info.pWaitSemaphores = &render_finished_[frame_index_];
+    info.pWaitSemaphores = &render_finished_[acquired_image_];
     info.swapchainCount = 1;
     info.pSwapchains = &swapchain_;
     info.pImageIndices = &acquired_image_;
@@ -593,6 +603,7 @@ void VulkanDevice::begin_frame() {
     vkResetDescriptorPool(device_, descriptor_pools_[frame_index_], 0);
     frame_ring_offset_ = 0;
     frame_ring_exhausted_ = false;
+    holds_image_ = false;
 
     if (offscreen_) {
         return;
@@ -606,7 +617,11 @@ void VulkanDevice::begin_frame() {
             return;
         }
     }
-    if (swapchain_extent_.width == 0) {
+}
+
+void VulkanDevice::ensure_acquired() {
+    if (holds_image_ || offscreen_ || swapchain_ == VK_NULL_HANDLE
+        || swapchain_extent_.width == 0) {
         return;
     }
     const VkResult acquired = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
@@ -623,9 +638,10 @@ void VulkanDevice::begin_frame() {
     // is rendered and the swapchain rebuilt next time round.
     if (acquired == VK_SUBOPTIMAL_KHR) {
         swapchain_stale_ = true;
-    } else {
-        vk_failed(acquired, "acquire next image");
+    } else if (vk_failed(acquired, "acquire next image")) {
+        return;
     }
+    holds_image_ = true;
 }
 
 void VulkanDevice::submit() {
@@ -640,12 +656,18 @@ void VulkanDevice::submit() {
     // gates the present. Without the wait, the frame can start writing an
     // image the display is still scanning out.
     const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    if (!offscreen_ && swapchain_extent_.width != 0) {
+    // Only a frame that holds an acquired image, which is only a frame that
+    // touched the backbuffer. A gate's submit is a plain submit: it waits on
+    // nothing and signals nothing, because there is no acquire behind it and no
+    // present in front of it. Wiring these in unconditionally is two validation
+    // errors - a wait with no matching signal, and a signal on a semaphore
+    // still signalled from three frames ago.
+    if (holds_image_) {
         submit.waitSemaphoreCount = 1;
         submit.pWaitSemaphores = &acquire_[frame_index_];
         submit.pWaitDstStageMask = &wait_stage;
         submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &render_finished_[frame_index_];
+        submit.pSignalSemaphores = &render_finished_[acquired_image_];
     }
     if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fences_[frame_index_]), "queue submit")) {
         // A lost device never recovers, and the frame loop has to stop rather
@@ -896,6 +918,38 @@ VkImageViewType to_view_type(TextureDimension dimension) {
     return VK_IMAGE_VIEW_TYPE_2D;
 }
 
+namespace {
+
+constexpr u32 kMaxMips = 16;
+
+u32 full_mip_count(u32 width, u32 height) {
+    u32 levels = 1;
+    while ((width > 1 || height > 1) && levels < kMaxMips) {
+        width = width > 1 ? width / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+        ++levels;
+    }
+    return levels;
+}
+
+// mip_levels == 0 means a full chain from width/height, not one level. Reading
+// it as one produced a texture whose reported mip count was the raw 0, so
+// upload_to_image's `mip < mips` loop ran zero times, staged zero bytes and
+// failed silently - a 2048x2048 albedo that came back null with nothing logged.
+// Same shape as the other backend's resolve_mip_count, deliberately.
+u32 resolve_mip_count(const TextureDesc& desc) {
+    if (desc.mip_levels == 1) {
+        return 1;
+    }
+    const u32 full = full_mip_count(desc.width, desc.height);
+    if (desc.mip_levels == 0 || desc.mip_levels > full) {
+        return full;
+    }
+    return desc.mip_levels;
+}
+
+} // namespace
+
 std::unique_ptr<ITexture> VulkanDevice::create_texture(
     const TextureDesc& desc, const void* data) {
     if (device_ == VK_NULL_HANDLE) {
@@ -915,7 +969,14 @@ std::unique_ptr<ITexture> VulkanDevice::create_texture(
     // Cube is six faces, so the layer count comes from the dimension rather
     // than from array_size alone - the contract says Cube is 6 and Tex2D is 1.
     const u32 layers = desc.dimension == TextureDimension::Cube ? 6u : desc.array_size;
-    const u32 mips = desc.mip_levels == 0 ? 1u : desc.mip_levels;
+    const u32 mips = resolve_mip_count(desc);
+    // The resolved counts, not what was asked for. Everything downstream reads
+    // them back off the texture - upload_to_image sizes the staging buffer from
+    // mip_levels() - so a texture that reports 0 mips while its image has 12 is
+    // a silent zero-byte upload.
+    TextureDesc resolved = desc;
+    resolved.mip_levels = mips;
+    resolved.array_size = layers;
 
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -979,7 +1040,7 @@ std::unique_ptr<ITexture> VulkanDevice::create_texture(
         return nullptr;
     }
 
-    auto texture = std::make_unique<VulkanTexture>(device_, image, memory, view, desc);
+    auto texture = std::make_unique<VulkanTexture>(device_, image, memory, view, resolved);
     if (data != nullptr) {
         // The contract's asymmetry, matched exactly: for a single-layer RGBA8
         // 2D texture `data` is mip 0 and the chain is generated here; for

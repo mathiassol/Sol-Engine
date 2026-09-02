@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-88 Done · 40 Ready · 98 Later · 58 Far.
+89 Done · 39 Ready · 98 Later · 58 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -124,7 +124,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 
 Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 
-*12 done · 3 ready · 24 rows.*
+*13 done · 2 ready · 24 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -141,7 +141,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 17 | GPU crash breadcrumbs (D3D12 DRED) captured on device-removed | **Ready** |  |
 | 18 | MSAA render targets on `TextureDesc` | **Done** |  |
 | 9 | UAV textures (compute write) | **Done** |  |
-| 24 | `rhi-vulkan` parity: surface, swapchain, and every virtual the offscreen slice left calling `not_implemented` — then `--rhi vulkan` and the whole gate suite on it | **Ready** |  |
+| 24 | `rhi-vulkan` parity: surface, swapchain, and every virtual the offscreen slice left calling `not_implemented` — then `--rhi vulkan` and the whole gate suite on it | **Done** |  |
 | 19 | Copy queue: uploads off the graphics timeline | Later | Uploads big enough to stall the graphics queue. Async loading is what would keep a copy queue busy, and it can start on the graphics queue. |
 | 20 | Transient memory pool / resource aliasing for graph transients | Later | Renderer #18 depth+normals — enough transients that peak VRAM is the wall. |
 | 21 | Indirect draw (`ExecuteIndirect`) on the contract | Later | A pass submitting more draws than the CPU can afford to record. Instanced draws already cut that cost a long way. |
@@ -151,7 +151,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 10 | Timestamp queries already exist; expose them on `IRHI` if a second backend needs them | Far | Still nothing needs them: `rhi-vulkan` exists but reports `last_gpu_time_ms()` as 0 and no gate reads it. The blocker is a *consumer*, not a backend. |
 | 11 | Mesh shaders / bindless heaps | Far |  |
 | 12 | `rhi-vulkan` offscreen: SPIR-V, one contract, byte-identical readback against D3D12 | **Done** |  |
-| 13 | Metal / console backends | Far | RHI #24 first, not #12. #12 proved the contract survives a second API - same shader source, byte-identical readback - but only for the surface one triangle needs. A third backend should be written against a contract a second one has taken all the way through a frame, or it will discover the same gaps twice. |
+| 13 | Metal / console backends | Far | A platform to run one on. RHI #24 has now taken the contract all the way through a frame, so a third backend inherits the six gaps that pass found already fixed - `mip_levels == 0`, acquire/present pairing, per-image semaphores, one instance per process, and two gates that were measuring the sandbox rather than the backend. What it still would not inherit is a *non-Windows platform package*, which is Platform #9, and that is the real blocker. |
 
 ---
 

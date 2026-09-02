@@ -13,7 +13,7 @@ namespace engine::debug {
 class StatsOverlay {
 public:
     bool init(rhi::IDevice& device, shaders::IShaderCompiler& compiler,
-        std::string_view shader_path);
+        std::string_view shader_path, shaders::ShaderTarget target);
     void set_visible(bool visible) { visible_ = visible; }
     bool visible() const { return visible_; }
     void update(const FrameStats& stats);

@@ -391,9 +391,28 @@ bool mount_app_content(engine::assets::IAssetLoader& loader,
 bool resolve_content(engine::assets::IAssetLoader& loader, std::string_view virtual_path,
     std::string& out_physical);
 
+// The bytecode kind this device consumes - the single place the app maps one
+// vocabulary onto the other. `rhi` cannot name ShaderTarget (it would have to
+// depend on `shaders`, which points the wrong way) and `shaders` has no reason
+// to know about devices, so the mapping belongs here, in the app that holds
+// both.
+//
+// Every shader the app compiles goes through this. A ShaderCompileDesc left at
+// its default asks for DXIL, which a Vulkan device rejects at pipeline
+// creation - so a missed site is a pass that silently does not exist rather
+// than a failure that shows up red.
+engine::shaders::ShaderTarget shader_target_for(const engine::rhi::IDevice& device);
+
+// The name a gate message should print for this device. Beside the target
+// because the two are always wanted together and getting one right while the
+// other stays hard-coded produces a gate that reports the wrong backend - the
+// depth gate printed `convention=standard` that way, and the storage-texture
+// gate printed `[d3d12]` while running on Vulkan.
+const char* api_name_for(const engine::rhi::IDevice& device);
+
 bool compile_fullscreen_hlsl(engine::shaders::IShaderCompiler& compiler, const std::string& path,
-    const char* fail_label, engine::shaders::ShaderBytecode& vs_out,
-    engine::shaders::ShaderBytecode& ps_out);
+    engine::shaders::ShaderTarget target, const char* fail_label,
+    engine::shaders::ShaderBytecode& vs_out, engine::shaders::ShaderBytecode& ps_out);
 
 bool build_fullscreen_pipeline(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& path, const char* name,

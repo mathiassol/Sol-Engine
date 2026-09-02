@@ -449,13 +449,24 @@ bool resolve_content(engine::assets::IAssetLoader& loader, std::string_view virt
     return true;
 }
 
+engine::shaders::ShaderTarget shader_target_for(const engine::rhi::IDevice& device) {
+    return device.api() == engine::rhi::GraphicsAPI::Vulkan
+        ? engine::shaders::ShaderTarget::Spirv
+        : engine::shaders::ShaderTarget::Dxil;
+}
+
+const char* api_name_for(const engine::rhi::IDevice& device) {
+    return device.api() == engine::rhi::GraphicsAPI::Vulkan ? "vulkan" : "d3d12";
+}
+
 bool compile_fullscreen_hlsl(engine::shaders::IShaderCompiler& compiler, const std::string& path,
-    const char* fail_label, engine::shaders::ShaderBytecode& vs_out,
-    engine::shaders::ShaderBytecode& ps_out) {
+    engine::shaders::ShaderTarget target, const char* fail_label,
+    engine::shaders::ShaderBytecode& vs_out, engine::shaders::ShaderBytecode& ps_out) {
     engine::shaders::ShaderCompileDesc vs{};
     vs.file_path = path;
     vs.entry_point = "vs_main";
     vs.target_profile = "vs_6_0";
+    vs.target = target;
     engine::shaders::ShaderCompileDesc ps = vs;
     ps.entry_point = "ps_main";
     ps.target_profile = "ps_6_0";
@@ -475,7 +486,8 @@ bool build_fullscreen_pipeline(engine::rhi::IDevice& device,
 
     engine::shaders::ShaderBytecode vs_bytecode;
     engine::shaders::ShaderBytecode ps_bytecode;
-    if (!compile_fullscreen_hlsl(compiler, path, label, vs_bytecode, ps_bytecode)) {
+    if (!compile_fullscreen_hlsl(
+            compiler, path, shader_target_for(device), label, vs_bytecode, ps_bytecode)) {
         return false;
     }
 

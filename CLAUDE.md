@@ -110,7 +110,7 @@ is what sets `RemoteSigned`. Under 5.1 the command needs
 `-ExecutionPolicy Bypass`. The script itself is compatible with both, and CI
 runs it under both.
 
-Machine-checks the non-negotiables above plus doc-level drift. Sixteen checks:
+Machine-checks the non-negotiables above plus doc-level drift. Seventeen checks:
 every package declaring a layer, graphics-API
 isolation, `renderer` never including `scene`, downward-only dependencies, no
 empty packages, no `add_pass` from an app, header layout, resolvable doc links,
@@ -126,7 +126,15 @@ this hand-tuned tree, and **gate-registry** — every gate defined under
 `packages/sandbox/src/gates/` being declared in `gates.hpp` and classified `Cpu`
 or `Gpu` in `kGates`, so a gate cannot exist and run in no sequence, and
 **rhi-vocabulary** — no `D3D12`/`DXGI`/`SRV`/`UAV`/register-space terms in the
-public `rhi` headers outside the binding contract that exists to name them.
+public `rhi` headers outside the binding contract that exists to name them, and
+**shader-target** — every default-constructed `ShaderCompileDesc` naming its
+`.target` (a copy inherits one and is exempt). `target` defaults to `Dxil`, so a
+desc that never sets it asks for the D3D backend's bytecode wherever it is used;
+a Vulkan device then rejects the blob at pipeline creation, the setup function
+returns early, and every gate after it in that function silently does not run.
+That cost fifty gates twice, with a green pass count both times — nothing fails,
+the gates are just absent, which no total can show. Set it from the device:
+`shader_target_for(device)`.
 That map check reads
 ENGINE_MAP.md as a graph: every `Category #N` in a **Finish first** must
 resolve, a Later row whose named blockers are all Done must be flipped to

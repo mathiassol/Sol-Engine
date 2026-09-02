@@ -130,7 +130,45 @@ u32 find_graphics_family(VkPhysicalDevice gpu) {
 
 } // namespace
 
-bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
+namespace {
+
+// The one instance, and how many devices hold it. A function-local static so
+// static-initialisation order cannot bite - the same reason the cvar registry
+// uses one.
+struct SharedInstance {
+    VkInstance instance = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+    bool validation_enabled = false;
+    u32 refs = 0;
+};
+
+SharedInstance& shared_instance() {
+    static SharedInstance state;
+    return state;
+}
+
+bool instance_extension_present(const char* name) {
+    u32 count = 0;
+    if (vk_failed(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr),
+            "instance extension enumeration")) {
+        return false;
+    }
+    std::vector<VkExtensionProperties> extensions(count);
+    if (count > 0
+        && vk_failed(
+            vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()),
+            "instance extension enumeration")) {
+        return false;
+    }
+    for (const VkExtensionProperties& extension : extensions) {
+        if (std::strcmp(extension.extensionName, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool create_shared_instance(SharedInstance& shared) {
     if (vk_failed(volkInitialize(), "loader initialisation")) {
         log(LogLevel::Error, LogChannel::Render,
             "No Vulkan loader found. vulkan-1.dll ships with the GPU driver, so this "
@@ -156,9 +194,15 @@ bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
 
     std::vector<const char*> layers;
     std::vector<const char*> extensions;
-    if (want_surface) {
-        // Requested only when a window was given, so an offscreen device still
-        // works on a machine or a driver with no presentation support at all.
+    // Requested whenever the loader has them, rather than only when the first
+    // caller wants a window. The instance is shared now, so it cannot be
+    // tailored to one device's needs: an offscreen device created first would
+    // otherwise leave a later windowed one with no surface extension and no way
+    // to add one. Asking for what is present costs nothing, and a machine with
+    // no presentation support simply does not list them - a windowed device
+    // then fails at create_surface, by name.
+    if (instance_extension_present(VK_KHR_SURFACE_EXTENSION_NAME)
+        && instance_extension_present(VK_KHR_WIN32_SURFACE_EXTENSION_NAME)) {
         extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
         extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
     }
@@ -175,11 +219,12 @@ bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
     create.enabledExtensionCount = static_cast<u32>(extensions.size());
     create.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
 
-    if (vk_failed(vkCreateInstance(&create, nullptr, &out.instance), "instance creation")) {
+    if (vk_failed(
+            vkCreateInstance(&create, nullptr, &shared.instance), "instance creation")) {
         return false;
     }
-    volkLoadInstance(out.instance);
-    out.validation_enabled = want_validation;
+    volkLoadInstance(shared.instance);
+    shared.validation_enabled = want_validation;
 
     if (want_validation) {
         VkDebugUtilsMessengerCreateInfoEXT messenger{};
@@ -191,16 +236,38 @@ bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
             | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
         messenger.pfnUserCallback = debug_callback;
         if (vk_failed(vkCreateDebugUtilsMessengerEXT(
-                          out.instance, &messenger, nullptr, &out.messenger),
+                          shared.instance, &messenger, nullptr, &shared.messenger),
                 "debug messenger creation")) {
             // Not fatal: an unvalidated device still renders, and saying so is
             // better than refusing to start over a diagnostic channel.
-            out.messenger = VK_NULL_HANDLE;
+            shared.messenger = VK_NULL_HANDLE;
         } else {
             log(LogLevel::Info, LogChannel::Render,
                 "Vulkan validation layer enabled (ENGINE_GPU_DEBUG=1)");
         }
     }
+
+    return true;
+}
+
+} // namespace
+
+bool acquire_vulkan_instance(VulkanInstance& out, bool want_surface) {
+    SharedInstance& shared = shared_instance();
+    if (shared.instance == VK_NULL_HANDLE) {
+        if (!create_shared_instance(shared)) {
+            // A half-built instance is a reference nobody holds: tear it down
+            // here rather than leave it for the next caller to find.
+            if (shared.instance != VK_NULL_HANDLE) {
+                vkDestroyInstance(shared.instance, nullptr);
+                shared.instance = VK_NULL_HANDLE;
+            }
+            return false;
+        }
+    }
+    out.instance = shared.instance;
+    out.messenger = shared.messenger;
+    out.validation_enabled = shared.validation_enabled;
 
     u32 gpu_count = 0;
     if (vk_failed(vkEnumeratePhysicalDevices(out.instance, &gpu_count, nullptr),
@@ -255,6 +322,11 @@ bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
 
     out.api_version = best_properties.apiVersion;
     out.device_name = best_properties.deviceName;
+    // Taken here, not at the top: every failure above returns with `out` still
+    // holding VK_NULL_HANDLE, and release_vulkan_instance keys off that to stay
+    // a no-op. A reference taken before the physical-device pass would be
+    // leaked by any caller that failed it.
+    ++shared.refs;
     char message[192];
     std::snprintf(message, sizeof(message), "Vulkan device selected: %s (API %u.%u.%u)",
         out.device_name.c_str(), VK_API_VERSION_MAJOR(out.api_version),
@@ -263,17 +335,33 @@ bool create_vulkan_instance(VulkanInstance& out, bool want_surface) {
     return true;
 }
 
-void destroy_vulkan_instance(VulkanInstance& state) {
-    if (state.messenger != VK_NULL_HANDLE) {
-        vkDestroyDebugUtilsMessengerEXT(state.instance, state.messenger, nullptr);
-        state.messenger = VK_NULL_HANDLE;
+void release_vulkan_instance(VulkanInstance& state) {
+    // Only a device that actually acquired one holds a reference - a failed
+    // acquire leaves its struct null, so this stays a no-op for it.
+    if (state.instance == VK_NULL_HANDLE) {
+        return;
     }
-    if (state.instance != VK_NULL_HANDLE) {
-        vkDestroyInstance(state.instance, nullptr);
-        state.instance = VK_NULL_HANDLE;
-    }
+    state.instance = VK_NULL_HANDLE;
+    state.messenger = VK_NULL_HANDLE;
     state.gpu = VK_NULL_HANDLE;
     state.graphics_family = ~0u;
+
+    SharedInstance& shared = shared_instance();
+    if (shared.refs > 0) {
+        --shared.refs;
+    }
+    if (shared.refs != 0) {
+        return;
+    }
+    if (shared.messenger != VK_NULL_HANDLE) {
+        vkDestroyDebugUtilsMessengerEXT(shared.instance, shared.messenger, nullptr);
+        shared.messenger = VK_NULL_HANDLE;
+    }
+    if (shared.instance != VK_NULL_HANDLE) {
+        vkDestroyInstance(shared.instance, nullptr);
+        shared.instance = VK_NULL_HANDLE;
+    }
+    shared.validation_enabled = false;
 }
 
 u32 find_memory_type(VkPhysicalDevice gpu, u32 type_bits, VkMemoryPropertyFlags required) {

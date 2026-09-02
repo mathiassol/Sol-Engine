@@ -73,6 +73,20 @@ public:
     // True when created with a null window_handle. See DeviceDesc.
     virtual bool offscreen() const = 0;
 
+    // The same value IRHI::api() reports, reachable from the object callers
+    // actually hold. An app has to know this for one reason: shader bytecode is
+    // per-API, and every pipeline it builds has to be handed the kind its
+    // device consumes. Nothing in `renderer` reads it - the renderer takes
+    // blobs - and it is not a licence to branch on the backend. The one legal
+    // use is choosing what to compile, and the sandbox does that in exactly one
+    // function.
+    //
+    // Found by running --gates on a second backend: the sandbox compiled every
+    // shader to DXIL unconditionally, so all three pipeline setups rejected
+    // them and the fifty gates they own never ran. Nothing failed - fifty gates
+    // simply were not there, which the pass count alone does not show.
+    virtual GraphicsAPI api() const = 0;
+
     virtual ISwapchain& swapchain() = 0;
     virtual ICommandList& command_list() = 0;
 

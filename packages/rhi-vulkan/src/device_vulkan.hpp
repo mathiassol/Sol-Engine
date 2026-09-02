@@ -36,10 +36,26 @@ struct VulkanInstance {
     bool validation_enabled = false;
 };
 
-// Creates instance, picks a physical device, finds a graphics queue family.
-// False with the reason logged on any failure. instance_vulkan.cpp.
-bool create_vulkan_instance(VulkanInstance& out, bool want_surface);
-void destroy_vulkan_instance(VulkanInstance& state);
+// Acquires the process's Vulkan instance, picks a physical device and finds a
+// graphics queue family. False with the reason logged on any failure.
+// instance_vulkan.cpp.
+//
+// **One instance per process, reference-counted**, and that is not an
+// optimisation. Vulkan permits several; volk does not, because volkLoadInstance
+// rebinds *global* function pointers. A second instance rebinds every
+// instance-level entry point - vkDestroyDebugUtilsMessengerEXT among them - and
+// destroying that second instance leaves the first device's teardown calling
+// through a pointer into an instance that no longer exists. That was an access
+// violation at shutdown, in the last device destroyed, and only in a process
+// with more than one Vulkan device - which is exactly what a parity gate makes.
+//
+// Each caller still gets its own physical-device choice and queue family: those
+// belong to the instance and are only ever queried, never created.
+bool acquire_vulkan_instance(VulkanInstance& out, bool want_surface);
+
+// Drops this device's reference. The instance itself goes when the last one
+// does. Pass the same struct acquire_vulkan_instance filled in.
+void release_vulkan_instance(VulkanInstance& state);
 
 // Layout, access mask and stage mask together. D3D12 has one state enum
 // covering all three; Vulkan splits them, so they are returned as a unit -
@@ -411,6 +427,7 @@ public:
 
     DepthConvention depth_convention() const override { return depth_convention_; }
     bool offscreen() const override { return offscreen_; }
+    GraphicsAPI api() const override { return GraphicsAPI::Vulkan; }
     ISwapchain& swapchain() override;
     ICommandList& command_list() override { return commands_; }
 
@@ -482,6 +499,10 @@ public:
     // hands back whatever image it likes and the two drift apart as soon as
     // one is skipped.
     u32 acquired_image() const { return acquired_image_; }
+
+    // Acquires this frame's image if it has not already. Called from
+    // swapchain_color(), which is the first thing a presenting frame touches.
+    void ensure_acquired();
     void present();
     // maxUniformBufferRange, read once at init.
     //
@@ -535,12 +556,28 @@ private:
     std::unique_ptr<ITexture> swapchain_depth_;
     u32 swapchain_image_count_ = 0;
     u32 acquired_image_ = 0;
+    // Whether *this* frame holds an acquired image. Acquiring is paired with
+    // presenting, not with begin_frame: the gates drive begin_frame, record,
+    // submit and wait dozens of times without ever presenting, and a
+    // begin_frame that acquired unconditionally handed out more images than
+    // the swapchain owns - vkAcquireNextImageKHR then complains that forward
+    // progress cannot be guaranteed (VUID-07783), and the submits wait on
+    // semaphores nothing will signal (VUID-03238). So the acquire happens on
+    // first use of the backbuffer, which only a presenting frame reaches.
+    bool holds_image_ = false;
     bool swapchain_stale_ = false;
     // One pair per slot. The acquire semaphore is waited by the frame's submit
     // and the render-finished one by the present, so both have to be per-slot
     // or two frames in flight signal the same semaphore twice.
+    // Acquire is per frame slot because there is no image index until the
+    // acquire returns one. Render-finished is per *image*, which is the
+    // difference that matters: a binary semaphore must be unsignalled when it
+    // is signalled again, and the fence for a frame slot says the submit
+    // finished - it says nothing about whether the present that waited on the
+    // semaphore has. Indexing both by slot made the third frame signal a
+    // semaphore the first frame's present had not consumed.
     VkSemaphore acquire_[kFrameCount]{};
-    VkSemaphore render_finished_[kFrameCount]{};
+    VkSemaphore render_finished_[kMaxSwapchainImages]{};
 
     VulkanCommandList commands_;
     VulkanSwapchain swapchain_wrapper_;

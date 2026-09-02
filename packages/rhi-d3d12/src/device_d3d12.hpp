@@ -225,6 +225,7 @@ public:
     DepthConvention depth_convention() const override { return depth_convention_; }
     // Null window at creation. See DeviceDesc::window_handle.
     bool offscreen() const override { return hwnd_ == nullptr; }
+    GraphicsAPI api() const override { return GraphicsAPI::D3D12; }
 
     ISwapchain& swapchain() override;
     ICommandList& command_list() override;

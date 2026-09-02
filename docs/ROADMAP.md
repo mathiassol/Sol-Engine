@@ -47,17 +47,17 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 2 Sep 2026: **32,404 lines** of C++/HLSL in **174 files**, **27
+Measured 2 Sep 2026: **32,767 lines** of C++/HLSL in **174 files**, **27
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the
-largest at 10,849 — 33% — but it is no longer one file: `main.cpp` is 1,646
+largest at 10,997 — 34% — but it is no longer one file: `main.cpp` is 1,676
 lines, the seven `gates/gates_*.cpp` hold the 86 declared gates, and its
 `content/shaders/*.hlsl` (1,297 lines in 23 files) counts here too.
-**`rhi-vulkan` is now 3,657 — 11%, and has overtaken `rhi-d3d12`'s 3,432** on
-its way through parity, which is the honest cost of a second backend that
-presents rather than one that only renders offscreen; `renderer` is 3,087
-(10%); `core` is 1,436; `physics-cpu` is 1,435. `game.exe` reuses sandbox
+**`rhi-vulkan` is 3,843 — 12%, and has overtaken `rhi-d3d12`'s 3,433** after
+parity, which is the honest cost of a second backend that presents and runs the
+whole gate suite rather than one that only renders offscreen; `renderer` is
+3,087 (9%); `core` is 1,436; `physics-cpu` is 1,435. `game.exe` reuses sandbox
 sources (install layout, no extra .cpp).
 
 Every per-package figure above was recounted on 31 Aug and every one had
@@ -1391,6 +1391,155 @@ real graph used — the shadow gate runs against its own probe. Verified across
 the render-graph transient rebuild. Do not persist them: `config.cfg` is read and
 never written, and the cvar writer is Foundation #17. Do not add a preset knob
 for something the renderer does not actually expose.
+
+---
+
+## RHI #24 — Vulkan parity: the whole gate suite on the second backend (done)
+
+**Why:** RHI #12 proved the contract survives a second API, but only for the
+surface one triangle needs. Every virtual past that called `not_implemented`,
+which meant the interesting question — does the contract survive a *frame* —
+was still unanswered. A second backend that cannot run the engine is a
+demonstration, not a backend.
+
+**Gate:** `--rhi vulkan --gates` is **96 pass / 0 FAIL / 1 skip** with the
+validation layer armed and **zero messages from it**; D3D12 is unchanged at
+**97 pass / 0 FAIL / 0 skip** with the debug layer reporting 0/0/0, and the
+Release `game.exe` at 97/0/0. The one skip is honest and is described below.
+`solengine.bat gates-vk` runs it.
+
+And a configure with **`-DENGINE_RHI_D3D12=OFF -DENGINE_RHI_VULKAN=ON`** now
+builds and runs the engine on its own: **89 pass / 0 FAIL / 1 skip**, exit 0,
+validation silent. The seven fewer gates are the D3D12 halves of the parity
+pairs, compiled out. That configuration was not a goal of this row and is what
+found the last two defects below.
+
+**Choice:** the counting was the point. A gate suite that runs on one backend
+and not the other is not a parity claim, so the first thing built was a way to
+compare the two runs gate-by-gate rather than by total.
+
+That comparison is what found the real defect. The first Vulkan run reported
+**45 pass / 2 FAIL** and looked like two small problems. It was not: the sandbox
+compiled every shader to DXIL unconditionally, so all three pipeline setups
+rejected the bytecode, `setup_forward_demo` returned early, and **fifty gates
+never ran at all**. Nothing failed. Fifty gates were simply absent, and the pass
+count does not show absence — only a diff of the two runs' gate *names* does.
+Every fix below was found that way or by the validation layer, never by a red
+line in the expected place.
+
+**`IDevice::api()`, and the app maps it.** `shaders` and `rhi` are siblings —
+neither may include the other — so nothing below the app can turn a
+`GraphicsAPI` into a `ShaderTarget`. The mapping lives in exactly one function,
+`shader_target_for(device)` in `sandbox_common.cpp`, and `debug-draw`'s two
+`init` calls take the target as a parameter rather than deriving it a second
+time. The alternative, threading a `ShaderTarget` through five signatures, was
+rejected because every one of those sites already holds a device.
+
+**Eight defects the second backend found, every one in code already shipped:**
+
+*1. `mip_levels == 0` means a full chain, and the Vulkan backend read it as 1.*
+Worse, it stored the unresolved `0` on the texture, so `upload_to_image` ran its
+`mip < mips` loop zero times, staged zero bytes, and returned false with nothing
+logged — a 2048×2048 albedo that came back null. The resolved counts now go into
+the desc the texture keeps, because everything downstream reads them back off it.
+
+*2. The gates acquire a swapchain image they never present.* `begin_frame`
+acquired unconditionally, and the gates drive `begin_frame`/`submit`/`wait_idle`
+dozens of times without a present — so the process held more images than the
+swapchain owns (`VUID-vkAcquireNextImageKHR-surface-07783`) and every submit
+waited on a semaphore nothing would signal (`VUID-vkQueueSubmit-pWaitSemaphores-03238`).
+The acquire is now paired with the *present*, not with `begin_frame`: it happens
+on first use of `swapchain_color()`, which only a presenting frame reaches, and
+`submit()` wires up the swapchain semaphores only when the frame holds an image.
+
+*3. Render-finished semaphores belong to the image, not the frame slot.* A frame
+slot's fence says the submit finished; it says nothing about whether the present
+that waited on the semaphore has. Indexed by slot, the third frame signalled a
+semaphore the first frame's present had not consumed
+(`VUID-vkQueueSubmit-pSignalSemaphores-00067`).
+
+*4. volk allows one Vulkan instance per process, and this had three.*
+`volkLoadInstance` rebinds *global* function pointers, so a second instance
+rebinds every instance-level entry point — `vkDestroyDebugUtilsMessengerEXT`
+among them — and destroying it leaves the first device's teardown calling
+through a pointer into an instance that no longer exists. That was an access
+violation at shutdown, in the last device destroyed, and **only** in a process
+with more than one Vulkan device — which is exactly what the parity gates make.
+The instance is now acquired and released by reference count. Nothing about the
+crash pointed at volk: it was found by breadcrumbing the destructor, because
+each step it survived narrowed the fault to the one call after it.
+
+*5. `run_ship_gate` asserted a D3D feature level on a Vulkan device* — while
+`run_vulkan_device_gate` asserted, correctly, that the same field is 0. Two
+gates contradicting each other on the same backend. The feature level is now
+asserted where it means something and reported `n/a` where it does not, rather
+than quietly dropped: a gate that stops checking without saying so is worse than
+one that fails.
+
+*6. `run_mesh_reload_gate` passed vacuously.* Its comparison reduced to
+`0 <= 0 + 8 MiB` on any device that does not report VRAM usage, and it printed
+`local VRAM 0 -> 0 bytes (pass)`. An earlier audit went on to credit it for
+asserting byte-identical VRAM it was not looking at. It now counts its 300
+allocations — without that it cannot tell "nothing leaked" from "nothing was
+allocated" — and reports a **skip** by name when the figure is unavailable.
+That is the one skip in the Vulkan run.
+
+*7. The DXC runtime copy sat in the wrong block.* `shaders-dxc` is linked by
+both backends — DXC emits DXIL *and* SPIR-V from the same HLSL — but
+`engine_copy_dxc_runtime` was called only from the D3D12 half of
+`EngineRuntimeApp.cmake`. So a Vulkan-only build linked `dxcompiler.lib`, put no
+`dxcompiler.dll` next to the exe, compiled without a warning and would not
+start: `STATUS_DLL_NOT_FOUND`, `0xC0000135`, before `main()` and therefore
+before any log line. The copy now follows the link. Nothing on the D3D12 path
+can see this, because there the copy always happens.
+
+*8. `--rhi` defaulted to a backend that need not exist.* Hard-coded `"d3d12"`,
+so the Vulkan-only build refused to start on its only available backend with a
+message that was correct and useless: *`--rhi d3d12` was not compiled into this
+build. This build has: vulkan.* The default is now D3D12 where it exists and
+whatever the build has otherwise. Naming a backend explicitly that this build
+lacks is still fatal, and still not a fallback.
+
+**Two gates were measuring the sandbox, not the backend.** `run_dxc_gate`
+asserted `desc.target == Dxil`, which is a restatement of the sandbox's own
+hard-coded choice and therefore could not fail; `run_shader_cache_gate` asserted
+the cached blob was DXIL. Both now assert the bytecode matches whatever was
+*asked for*, which fails in both directions and is the stronger check.
+
+**`run_msaa_gate` and `run_storage_texture_gate` had default arguments** of
+`Dxil` and `"d3d12"`, and the live-device call sites took them — so on a Vulkan
+session the gate fed DXIL to a Vulkan device and reported the failure as
+`[d3d12]`. The defaults are gone. A default that is right for one backend is a
+trap on the second, and the depth gate printed `convention=standard` the same
+way a day earlier.
+
+**A seventeenth invariant, `shader-target`.** Every default-constructed
+`ShaderCompileDesc` must name its target; a copy inherits one and is exempt. The
+two offenders it would have caught were found by hand, twice, and each cost the
+whole forward pass. Watched failing before it was kept.
+
+**The GPU gate block's `#ifdef ENGINE_HAS_D3D12` was mislabelling.** Nothing in
+it needs `rhi-d3d12` — `shaders-dxc` is linked from both backend blocks
+precisely because DXC emits DXIL *and* SPIR-V — so a Vulkan-only configure built
+a working sandbox that logged "No GPU backend compiled in" and returned 1
+without ever using the device it had just created. It now names what it needs.
+
+**Do not:** do not point volk at `vulkan_core.h` — it guards its Win32 entry
+points on `VK_KHR_win32_surface`, which only `vulkan_win32.h` defines, and the
+symptom is one unresolved identifier that reads like a missing extension.
+`src/vulkan_headers_sol.h` gathers the platform headers so volk.h and volk.c see
+the same set. Do not create a second `VkInstance`; `acquire_vulkan_instance` is
+reference-counted for the reason above. Do not index the backbuffer array or the
+render-finished semaphores by frame slot. Do not acquire in `begin_frame`. Do not
+give a per-backend gate parameter a default. Do not let a gate report `pass` on a
+figure the device does not provide — `skip`, by name, with the reason.
+
+**Still missing, and recorded rather than hidden:** `last_gpu_time_ms()` is 0 on
+Vulkan (RHI #10's blocker is a consumer, not a backend);
+`gpu_memory_stats().local_usage_bytes` needs `VK_EXT_memory_budget`; and what a
+Vulkan-only *player* build would ship for shaders is unsettled — the SDK's
+SPIR-V `dxcompiler.dll` is not redistributable, so it wants cooked SPIR-V. That
+is written down in `docs/GPU_BASELINE.md`, not asserted by `run_ship_gate`.
 
 ---
 

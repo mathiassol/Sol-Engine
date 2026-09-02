@@ -66,21 +66,35 @@ function(engine_add_runtime_app TARGET)
     endif()
 
     if(TARGET engine::rhi-d3d12)
-        target_link_libraries(${TARGET} PRIVATE engine::rhi-d3d12 engine::shaders-dxc)
+        target_link_libraries(${TARGET} PRIVATE engine::rhi-d3d12)
         target_compile_definitions(${TARGET} PRIVATE ENGINE_HAS_D3D12)
-        include(EngineDxc)
-        engine_copy_dxc_runtime(${TARGET})
     endif()
 
-    # No engine_copy_dxc_runtime here. That copies the Windows SDK's DXC next to
-    # the exe; the SPIR-V one is loaded from the Vulkan SDK by absolute path
-    # instead, deliberately not copied - two differently-built DLLs with the
-    # same name in one directory is a coin flip nobody should have to think
-    # about. Linking shaders-dxc from both blocks is harmless and states that
-    # both backends need it.
     if(TARGET engine::rhi-vulkan)
-        target_link_libraries(${TARGET} PRIVATE engine::rhi-vulkan engine::shaders-dxc)
+        target_link_libraries(${TARGET} PRIVATE engine::rhi-vulkan)
         target_compile_definitions(${TARGET} PRIVATE ENGINE_HAS_VULKAN)
+    endif()
+
+    # shaders-dxc belongs to both backends - DXC emits DXIL *and* SPIR-V from
+    # the same HLSL - so it is linked once here rather than from each block, and
+    # **so is its runtime**. That was the bug: the copy sat inside the D3D12
+    # block while the link happened in both, so a Vulkan-only configure
+    # (ENGINE_RHI_D3D12=OFF) produced an exe that imported dxcompiler.dll and
+    # had no copy of it next to the binary. It built cleanly and would not
+    # start - STATUS_DLL_NOT_FOUND, 0xC0000135, before main() and so before any
+    # log line. Nothing on the D3D12 path can see this, because there the copy
+    # always happens.
+    #
+    # Note which DXC this is. engine_copy_dxc_runtime copies the **Windows
+    # SDK's** dxcompiler.dll + dxil.dll next to the exe. The SPIR-V-capable one
+    # is a different build of the same file name, loaded from the Vulkan SDK by
+    # absolute path and deliberately *not* copied: two differently-built DLLs
+    # with one name in one directory is a coin flip nobody should have to think
+    # about.
+    if(TARGET engine::rhi-d3d12 OR TARGET engine::rhi-vulkan)
+        target_link_libraries(${TARGET} PRIVATE engine::shaders-dxc)
+        include(EngineDxc)
+        engine_copy_dxc_runtime(${TARGET})
     endif()
 
     # Both apps get the content copy, not just the install-layout one.

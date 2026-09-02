@@ -341,28 +341,60 @@ bool run_mesh_reload_gate(engine::rhi::IDevice& device, const engine::assets::Me
     device.wait_idle();
     const auto before = device.gpu_memory_stats();
 
+    // Counted, because the gate has to know the allocations happened. Without
+    // this it cannot tell "nothing leaked" from "nothing was allocated": a
+    // device whose create_buffer returned null 300 times reports the same
+    // before == after and the same pass.
+    constexpr int kIterations = 100;
     constexpr engine::usize kDummyBytes = 1024u * 1024u;
-    for (int i = 0; i < 100; ++i) {
+    int allocated = 0;
+    for (int i = 0; i < kIterations; ++i) {
         auto transient = engine::assets::gpu::upload_mesh(device, mesh_data);
         engine::rhi::BufferDesc dummy{};
         dummy.size  = kDummyBytes;
         dummy.usage = engine::rhi::BufferUsage::Vertex;
         auto dummy_buffer = device.create_buffer(dummy);
-        (void)transient;
-        (void)dummy_buffer;
+        if (transient.vertex_buffer && transient.index_buffer && dummy_buffer) {
+            ++allocated;
+        }
     }
 
     device.wait_idle();
     const auto after = device.gpu_memory_stats();
 
+    // A usage figure of zero at both ends is not a pass, it is no measurement.
+    // gpu_memory_stats().local_usage_bytes is filled by the D3D12 backend from
+    // QueryVideoMemoryInfo; the Vulkan one reports 0 deliberately, because a
+    // real figure needs VK_EXT_memory_budget. Reported as a skip, by name -
+    // this gate printed `local VRAM 0 -> 0 bytes (pass)` on Vulkan, which is
+    // worse than red, and an audit went on to credit it for asserting
+    // byte-identical VRAM it was not looking at.
+    const bool measurable = before.local_usage_bytes != 0 || after.local_usage_bytes != 0;
+    const bool allocations_ok = allocated == kIterations;
+    if (!measurable) {
+        char skipped[256];
+        std::snprintf(skipped, sizeof(skipped),
+            "Mesh reload gate (100x + 1 MiB dummy): allocated=%d/%d, but this device "
+            "reports no local VRAM usage - needs VK_EXT_memory_budget (skip)",
+            allocated, kIterations);
+        engine::log(allocations_ok ? engine::LogLevel::Warn : engine::LogLevel::Error,
+            engine::LogChannel::Render, skipped);
+        return allocations_ok;
+    }
+
     constexpr engine::u64 kSlackBytes = 8ull * 1024ull * 1024ull;
-    const bool passed = after.local_usage_bytes <= before.local_usage_bytes + kSlackBytes;
+    const bool within_slack
+        = after.local_usage_bytes <= before.local_usage_bytes + kSlackBytes;
+    const bool passed = within_slack && allocations_ok;
 
     char message[256];
     std::snprintf(message, sizeof(message),
-        "Mesh reload gate (100x + 1 MiB dummy): local VRAM %llu -> %llu bytes (%s)",
+        "Mesh reload gate (100x + 1 MiB dummy): allocated=%d/%d local VRAM %llu -> %llu "
+        "bytes (slack %llu) (%s)",
+        allocated, kIterations,
         static_cast<unsigned long long>(before.local_usage_bytes),
         static_cast<unsigned long long>(after.local_usage_bytes),
+        static_cast<unsigned long long>(kSlackBytes),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);

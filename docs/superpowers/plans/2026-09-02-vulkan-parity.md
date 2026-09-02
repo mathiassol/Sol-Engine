@@ -251,23 +251,23 @@ accident.
 
 ## Phase 12: the suite, and the record
 
-- [ ] **12.1** `solengine run --rhi vulkan --gates` with
+- [x] **12.1** `solengine run --rhi vulkan --gates` with
   `ENGINE_GPU_DEBUG=1`. Expect failures; each one is a finding. Fix, and
   **record what each was** — this list is the row's real output, because the
   gates were written against D3D12 with no second backend in mind.
-- [ ] **12.2** All 82 registered gates green on Vulkan, validation layer
+- [x] **12.2** All 82 registered gates green on Vulkan, validation layer
   silent. Then the same on D3D12, unchanged, and Release.
-- [ ] **12.3** CI: a `run-vk` equivalent is not runnable on a hosted runner
+- [x] **12.3** CI: a `run-vk` equivalent is not runnable on a hosted runner
   (no GPU), so nothing changes there — but say so in the workflow comment
   beside the existing `--gates` note.
-- [ ] **12.4** ROADMAP Why/Choice/Gate/Do-not entry. **Do-not** lines: do not
+- [x] **12.4** ROADMAP Why/Choice/Gate/Do-not entry. **Do-not** lines: do not
   let the `-fvk-*-shift` flags and `kBindingBase*` drift; do not add a
   suballocator to one backend only; do not assume a semantic maps to a
   location without the declaration-order property holding.
-- [ ] **12.5** RHI #24 → **Done**, subtotals and header totals recounted, LOC
+- [x] **12.5** RHI #24 → **Done**, subtotals and header totals recounted, LOC
   audit refreshed, spec `Status: implemented`, RHI #13's blocker re-read again
   now that a second backend has been through a whole frame.
-- [ ] **12.6** Commit: `docs(roadmap): the engine renders on two backends (RHI #24)`
+- [x] **12.6** Commit: `docs(roadmap): the engine renders on two backends (RHI #24)`
 
 ---
 

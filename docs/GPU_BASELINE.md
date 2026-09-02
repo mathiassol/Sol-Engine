@@ -54,6 +54,30 @@ release workflow asserts this before it uploads.
 Do not add Agility until a feature actually needs a newer D3D12 runtime than
 Windows 10 inbox provides (mesh shaders, enhanced barriers, and similar).
 
+## A Vulkan player build is not settled
+
+Everything above describes the D3D12 player, which is the only one shipped
+today. `--rhi vulkan` runs the whole gate suite (RHI #24) and is a development
+and parity path, not a release configuration — two things are unresolved, and
+both are recorded here rather than asserted by `run_ship_gate`, which checks
+`dxcompiler.dll` and `dxil.dll` on either backend because those are facts about
+what the build put next to the exe and the same binary can run either.
+
+**Shaders.** The SPIR-V half of the toolchain is the Vulkan SDK's own
+`dxcompiler.dll`, built with `-DENABLE_SPIRV_CODEGEN=ON`; the one this repo
+ships is the DirectX build and cannot emit SPIR-V (Shaders #5). The SDK's is not
+redistributable, so a Vulkan player cannot compile shaders at runtime the way
+the D3D12 one does. It wants **cooked SPIR-V in the pack** — the cook path
+exists (`packages/cook`) and does not do this yet.
+
+**The loader.** `vulkan-1.dll` ships with the GPU driver rather than with the
+game, so there is nothing to place next to the exe; a machine with no
+Vulkan-capable driver fails at `volkInitialize` with that said by name. No
+Vulkan DLL is copied to the output directory and none should be.
+
+Until both are answered, treat a Vulkan release as unsupported rather than
+untested — the gates pass on it, and that is a different claim.
+
 ## Related layout
 
 `game.exe` also expects `content.pak`, `content/`, and `debug/` next to the

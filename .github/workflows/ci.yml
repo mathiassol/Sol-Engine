@@ -106,6 +106,18 @@ jobs:
       # fails for environmental reasons rather than because anything is broken.
       # Run the gates locally before pushing, or on a self-hosted runner with
       # a real GPU.
+      #
+      # `--rhi vulkan --gates` (RHI #24) does not change that, and is worth
+      # saying explicitly because it looks like it might. Vulkan has no
+      # software-adapter rule to trip over, but a hosted runner has no
+      # Vulkan-capable driver either - vulkan-1.dll ships with the GPU driver -
+      # so volkInitialize fails, and the SPIR-V half of the toolchain needs the
+      # Vulkan SDK's own dxcompiler.dll, which is not on the image. Two
+      # environmental reasons, the same conclusion.
+      #
+      # Locally, both are one command each: `solengine gates-gpu` for D3D12 and
+      # `solengine gates-vk` for Vulkan, each with its debug layer armed.
+      # Shipping GPU work means running both.
 
   # ── The portability claim, compiled rather than asserted. ────────────────
   # ARCHITECTURE.md says only the backend packages touch a platform API, and a

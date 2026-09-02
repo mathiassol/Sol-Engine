@@ -135,13 +135,20 @@ rhi::GraphicsPipelineDesc overlay_pipeline_desc(std::span<const u8> vs, std::spa
 } // namespace
 
 bool StatsOverlay::init(rhi::IDevice& device, shaders::IShaderCompiler& compiler,
-    std::string_view shader_path) {
+    std::string_view shader_path, shaders::ShaderTarget target) {
     device_ = &device;
+
+    // `target` is passed rather than derived from `device`, which looks
+    // redundant and is not: `rhi` and `shaders` are siblings, neither may
+    // include the other, so nothing below this package can map a GraphicsAPI
+    // onto a ShaderTarget. Deriving it here would put a second copy of that
+    // mapping in the tree, and the app already holds the only one.
 
     shaders::ShaderCompileDesc vs_desc{};
     vs_desc.file_path = shader_path;
     vs_desc.entry_point = "vs_main";
     vs_desc.target_profile = "vs_6_0";
+    vs_desc.target = target;
 
     shaders::ShaderCompileDesc ps_desc = vs_desc;
     ps_desc.entry_point = "ps_main";

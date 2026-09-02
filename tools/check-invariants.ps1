@@ -995,6 +995,53 @@ if (Test-Path $vocabRoot) {
 
 Add-Result 'rhi-vocabulary' $vocabSummary $vocabViolations
 
+# ── 17. every default-constructed ShaderCompileDesc names its target ─────────
+# ShaderCompileDesc::target defaults to Dxil, so a desc that never sets it asks
+# for the D3D backend's bytecode wherever it is used. On a Vulkan device the
+# pipeline then rejects the blob, the setup function returns early, and every
+# gate after it in that function silently does not run - fifty of them, twice,
+# with a green pass count both times. Nothing fails; the gates are just absent,
+# which the pass count alone does not show.
+#
+# Two offenders existed when this was written, run_rhi_impl_gate and
+# run_color_space_gate, and both were found by hand. That is the argument for
+# checking it mechanically.
+#
+# A desc copy-initialised from another one is exempt: it inherits the target,
+# and that is the idiom the sandbox uses for its vertex/pixel pairs.
+$targetViolations = @()
+$targetScanned = 0
+$descFiles = Get-ChildItem -Path 'packages' -Recurse -File -Include '*.cpp' |
+    Where-Object { $_.FullName -notmatch '[\\/]third_party[\\/]' }
+foreach ($file in $descFiles) {
+    $lines = Get-Content -LiteralPath $file.FullName
+    $rel = ($file.FullName.Substring($repo.Length + 1)) -replace '\\', '/'
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        # `ShaderCompileDesc name{};` only - a copy (`= other;`) inherits.
+        if ($lines[$i] -notmatch 'ShaderCompileDesc\s+(\w+)\s*\{\s*\}\s*;') { continue }
+        $name = $Matches[1]
+        $targetScanned++
+        # The assignment sits in the run of field writes that follows.
+        $found = $false
+        $limit = [Math]::Min($i + 14, $lines.Count - 1)
+        for ($j = $i + 1; $j -le $limit; $j++) {
+            if ($lines[$j] -match ('^\s*' + [regex]::Escape($name) + '\.target\s*=')) {
+                $found = $true
+                break
+            }
+        }
+        if (-not $found) {
+            $targetViolations += ("${rel}:" + ($i + 1) + ": '$name' never sets .target, so " +
+                'it asks for DXIL wherever it is used - which a Vulkan device rejects at ' +
+                'pipeline creation. Set it from the device: shader_target_for(device).')
+        }
+    }
+}
+Add-Result 'shader-target' `
+    "$targetScanned default-constructed ShaderCompileDesc, all naming a target" `
+    $targetViolations
+
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 

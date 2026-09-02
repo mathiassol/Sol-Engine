@@ -497,17 +497,31 @@ bool run_ship_gate(engine::Engine& app) {
     const engine::rhi::GpuBaseline baseline =
         device != nullptr ? device->gpu_baseline() : engine::rhi::GpuBaseline{};
     const bool sm_ok = baseline.shader_model >= engine::rhi::kGpuShaderModel_6_0;
-    const bool fl_ok = baseline.feature_level >= engine::rhi::kGpuFeatureLevel_11_0;
+    // A D3D feature level is a D3D fact. GpuBaseline is D3D-shaped and the
+    // Vulkan backend reports 0 deliberately rather than inventing a number, so
+    // asserting 11_0 unconditionally failed on a device that was working
+    // perfectly. Asserted where it means something and reported n/a where it
+    // does not - not quietly dropped, because a gate that stops checking
+    // without saying so is worse than one that fails.
+    const bool d3d = device != nullptr && device->api() == engine::rhi::GraphicsAPI::D3D12;
+    const bool fl_ok = !d3d || baseline.feature_level >= engine::rhi::kGpuFeatureLevel_11_0;
 
+    // dxil.dll and dxcompiler.dll are checked on both: they are facts about
+    // what this build put next to the exe, not about the backend in play, and
+    // the same binary can run either. What a Vulkan-only player build would
+    // need instead - cooked SPIR-V, or a SPIR-V-capable dxcompiler.dll, since
+    // the SDK's is not redistributed - is unsettled and recorded in
+    // docs/GPU_BASELINE.md rather than asserted here.
     const bool passed = dxc_ok && dxil_ok && agility_ok && sm_ok && fl_ok;
     char message[192];
     std::snprintf(message, sizeof(message),
-        "Ship gate: dxc=%s dxil=%s agility=%s sm=%s fl=%s (%s)",
+        "Ship gate: api=%s dxc=%s dxil=%s agility=%s sm=%s fl=%s (%s)",
+        d3d ? "d3d12" : "vulkan",
         dxc_ok ? "yes" : "no",
         dxil_ok ? "yes" : "no",
         agility_ok ? "os" : "sdk",
         sm_ok ? "6.0" : "no",
-        fl_ok ? "11_0" : "no",
+        d3d ? (fl_ok ? "11_0" : "no") : "n/a",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);

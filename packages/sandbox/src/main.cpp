@@ -385,7 +385,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
-    if (!state.overlay.init(*device, compiler, overlay_shader)) {
+    if (!state.overlay.init(*device, compiler, overlay_shader, shader_target_for(*device))) {
         return false;
     }
 
@@ -404,7 +404,8 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
-    if (!state.debug_lines.init(*device, compiler, shader_path)) {
+    if (!state.debug_lines.init(
+            *device, compiler, shader_path, shader_target_for(*device))) {
         return false;
     }
 
@@ -497,6 +498,10 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     vs_desc.file_path = shader_path;
     vs_desc.entry_point = "vs_main";
     vs_desc.target_profile = "vs_6_0";
+    // Every desc below is copied from this one, so this is the only line that
+    // has to be right - and it is the line that was missing, which cost the
+    // forward pass, the overlay, the debug lines and the fifty gates they own.
+    vs_desc.target = shader_target_for(*device);
 
     engine::shaders::ShaderCompileDesc ps_desc = vs_desc;
     ps_desc.entry_point = "ps_main";
@@ -538,7 +543,9 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         if (fail_on_gate) {
             return false;
         }
-    } else if (!run_storage_texture_gate(*device, compiler, storage_tex_path) && fail_on_gate) {
+    } else if (!run_storage_texture_gate(*device, compiler, storage_tex_path,
+                   shader_target_for(*device), api_name_for(*device))
+        && fail_on_gate) {
         return false;
     }
 
@@ -549,7 +556,9 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         if (fail_on_gate) {
             return false;
         }
-    } else if (!run_msaa_gate(*device, compiler, msaa_path) && fail_on_gate) {
+    } else if (!run_msaa_gate(*device, compiler, msaa_path, shader_target_for(*device),
+                   api_name_for(*device))
+        && fail_on_gate) {
         return false;
     }
 
@@ -1119,7 +1128,20 @@ int run_app(int argc, char** argv) {
     bool headless_gates = false;
     // Which backend the session runs on. Both spellings, because --rhi=vulkan
     // is what gets typed and --rhi vulkan is what gets scripted.
-    std::string_view rhi_name = "d3d12";
+    //
+    // D3D12 by default where it exists - it is the shipped player backend - but
+    // whatever this build *has* otherwise. A fixed "d3d12" default made a
+    // Vulkan-only configure refuse to start on its own single available
+    // backend, correctly worded and useless: `--rhi d3d12 was not compiled into
+    // this build. This build has: vulkan.`
+    std::string_view rhi_name =
+#if defined(ENGINE_HAS_D3D12)
+        "d3d12";
+#elif defined(ENGINE_HAS_VULKAN)
+        "vulkan";
+#else
+        "none";
+#endif
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--gates") {
@@ -1536,7 +1558,14 @@ int run_app(int argc, char** argv) {
         gates_ok = false;
     }
 
-#ifdef ENGINE_HAS_D3D12
+// Any GPU backend, not D3D12's. Nothing in this block needs rhi-d3d12: the
+// shader compiler lives in `shaders-dxc`, which the root CMakeLists links from
+// both backend blocks precisely because DXC emits DXIL *and* SPIR-V, and every
+// setup function below takes an IDevice. Written as `#ifdef ENGINE_HAS_D3D12`
+// it made a Vulkan-only configure - ENGINE_RHI_D3D12=OFF, ENGINE_RHI_VULKAN=ON
+// - build a working sandbox that logged "No GPU backend compiled in" and
+// returned 1 without ever using the device it had just created.
+#if defined(ENGINE_HAS_D3D12) || defined(ENGINE_HAS_VULKAN)
     const auto cache_dir
         = (std::filesystem::path(app.content_root()) / ".cache" / "shaders").string();
     auto compiler = engine::shaders::dxc::create_cached_compiler(cache_dir);
@@ -1582,15 +1611,16 @@ int run_app(int argc, char** argv) {
         gates_ok = false;
     }
 #else
-    // Built without a GPU backend: -DENGINE_RHI_D3D12=OFF, or any non-Windows
-    // configure, where packages/rhi-d3d12 and packages/shaders-dxc are both
-    // absent. Everything from the shader compiler down needs one, so there is
-    // nothing honest left to do. Same shape as the missing-platform branch in
-    // main() - say so and stop, rather than report a gate failure for what is a
-    // deliberate build configuration.
+    // Built with *no* GPU backend: both ENGINE_RHI_D3D12 and ENGINE_RHI_VULKAN
+    // off, or any non-Windows configure, where rhi-d3d12, rhi-vulkan and
+    // shaders-dxc are all absent. Everything from the shader compiler down
+    // needs one, so there is nothing honest left to do. Same shape as the
+    // missing-platform branch in main() - say so and stop, rather than report a
+    // gate failure for what is a deliberate build configuration.
     (void)loader;
     engine::log(engine::LogLevel::Fatal, engine::LogChannel::Render,
-        "No GPU backend compiled in - configure with ENGINE_RHI_D3D12=ON on Windows");
+        "No GPU backend compiled in - configure with ENGINE_RHI_D3D12=ON or "
+        "ENGINE_RHI_VULKAN=ON on Windows");
     return 1;
 #endif
 

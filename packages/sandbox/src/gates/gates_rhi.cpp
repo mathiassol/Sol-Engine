@@ -1259,6 +1259,33 @@ static bool bytecode_is_dxil(const std::vector<engine::u8>& data) {
     return std::search(data.begin(), data.end(), kDxil, kDxil + 4) != data.end();
 }
 
+static bool bytecode_is_spirv(const std::vector<engine::u8>& data) {
+    if (data.size() < 4) {
+        return false;
+    }
+    engine::u32 magic = 0;
+    std::memcpy(&magic, data.data(), sizeof(magic));
+    return magic == 0x07230203u;
+}
+
+// Does the blob match the kind that was asked for?
+//
+// This replaced a bare `is it DXIL` in two gates, and it is the stronger
+// assertion rather than the looser one: it fails both ways round. Asking for
+// SPIR-V and getting DXIL is the defect that cost the whole forward pass on a
+// second backend - every pipeline rejected the bytecode - and asking for DXIL
+// and getting SPIR-V would be just as wrong while a DXIL-only check called it
+// a pass.
+static bool bytecode_matches_target(
+    const std::vector<engine::u8>& data, engine::shaders::ShaderTarget target) {
+    return target == engine::shaders::ShaderTarget::Spirv ? bytecode_is_spirv(data)
+                                                          : bytecode_is_dxil(data);
+}
+
+static const char* target_name(engine::shaders::ShaderTarget target) {
+    return target == engine::shaders::ShaderTarget::Spirv ? "spirv" : "dxil";
+}
+
 bool run_shader_cache_gate(engine::shaders::IShaderCompiler& compiler,
     const engine::shaders::ShaderCompileDesc& desc) {
     engine::shaders::ShaderBytecode first;
@@ -1274,14 +1301,20 @@ bool run_shader_cache_gate(engine::shaders::IShaderCompiler& compiler,
         return false;
     }
     const bool second_hit = compiler.last_compile_from_cache();
-    const bool dxil = bytecode_is_dxil(first.data);
-    const bool passed = second_hit && first.data.size() == second.data.size() && dxil;
+    // The kind that was asked for, not DXIL. The cache key folds in
+    // desc.target (shader_cache_dxc.cpp), so a cache that ignored the target
+    // would hand back the other backend's blob on the second call - which is
+    // exactly what this gate is placed to catch.
+    const bool kind_ok = bytecode_matches_target(first.data, desc.target);
+    const bool passed = second_hit && first.data.size() == second.data.size() && kind_ok;
     char message[192];
     std::snprintf(message, sizeof(message),
-        "Shader cache gate: first=%s second=%s dxil=%s (%s)",
+        "Shader cache gate: first=%s second=%s asked=%s got=%s bytes=%zu (%s)",
         first_hit ? "hit" : "miss",
         second_hit ? "hit" : "miss",
-        dxil ? "yes" : "no",
+        target_name(desc.target),
+        kind_ok ? target_name(desc.target) : "other",
+        first.data.size(),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
@@ -1290,14 +1323,18 @@ bool run_shader_cache_gate(engine::shaders::IShaderCompiler& compiler,
 
 bool run_dxc_gate(const engine::shaders::ShaderCompileDesc& desc,
     const engine::shaders::ShaderBytecode& bytecode) {
+    // Still the DXC gate on both backends: the SPIR-V path is a second DXC,
+    // not a second compiler vendor. What it used to assert - that the target
+    // *is* DXIL - was a restatement of the sandbox's own hard-coded choice, so
+    // it could not fail. Asserting the blob matches whatever was asked for can.
     const bool sm6 = desc.target_profile.find("6_") != std::string::npos;
-    const bool dxil = bytecode_is_dxil(bytecode.data);
-    const bool target_ok = desc.target == engine::shaders::ShaderTarget::Dxil;
-    const bool passed = sm6 && dxil && target_ok && !bytecode.data.empty();
+    const bool kind_ok = bytecode_matches_target(bytecode.data, desc.target);
+    const bool passed = sm6 && kind_ok && !bytecode.data.empty();
     char message[192];
     std::snprintf(message, sizeof(message),
-        "DXC gate: profile=%s target=dxil dxil=%s bytes=%zu (%s)",
-        desc.target_profile.c_str(), dxil ? "yes" : "no", bytecode.data.size(),
+        "DXC gate: profile=%s asked=%s got=%s bytes=%zu (%s)",
+        desc.target_profile.c_str(), target_name(desc.target),
+        kind_ok ? target_name(desc.target) : "other", bytecode.data.size(),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
@@ -1392,6 +1429,7 @@ bool run_color_space_gate(engine::rhi::IDevice& device,
     cs_desc.file_path = srgb_gate_path;
     cs_desc.entry_point = "cs_main";
     cs_desc.target_profile = "cs_6_0";
+    cs_desc.target = shader_target_for(device);
     engine::shaders::ShaderBytecode cs_bytecode;
     std::string error;
     const bool compiled =
@@ -1461,6 +1499,7 @@ bool run_rhi_impl_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCom
     cs_desc.file_path = compute_path;
     cs_desc.entry_point = "cs_main";
     cs_desc.target_profile = "cs_6_0";
+    cs_desc.target = shader_target_for(device);
     engine::shaders::ShaderBytecode cs_bytecode;
     std::string error;
     const bool compiled
