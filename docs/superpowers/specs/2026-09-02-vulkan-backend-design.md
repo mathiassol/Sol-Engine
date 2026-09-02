@@ -208,11 +208,13 @@ The CMake gate moves from `if(ENGINE_RHI_D3D12 AND WIN32)` to
 `if((ENGINE_RHI_D3D12 OR ENGINE_RHI_VULKAN) AND WIN32)` — a Vulkan-only build
 still needs a shader compiler.
 
-**The disk cache key must gain the target.** `shader_cache_dxc.cpp` keys on the
-file, entry point, profile and include graph. Two targets from one source is a
-new axis, and without it a DXIL blob gets served to a SPIR-V request from cache.
-This is the first thing to check, and it is a correctness bug, not an
-optimisation.
+**The disk cache already keys on the target.** This was flagged as a likely
+correctness bug — two targets from one source is a new axis, and serving a
+cached DXIL blob to a SPIR-V request would be a corruption. Checking rather
+than assuming found `cache_key` in `shader_cache_dxc.cpp` already folds
+`desc.target` alongside the entry point, profile, include graph and debug flag.
+So the SPIR-V path inherits disk caching for free, and there is nothing to fix.
+Recorded because a plan that "fixed" it would have been changing correct code.
 
 ## The Vulkan device
 
@@ -249,27 +251,76 @@ by name, the first time it is called. A stub that silently returns is the
 failure mode the whole engine is built around avoiding, and a second-backend
 author reading a silent stub cannot tell it apart from a working one.
 
-## The gate
+## The gates
 
-`run_vulkan_device_gate`, in `gates/gates_rhi.cpp`, classified `Gpu`.
+Three, in `gates/gates_rhi.cpp`, all classified `Gpu`. The design here changed
+while the plan was being written, and the reasons are worth keeping.
 
-It creates its own offscreen Vulkan device, compiles `msaa_gate.hlsl`'s
-`vs_main`/`ps_main` to **SPIR-V at runtime through `shaders-dxc`** — so the gate
-covers Shaders #5 as well — renders the same diagonal triangle into a 64×64
-`RGBA8_UNORM` target, and reads it back with the new `read_texture`.
+### `run_backend_parity_gate` — one function, two backends
 
-Asserted, all on real values:
+Not a Vulkan gate. It takes an `IDevice&`, a `ShaderTarget` and an API label, so
+**the same function runs twice**: once against an offscreen D3D12 device, once
+against an offscreen Vulkan one. A divergence is then a backend difference and
+cannot be a difference in the test.
 
-1. The device reports `offscreen() == true` and a non-empty device name.
-2. SPIR-V came back with the right magic word and a non-zero length.
-3. **2,016 lit texels of 4,096** — the same number the D3D12 MSAA gate measures
-   for the same triangle. This is the assertion that matters: it is not "Vulkan
-   drew something", it is "Vulkan drew *the same thing*".
-4. Zero partial-coverage texels, because this target is single-sample — the
-   same 0 the D3D12 single-sample reference produces.
+It draws `backend_parity_gate.hlsl` — **new, not `msaa_gate.hlsl`.** Two reasons
+the MSAA shader was wrong for this:
 
-Written before the implementation and watched failing, per the project's
-red-green.
+- It uses **no resources**, so the gate would have exercised none of the
+  descriptor plumbing — and translating `resources.hpp`'s five counts into a
+  `VkDescriptorSetLayout` is exactly what a second backend has to get right.
+  The parity shader carries a `cbuffer` at `b0` whose tint the readback checks
+  byte-for-byte, so the whole chain from `uniform_buffer_count` through the
+  set layout to the shader read is covered.
+- Adding a `cbuffer` to `msaa_gate.hlsl` would have broken the MSAA gate, whose
+  pipeline declares `uniform_buffer_count = 0`.
+
+Asserted:
+
+1. `offscreen() == true`.
+2. The bytecode's magic word matches the requested target — `0x07230203` for
+   SPIR-V, `0x43425844` for DXIL — so a backend can never be handed the other
+   API's bytecode.
+3. Texel (8, 8) is byte-exactly the cbuffer's tint: `51, 153, 204, 255`. Those
+   values are exactly representable in UNORM8 with no `.5` rounding tie, so
+   this is an equality rather than a tolerance.
+4. Texel (55, 55) — its mirror across the diagonal — is still the clear colour.
+   **This is the Y-direction check.** A backend that gets the flip wrong draws
+   the other half of the target, and these two probes catch that where a
+   coverage count would average it away.
+5. The covered-texel count, returned to the caller rather than asserted against
+   a constant.
+
+### `Backend agreement gate` — the comparison
+
+At the call site, because it needs both counts. It reports `d3d12_lit`,
+`vulkan_lit` and their spread, and fails if they differ by more than 64 — one
+diagonal's worth.
+
+The earlier plan was to demand the same **2,016** from both. That was wrong:
+2,016 is what D3D12's fill rule produces for a 45° edge through pixel centres,
+and while both APIs specify that a shared edge is covered exactly once, they do
+not specify it identically enough to demand equality on a knife-edge case. So
+the deterministic assertions are the interior and exterior probes, which cannot
+be ambiguous, and the coverage count is compared with a stated tolerance and
+both numbers printed. A gate that reports the two numbers is more useful than
+one that only says "equal".
+
+### `run_spirv_gate` and `run_vulkan_device_gate`
+
+`run_spirv_gate` covers Shaders #5 on its own: SPIR-V comes back with the right
+magic word, it is **not** the DXIL blob for the same shader, DXIL still works
+from the same compiler instance — which is what proves the two DLLs coexist —
+and the disk cache round-trips the SPIR-V rather than serving the DXIL.
+
+`run_vulkan_device_gate` covers device creation separately, because everything
+after it is meaningless if the instance, the physical-device choice or dynamic
+rendering were not what was asked for.
+
+All three written before their implementations and watched failing. Two are
+falsified on purpose afterwards: the shader's triangle is flipped to the other
+half, and the Vulkan viewport height is made positive — each must turn its gate
+red at the probes.
 
 **Environmental skip.** Compiled in but no Vulkan device (no driver), or no
 SPIR-V compiler (no SDK), is an environment fact and not a defect. The gate logs
@@ -298,6 +349,6 @@ out entirely, the same shape as `ENGINE_HAS_D3D12`.
 | HLSL does not survive SPIR-V | **Retired.** 23/23 measured. |
 | Two DXC builds collide in-process | **Retired.** Measured distinct. |
 | Reversed-Z or clip space needs shader changes | **Retired.** [0,1] both; Y is a viewport sign. |
-| Disk cache serves DXIL to a SPIR-V request | Open, and the first thing checked. A correctness bug. |
+| Disk cache serves DXIL to a SPIR-V request | **Retired.** `cache_key` already folds `desc.target`. |
 | The counts binding contract proves insufficient | Open **on purpose** — this is the pass that finds out. |
 | Descriptor-set lifetime under 3-frame flight | Open. The slice does one submit and waits, so it is deferred honestly rather than solved badly. |
