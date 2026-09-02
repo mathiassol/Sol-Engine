@@ -137,6 +137,7 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
         draws[draw_count].prev_model = prev_model;
         draws[draw_count].metallic = instance.metallic;
         draws[draw_count].roughness = instance.roughness;
+        draws[draw_count].opacity = instance.opacity;
         draws[draw_count].index_count = instance.index_count;
         draws[draw_count].vertex_stride = instance.vertex_stride;
         draw_count += 1;
@@ -227,7 +228,12 @@ ExtractStats extract_visible(const ExtractDesc& desc, Arena& arena, RenderSnapsh
                     const u32 dst = cursor[draw_batch[i]]++;
                     instances[dst].model = draw.model;
                     instances[dst].prev_model = draw.prev_model;
-                    instances[dst].material_params = {draw.metallic, draw.roughness, 0.f, 0.f};
+                    // .z was unused padding. Opacity goes here rather than in
+                    // FrameConstants: that struct is per *batch*, so it is the
+                    // wrong home, and sizeof(FrameConstants) == 336 is
+                    // asserted in three separate gates.
+                    instances[dst].material_params
+                        = {draw.metallic, draw.roughness, draw.opacity, 0.f};
                 }
                 out.batches = {batches, batch_count};
                 out.instances = {instances, draw_count};

@@ -345,15 +345,84 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     }
     const bool changed = !before.draws.empty() && !after.draws.empty()
         && before.draws[0].roughness != after.draws[0].roughness;
+    // Opacity travels the same road as roughness, so it is checked the same
+    // way. The road is Material -> ExtractInstance -> DrawItem ->
+    // InstanceData::material_params.z, and a break anywhere along it is a
+    // transparent object drawn opaque - which reads as a content mistake
+    // rather than as a bug.
+    //
+    // Material 0 only, not every material: the pipeline-split assertion below
+    // needs opaque batches left to split away from.
+    constexpr engine::f32 kProbeOpacity = 0.375f;
+    engine::scene::World translucent = copy;
+    // The material instance 0 actually uses, not material 0. A probe on an
+    // unused material mutates nothing and the assertions below would be
+    // vacuously satisfiable.
+    const engine::u32 probe_material
+        = world.instance_count > 0 ? world.instances[0].material : 0;
+    translucent.materials[probe_material].opacity = kProbeOpacity;
+    engine::Arena arena_translucent(256 * 1024);
+    engine::renderer::RenderSnapshot translucent_snapshot{};
+    translucent_snapshot.width = 1280;
+    translucent_snapshot.height = 720;
+    sandbox::extract_world(translucent, camera.position, assets, false, nullptr,
+        arena_translucent, translucent_snapshot);
+
+    // Every draw is either the probe value or 1. Anything else means the field
+    // is being overwritten somewhere along the road.
+    bool opacity_reaches_draw = !translucent_snapshot.draws.empty();
+    for (const engine::renderer::DrawItem& draw : translucent_snapshot.draws) {
+        if (draw.opacity != kProbeOpacity && draw.opacity != 1.f) {
+            opacity_reaches_draw = false;
+        }
+    }
+    bool opacity_reaches_instance = !translucent_snapshot.instances.empty();
+    bool probe_instance_found = false;
+    for (const engine::renderer::InstanceData& inst : translucent_snapshot.instances) {
+        if (inst.material_params.z == kProbeOpacity) {
+            probe_instance_found = true;
+        } else if (inst.material_params.z != 1.f) {
+            opacity_reaches_instance = false;
+        }
+    }
+    opacity_reaches_instance = opacity_reaches_instance && probe_instance_found;
+
+    // The pipeline choice, not only the value: some batches must now carry the
+    // transparent pipeline and some must still carry the opaque one. This is
+    // what makes the transparent pass see any batches at all - without it the
+    // opacity could arrive perfectly and nothing would ever draw blended.
+    //
+    // Counted per batch rather than as a change in batch *count*, which is
+    // what this assertion first tried and which proves nothing: opacity is per
+    // material and the batch key already separates materials, so the
+    // instances of the probe material were one batch before and one batch
+    // after. The key changed; the count did not. The gate caught that by
+    // staying red at `batches=5->5` with everything else green.
+    engine::usize transparent_batches = 0;
+    for (const engine::renderer::DrawBatch& batch : translucent_snapshot.batches) {
+        if (batch.pipeline == assets.pipelines.forward_transparent) {
+            transparent_batches += 1;
+        }
+    }
+    const bool pipeline_split = transparent_batches > 0
+        && transparent_batches < translucent_snapshot.batches.size();
+
     const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 336;
     const bool gltf_ok = gltf_metallic >= 0.f && gltf_metallic <= 1.f
         && gltf_roughness >= 0.f && gltf_roughness <= 1.f;
-    const bool passed = table_ok && handles_ok && draws_ok && changed && layout_ok && gltf_ok;
-    char message[224];
+    const bool passed = table_ok && handles_ok && draws_ok && changed && layout_ok && gltf_ok
+        && opacity_reaches_draw && opacity_reaches_instance && pipeline_split;
+    char message[288];
+    // layout printed the literal "400" until now - stale since the instancing
+    // refactor took FrameConstants to 336, which is what it asserts.
     std::snprintf(message, sizeof(message),
-        "Material gate: materials=%u handles=%s roughness_is_data=%s layout=%s (%s)",
+        "Material gate: materials=%u handles=%s roughness_is_data=%s opacity_is_data=%s "
+        "probe_material=%u transparent_batches=%zu/%zu layout=%s (%s)",
         world.material_count, handles_ok ? "yes" : "no",
-        (draws_ok && changed) ? "yes" : "no", layout_ok ? "400" : "bad",
+        (draws_ok && changed) ? "yes" : "no",
+        (opacity_reaches_draw && opacity_reaches_instance) ? "yes" : "no",
+        probe_material, transparent_batches, translucent_snapshot.batches.size(),
+        layout_ok ? "336" : "bad",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);

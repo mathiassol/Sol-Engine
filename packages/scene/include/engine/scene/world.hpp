@@ -40,6 +40,14 @@ struct Material {
     u32 albedo = 0;
     f32 metallic = 0.f;
     f32 roughness = 0.5f;
+    // 1 means opaque and takes the opaque pipeline; anything less takes the
+    // blended one, chosen in the app's scene-to-renderer bridge.
+    //
+    // A float rather than a bool because the value is what the shader
+    // multiplies its alpha by - a separate flag could disagree with it, which
+    // is the failure DepthConvention exists as a single value to avoid.
+    // Defaulting to 1 is what keeps every existing material opaque.
+    f32 opacity = 1.f;
 };
 
 struct Instance {

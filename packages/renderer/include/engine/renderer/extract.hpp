@@ -26,6 +26,7 @@ struct ExtractInstance {
     u32 id = ~0u;
     f32 metallic = 0.f;
     f32 roughness = 0.5f;
+    f32 opacity = 1.f;
     u32 index_count = 0;
     u32 vertex_stride = 0;
 };

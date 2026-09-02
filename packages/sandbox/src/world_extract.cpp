@@ -96,7 +96,15 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
         }
 
         auto& item = storage[count];
-        item.pipeline = assets.pipelines.forward;
+        // The one line that routes a material to a pipeline. Falls back to
+        // the opaque one when the transparent pipeline is absent, so a build
+        // that failed to create it draws a visibly wrong material instead of
+        // making the object disappear. run_pipeline_set_gate makes that
+        // unreachable; the fallback costs a `?:` and removes the class.
+        const bool translucent = material.opacity < 1.f
+            && assets.pipelines.forward_transparent != nullptr;
+        item.pipeline = translucent ? assets.pipelines.forward_transparent
+                                    : assets.pipelines.forward;
         item.vertex_buffer = mesh->vertex_buffer.get();
         item.index_buffer = mesh->index_buffer.get();
         item.texture = texture;
@@ -108,6 +116,7 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
         item.id = i;
         item.metallic = material.metallic;
         item.roughness = material.roughness;
+        item.opacity = material.opacity;
         item.index_count = mesh->index_count;
         item.vertex_stride = sizeof(engine::assets::VertexPN);
         count += 1;

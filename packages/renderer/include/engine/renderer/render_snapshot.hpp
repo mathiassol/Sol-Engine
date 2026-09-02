@@ -119,6 +119,7 @@ struct DrawItem {
     math::Mat4 prev_model = math::Mat4::identity();
     f32 metallic = 0.f;
     f32 roughness = 0.5f;
+    f32 opacity = 1.f;
     u32 index_count = 0;
     u32 vertex_stride = 0;
 };
