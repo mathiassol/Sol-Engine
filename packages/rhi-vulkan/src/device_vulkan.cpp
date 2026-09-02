@@ -303,25 +303,319 @@ GpuMemoryStats VulkanDevice::gpu_memory_stats() const {
     return stats;
 }
 
-// ── Not yet implemented ─────────────────────────────────────────────────────
-//
-// Filled in by the parity pass. Each says so once, by name, so a partial
-// backend cannot be mistaken for a working one.
+// ── Resource creation ───────────────────────────────────────────────────────
+
+VkFormat to_vulkan_format(Format format) {
+    switch (format) {
+    case Format::RGBA8_UNORM:      return VK_FORMAT_R8G8B8A8_UNORM;
+    case Format::RGBA8_UNORM_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+    case Format::RGBA16_FLOAT:     return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case Format::D32_FLOAT:        return VK_FORMAT_D32_SFLOAT;
+    case Format::Unknown:          return VK_FORMAT_UNDEFINED;
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+u32 format_bytes(Format format) {
+    switch (format) {
+    case Format::RGBA8_UNORM:      return 4;
+    case Format::RGBA8_UNORM_SRGB: return 4;
+    case Format::RGBA16_FLOAT:     return 8;
+    case Format::D32_FLOAT:        return 4;
+    case Format::Unknown:          return 0;
+    }
+    return 0;
+}
 
 std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, const void* data) {
-    (void)desc;
-    (void)data;
-    not_implemented("create_buffer");
-    return nullptr;
+    if (device_ == VK_NULL_HANDLE || desc.size == 0) {
+        return nullptr;
+    }
+
+    VkBufferUsageFlags usage = 0;
+    // Host-visible for the kinds the offscreen path uses. Vertex, Index and
+    // Storage want a device-local buffer with a staging upload, which is the
+    // parity pass's problem - they reach not_implemented below rather than
+    // getting a slow-but-working host-visible buffer, because a silent
+    // performance cliff is worse than a named gap.
+    bool host_visible = false;
+    switch (desc.usage) {
+    case BufferUsage::Uniform:
+        usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        host_visible = true;
+        break;
+    case BufferUsage::Readback:
+        usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        host_visible = true;
+        break;
+    case BufferUsage::Vertex:
+    case BufferUsage::Index:
+    case BufferUsage::Storage:
+        not_implemented("create_buffer(Vertex/Index/Storage)");
+        return nullptr;
+    }
+
+    VkBufferCreateInfo buffer_info{};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = desc.size;
+    buffer_info.usage = usage;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    if (vk_failed(vkCreateBuffer(device_, &buffer_info, nullptr, &buffer), "buffer creation")) {
+        return nullptr;
+    }
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device_, buffer, &requirements);
+    const VkMemoryPropertyFlags properties = host_visible
+        ? (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+        : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    const u32 type = find_memory_type(state_.gpu, requirements.memoryTypeBits, properties);
+    if (type == ~0u) {
+        log(LogLevel::Error, LogChannel::Render, "buffer: no memory type satisfies the request");
+        vkDestroyBuffer(device_, buffer, nullptr);
+        return nullptr;
+    }
+
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = type;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (vk_failed(vkAllocateMemory(device_, &allocate, nullptr, &memory), "buffer allocation")) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        return nullptr;
+    }
+    if (vk_failed(vkBindBufferMemory(device_, buffer, memory, 0), "buffer bind")) {
+        vkFreeMemory(device_, memory, nullptr);
+        vkDestroyBuffer(device_, buffer, nullptr);
+        return nullptr;
+    }
+
+    // Mapped for its lifetime, the same trade the D3D12 upload heap makes: a
+    // host-visible buffer is written every frame, and map/unmap per write costs
+    // more than the address does.
+    void* mapped = nullptr;
+    if (host_visible
+        && vk_failed(vkMapMemory(device_, memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+            "buffer map")) {
+        vkFreeMemory(device_, memory, nullptr);
+        vkDestroyBuffer(device_, buffer, nullptr);
+        return nullptr;
+    }
+    if (data != nullptr && mapped != nullptr) {
+        std::memcpy(mapped, data, desc.size);
+    }
+
+    return std::make_unique<VulkanBuffer>(device_, buffer, memory, desc.size, mapped);
 }
 
 std::unique_ptr<ITexture> VulkanDevice::create_texture(
     const TextureDesc& desc, const void* data) {
-    (void)desc;
-    (void)data;
-    not_implemented("create_texture");
-    return nullptr;
+    if (device_ == VK_NULL_HANDLE) {
+        return nullptr;
+    }
+    if (data != nullptr) {
+        not_implemented("create_texture with initial data");
+        return nullptr;
+    }
+    if (desc.usage != TextureUsage::RenderTarget) {
+        not_implemented("create_texture (non-render-target usage)");
+        return nullptr;
+    }
+    if (desc.dimension != TextureDimension::Tex2D || desc.array_size != 1
+        || desc.mip_levels != 1) {
+        not_implemented("create_texture (cube, array or mip chain)");
+        return nullptr;
+    }
+
+    const VkFormat format = to_vulkan_format(desc.format);
+    if (format == VK_FORMAT_UNDEFINED) {
+        log(LogLevel::Error, LogChannel::Render, "create_texture: unsupported format");
+        return nullptr;
+    }
+
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = format;
+    image_info.extent = {desc.width, desc.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = static_cast<VkSampleCountFlagBits>(
+        desc.sample_count == 0 ? 1u : desc.sample_count);
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    // TRANSFER_SRC so read_texture can copy out of it. On D3D12 that needs no
+    // creation flag at all, which is the kind of asymmetry a second backend is
+    // for finding.
+    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImage image = VK_NULL_HANDLE;
+    if (vk_failed(vkCreateImage(device_, &image_info, nullptr, &image), "image creation")) {
+        return nullptr;
+    }
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_, image, &requirements);
+    const u32 type = find_memory_type(
+        state_.gpu, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == ~0u) {
+        log(LogLevel::Error, LogChannel::Render, "image: no device-local memory type");
+        vkDestroyImage(device_, image, nullptr);
+        return nullptr;
+    }
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = type;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (vk_failed(vkAllocateMemory(device_, &allocate, nullptr, &memory), "image allocation")) {
+        vkDestroyImage(device_, image, nullptr);
+        return nullptr;
+    }
+    if (vk_failed(vkBindImageMemory(device_, image, memory, 0), "image bind")) {
+        vkFreeMemory(device_, memory, nullptr);
+        vkDestroyImage(device_, image, nullptr);
+        return nullptr;
+    }
+
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.subresourceRange.aspectMask = desc.format == Format::D32_FLOAT
+        ? VK_IMAGE_ASPECT_DEPTH_BIT
+        : VK_IMAGE_ASPECT_COLOR_BIT;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.layerCount = 1;
+    VkImageView view = VK_NULL_HANDLE;
+    if (vk_failed(vkCreateImageView(device_, &view_info, nullptr, &view), "image view")) {
+        vkFreeMemory(device_, memory, nullptr);
+        vkDestroyImage(device_, image, nullptr);
+        return nullptr;
+    }
+
+    return std::make_unique<VulkanTexture>(device_, image, memory, view, desc);
 }
+
+void VulkanDevice::write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) {
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+    ENGINE_ASSERT(data != nullptr);
+    ENGINE_ASSERT_MSG(vk_buffer.mapped() != nullptr,
+        "write_buffer requires a host-visible buffer");
+    ENGINE_ASSERT(offset + size <= vk_buffer.size());
+    std::memcpy(static_cast<u8*>(vk_buffer.mapped()) + offset, data, size);
+}
+
+void VulkanDevice::read_buffer(IBuffer& buffer, usize offset, void* data, usize size) {
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+    ENGINE_ASSERT(data != nullptr);
+    ENGINE_ASSERT_MSG(vk_buffer.mapped() != nullptr,
+        "read_buffer requires a host-visible readback buffer");
+    ENGINE_ASSERT(offset + size <= vk_buffer.size());
+    // HOST_COHERENT, so no vkInvalidateMappedMemoryRanges is needed. If a
+    // non-coherent heap is ever used, this is the line that has to change.
+    std::memcpy(data, static_cast<const u8*>(vk_buffer.mapped()) + offset, size);
+}
+
+bool VulkanDevice::read_texture(ITexture& texture, void* out, usize size) {
+    auto& vk_texture = static_cast<VulkanTexture&>(texture);
+    ENGINE_ASSERT(out != nullptr);
+    if (device_ == VK_NULL_HANDLE || vk_texture.image() == VK_NULL_HANDLE) {
+        log(LogLevel::Error, LogChannel::Render, "read_texture: texture has no image");
+        return false;
+    }
+    if (vk_texture.sample_count() != 1) {
+        log(LogLevel::Error, LogChannel::Render,
+            "read_texture: source is multisampled - resolve it first");
+        return false;
+    }
+    const u32 bytes_per_texel = format_bytes(vk_texture.format());
+    if (bytes_per_texel == 0) {
+        log(LogLevel::Error, LogChannel::Render, "read_texture: format cannot be packed");
+        return false;
+    }
+    const usize expected =
+        static_cast<usize>(vk_texture.width()) * vk_texture.height() * bytes_per_texel;
+    if (size != expected) {
+        char message[176];
+        std::snprintf(message, sizeof(message),
+            "read_texture: size %zu does not match %ux%u x%u bytes = %zu", size,
+            vk_texture.width(), vk_texture.height(), bytes_per_texel, expected);
+        log(LogLevel::Error, LogChannel::Render, message);
+        return false;
+    }
+
+    BufferDesc staging_desc{};
+    staging_desc.size = expected;
+    staging_desc.usage = BufferUsage::Readback;
+    auto staging = create_buffer(staging_desc, nullptr);
+    if (!staging) {
+        return false;
+    }
+    auto& vk_staging = static_cast<VulkanBuffer&>(*staging);
+
+    // Own recording, own submit, own wait - the contract says this blocks. The
+    // texture must already be in ResourceState::CopySrc; that is stated on the
+    // interface because D3D12 does not care about layouts and Vulkan does, so
+    // the requirement is invisible from the first backend alone.
+    vkResetCommandBuffer(cmd_buffer_, 0);
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vk_failed(vkBeginCommandBuffer(cmd_buffer_, &begin), "readback begin")) {
+        return false;
+    }
+    VkBufferImageCopy region{};
+    // bufferRowLength 0 means tightly packed, which is exactly what the
+    // contract promises the caller. D3D12 has to repack rows out of a
+    // 256-byte-aligned pitch to reach the same result.
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {vk_texture.width(), vk_texture.height(), 1};
+    vkCmdCopyImageToBuffer(cmd_buffer_, vk_texture.image(),
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vk_staging.handle(), 1, &region);
+    if (vk_failed(vkEndCommandBuffer(cmd_buffer_), "readback end")) {
+        return false;
+    }
+
+    vkResetFences(device_, 1, &fence_);
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd_buffer_;
+    if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fence_), "readback submit")) {
+        return false;
+    }
+    vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX);
+
+    std::memcpy(out, vk_staging.mapped(), size);
+    return true;
+}
+
+void VulkanDevice::set_debug_name(IBuffer& buffer, std::string_view name) {
+    (void)buffer;
+    (void)name;
+    // VK_EXT_debug_utils names objects, and the extension is only requested
+    // when validation is on. Silently doing nothing here is the one acceptable
+    // case in this file: a missing debug name changes no behaviour, and a
+    // warning per resource would drown the log it exists to help read.
+}
+
+void VulkanDevice::set_debug_name(ITexture& texture, std::string_view name) {
+    (void)texture;
+    (void)name;
+}
+
+// ── Not yet implemented ─────────────────────────────────────────────────────
+//
+// Filled in by the parity pass. Each says so once, by name, so a partial
+// backend cannot be mistaken for a working one.
 
 FrameAllocation VulkanDevice::alloc_frame_memory(usize size) {
     (void)size;
@@ -329,41 +623,10 @@ FrameAllocation VulkanDevice::alloc_frame_memory(usize size) {
     return {};
 }
 
-void VulkanDevice::write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) {
-    (void)buffer;
-    (void)offset;
-    (void)data;
-    (void)size;
-    not_implemented("write_buffer");
-}
 
-void VulkanDevice::read_buffer(IBuffer& buffer, usize offset, void* data, usize size) {
-    (void)buffer;
-    (void)offset;
-    (void)data;
-    (void)size;
-    not_implemented("read_buffer");
-}
 
-bool VulkanDevice::read_texture(ITexture& texture, void* out, usize size) {
-    (void)texture;
-    (void)out;
-    (void)size;
-    not_implemented("read_texture");
-    return false;
-}
 
-void VulkanDevice::set_debug_name(IBuffer& buffer, std::string_view name) {
-    (void)buffer;
-    (void)name;
-    not_implemented("set_debug_name(IBuffer)");
-}
 
-void VulkanDevice::set_debug_name(ITexture& texture, std::string_view name) {
-    (void)texture;
-    (void)name;
-    not_implemented("set_debug_name(ITexture)");
-}
 
 std::unique_ptr<IComputePipeline> VulkanDevice::create_compute_pipeline(
     const ComputePipelineDesc& desc) {

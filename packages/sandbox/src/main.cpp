@@ -604,6 +604,49 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         }
     }
 
+    // The comparison this whole pass exists for. Reported even when it passes,
+    // because "the two backends agree" means nothing without both numbers next
+    // to each other.
+    engine::u32 vulkan_lit = 0;
+#ifdef ENGINE_HAS_VULKAN
+    if (!parity_path.empty()) {
+        engine::rhi::DeviceDesc vk_desc{};
+        vk_desc.window_handle = nullptr;
+        vk_desc.width = 64;
+        vk_desc.height = 64;
+        vk_desc.preferred_api = engine::rhi::GraphicsAPI::Vulkan;
+        auto vk_rhi = engine::rhi::vulkan::create_rhi();
+        auto vk_device = vk_rhi ? vk_rhi->create_device(vk_desc) : nullptr;
+        if (!vk_device) {
+            engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+                "Backend parity gate [vulkan]: no Vulkan device (skip)");
+        } else if (!run_backend_parity_gate(*vk_device, compiler, parity_path,
+                       engine::shaders::ShaderTarget::Spirv, "vulkan", vulkan_lit)
+            && fail_on_gate) {
+            return false;
+        }
+    }
+#endif
+
+    if (d3d12_lit > 0 && vulkan_lit > 0) {
+        const engine::u32 spread =
+            d3d12_lit > vulkan_lit ? d3d12_lit - vulkan_lit : vulkan_lit - d3d12_lit;
+        // One diagonal's worth of tolerance. Both APIs specify that a shared
+        // edge is covered exactly once, but not identically enough to demand
+        // equality on a 45-degree line - so the byte-exact probe texels inside
+        // the gate are the assertion, and this is the corroboration.
+        const bool agree = spread <= 64;
+        char message[160];
+        std::snprintf(message, sizeof(message),
+            "Backend agreement gate: d3d12_lit=%u vulkan_lit=%u spread=%u (%s)", d3d12_lit,
+            vulkan_lit, spread, agree ? "pass" : "FAIL");
+        engine::log(agree ? engine::LogLevel::Info : engine::LogLevel::Error,
+            engine::LogChannel::Render, message);
+        if (!agree && fail_on_gate) {
+            return false;
+        }
+    }
+
     std::string srgb_gate_path;
     if (!resolve_content(loader, kSrgbGateShader, srgb_gate_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,

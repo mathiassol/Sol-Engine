@@ -50,6 +50,26 @@ struct BarrierState {
 
 BarrierState to_vulkan_barrier(ResourceState state);
 
+// resources.hpp's binding contract, as numbers. Built into the descriptor-set
+// layout in pipeline_vulkan.cpp and written to in commands_vulkan.cpp, so they
+// live here rather than in either.
+//
+// These must equal the register shifts shaders-dxc passes to DXC
+// (-fvk-t-shift 16, -fvk-u-shift 32, -fvk-s-shift 48). The default HLSL->SPIR-V
+// mapping sends register(xN, spaceM) to set M binding N and *ignores the
+// register type*, so without disjoint ranges b0 and t0 would both be set 0
+// binding 0. The same numbers therefore exist in two files, and a change to one
+// without the other is a shader reading the wrong descriptor with nothing
+// logged - so both sites carry a comment naming the other.
+constexpr u32 kBindingBaseUniform = 0;
+constexpr u32 kBindingBaseSampledTexture = 16;
+constexpr u32 kBindingBaseStorageTexture = 32;
+constexpr u32 kBindingBaseSampler = 48;
+
+// Defined in device_vulkan.cpp, used by the pipeline factory too.
+VkFormat to_vulkan_format(Format format);
+u32 format_bytes(Format format);
+
 // Heap index satisfying `required` for this allocation, or ~0u.
 u32 find_memory_type(VkPhysicalDevice gpu, u32 type_bits, VkMemoryPropertyFlags required);
 

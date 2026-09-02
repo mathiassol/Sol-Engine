@@ -152,14 +152,178 @@ std::string_view VulkanCommandList::debug_event_name() const {
     return event_stack_[event_depth_ - 1];
 }
 
-// ── Not yet implemented ─────────────────────────────────────────────────────
-
 void VulkanCommandList::begin_render_pass(const RenderPassInfo& info) {
-    (void)info;
-    not_implemented("begin_render_pass");
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    pass_color_ = info.color ? static_cast<VulkanTexture*>(info.color) : nullptr;
+    auto* depth = info.depth ? static_cast<VulkanTexture*>(info.depth) : nullptr;
+    if (info.resolve != nullptr) {
+        // RenderPassInfo::resolve maps to VkRenderingAttachmentInfo's
+        // resolveImageView, which is the divergence RHI #18 was designed
+        // around - but nothing offscreen is multisampled yet, so it is named
+        // rather than written against a case no gate covers.
+        not_implemented("begin_render_pass with a resolve target");
+    }
+
+    const u32 w =
+        pass_color_ ? pass_color_->width() : (depth ? depth->width() : device_.width());
+    const u32 h =
+        pass_color_ ? pass_color_->height() : (depth ? depth->height() : device_.height());
+
+    VkRenderingAttachmentInfo color_attachment{};
+    color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    if (pass_color_ != nullptr) {
+        color_attachment.imageView = pass_color_->view();
+        color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color_attachment.loadOp = info.clear_color_target ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                          : VK_ATTACHMENT_LOAD_OP_LOAD;
+        color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color_attachment.clearValue.color = {{info.clear_color.r, info.clear_color.g,
+            info.clear_color.b, info.clear_color.a}};
+    }
+
+    VkRenderingAttachmentInfo depth_attachment{};
+    depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    if (depth != nullptr) {
+        depth_attachment.imageView = depth->view();
+        depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth_attachment.loadOp = info.clear_depth ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                   : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        // Follows the device's convention, exactly as the D3D12 backend does.
+        // Reversed-Z clears to 0; clearing to 1 while the compare says Greater
+        // rejects every fragment, silently.
+        depth_attachment.clearValue.depthStencil.depth =
+            device_.depth_convention() == DepthConvention::Reversed ? 0.f : 1.f;
+    }
+
+    VkRenderingInfo rendering{};
+    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    rendering.renderArea.extent = {w, h};
+    rendering.layerCount = 1;
+    rendering.colorAttachmentCount = pass_color_ != nullptr ? 1u : 0u;
+    rendering.pColorAttachments = pass_color_ != nullptr ? &color_attachment : nullptr;
+    rendering.pDepthAttachment = depth != nullptr ? &depth_attachment : nullptr;
+    vkCmdBeginRendering(device_.cmd(), &rendering);
+
+    // The Y flip, and the only place it happens. Vulkan's NDC Y points the
+    // opposite way from D3D's; a negative viewport height inverts the
+    // clip-to-framebuffer transform, so one HLSL source serves both backends.
+    // Core since Vulkan 1.1 (VK_KHR_maintenance1). Doing it with -fvk-invert-y
+    // instead would put the difference in the shaders, which is the thing
+    // worth protecting.
+    VkViewport viewport{};
+    viewport.x = 0.f;
+    viewport.y = static_cast<f32>(h);
+    viewport.width = static_cast<f32>(w);
+    viewport.height = -static_cast<f32>(h);
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+    vkCmdSetViewport(device_.cmd(), 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.extent = {w, h};
+    vkCmdSetScissor(device_.cmd(), 0, 1, &scissor);
 }
 
-void VulkanCommandList::end_render_pass() { not_implemented("end_render_pass"); }
+void VulkanCommandList::end_render_pass() {
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    vkCmdEndRendering(device_.cmd());
+    pass_color_ = nullptr;
+}
+
+void VulkanCommandList::set_pipeline(IGraphicsPipeline& pipeline) {
+    auto& vk_pipeline = static_cast<VulkanPipeline&>(pipeline);
+    bound_pipeline_ = &vk_pipeline;
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    vkCmdBindPipeline(device_.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline.handle());
+}
+
+void VulkanCommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
+    ENGINE_ASSERT_MSG(bound_pipeline_ != nullptr, "set_constant_buffer with no pipeline bound");
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+
+    // A set per bind, out of the pool begin_frame resets. Enough while this
+    // device submits and waits inside one frame; under real frames in flight
+    // the pool has to be per-slot, which is the parity pass's problem and is
+    // deliberately not pretended to be solved here.
+    VkDescriptorSetLayout layout = bound_pipeline_->set_layout();
+    VkDescriptorSetAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocate.descriptorPool = device_.descriptor_pool();
+    allocate.descriptorSetCount = 1;
+    allocate.pSetLayouts = &layout;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    if (vk_failed(vkAllocateDescriptorSets(device_.handle(), &allocate, &set),
+            "descriptor set allocation")) {
+        return;
+    }
+
+    VkDescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = vk_buffer.handle();
+    buffer_info.offset = offset_bytes;
+    buffer_info.range = vk_buffer.size() - offset_bytes;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    // The base is the register shift, not zero. See pipeline_vulkan.cpp, which
+    // built the layout these bindings have to match.
+    write.dstBinding = kBindingBaseUniform + slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &buffer_info;
+    vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
+
+    vkCmdBindDescriptorSets(device_.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+        bound_pipeline_->layout(), 0, 1, &set, 0, nullptr);
+}
+
+void VulkanCommandList::draw(u32 vertex_count, u32 start_vertex) {
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    vkCmdDraw(device_.cmd(), vertex_count, 1, start_vertex, 0);
+}
+
+void VulkanCommandList::copy_buffer(IBuffer& src, IBuffer& dst, usize size) {
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    auto& vk_src = static_cast<VulkanBuffer&>(src);
+    auto& vk_dst = static_cast<VulkanBuffer&>(dst);
+    ENGINE_ASSERT(size <= vk_src.size() && size <= vk_dst.size());
+    VkBufferCopy region{};
+    region.size = size;
+    vkCmdCopyBuffer(device_.cmd(), vk_src.handle(), vk_dst.handle(), 1, &region);
+}
+
+void VulkanCommandList::set_viewport(u32 width, u32 height) {
+    if (device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    // Negative height, for the same reason begin_render_pass uses one.
+    VkViewport viewport{};
+    viewport.x = 0.f;
+    viewport.y = static_cast<f32>(height);
+    viewport.width = static_cast<f32>(width);
+    viewport.height = -static_cast<f32>(height);
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+    vkCmdSetViewport(device_.cmd(), 0, 1, &viewport);
+}
+
+// ── Not yet implemented ─────────────────────────────────────────────────────
+
+
 
 void VulkanCommandList::copy_texture(ITexture& src, ITexture& dst) {
     (void)src;
@@ -167,23 +331,8 @@ void VulkanCommandList::copy_texture(ITexture& src, ITexture& dst) {
     not_implemented("copy_texture");
 }
 
-void VulkanCommandList::copy_buffer(IBuffer& src, IBuffer& dst, usize size) {
-    (void)src;
-    (void)dst;
-    (void)size;
-    not_implemented("copy_buffer");
-}
 
-void VulkanCommandList::set_viewport(u32 width, u32 height) {
-    (void)width;
-    (void)height;
-    not_implemented("set_viewport");
-}
 
-void VulkanCommandList::set_pipeline(IGraphicsPipeline& pipeline) {
-    (void)pipeline;
-    not_implemented("set_pipeline");
-}
 
 void VulkanCommandList::set_compute_pipeline(IComputePipeline& pipeline) {
     (void)pipeline;
@@ -205,12 +354,6 @@ void VulkanCommandList::set_index_buffer(IBuffer& buffer, usize offset_bytes) {
     not_implemented("set_index_buffer");
 }
 
-void VulkanCommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
-    (void)slot;
-    (void)buffer;
-    (void)offset_bytes;
-    not_implemented("set_constant_buffer");
-}
 
 void VulkanCommandList::set_shader_resource(u32 slot, ITexture& texture) {
     (void)slot;
@@ -237,11 +380,6 @@ void VulkanCommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize o
     not_implemented("set_structured_buffer");
 }
 
-void VulkanCommandList::draw(u32 vertex_count, u32 start_vertex) {
-    (void)vertex_count;
-    (void)start_vertex;
-    not_implemented("draw");
-}
 
 void VulkanCommandList::draw_indexed(
     u32 index_count, u32 start_index, i32 base_vertex, u32 instance_count) {
