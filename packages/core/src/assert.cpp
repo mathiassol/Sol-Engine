@@ -17,7 +17,7 @@ namespace engine {
     }
 
     // Always, not only when a message was given. The bare ENGINE_ASSERT form is
-    // the majority of the 76 assert sites, and it used to abort leaving nothing
+    // the majority of the 107 assert sites, and it used to abort leaving nothing
     // on disk and nothing in any log sink.
     char message[512];
     if (msg) {
@@ -32,7 +32,7 @@ namespace engine {
     log(LogLevel::Fatal, LogChannel::General, message);
 
     // After the log line, so the log names the failure even if the dump write
-    // is what goes wrong. 76 assert sites are live in Release - ENGINE_ASSERT
+    // is what goes wrong. 107 assert sites are live in Release - ENGINE_ASSERT
     // has no NDEBUG guard - which makes an assert the most likely way this
     // process dies, and the most valuable place to have a stack.
     write_crash_dump("assert");

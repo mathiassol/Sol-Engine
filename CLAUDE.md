@@ -1,7 +1,12 @@
 # Sol Engine — Claude Code guide
 
-General-purpose C++20 game engine (Unity/Godot/Unreal category), Windows/D3D12
-today. Full design principles: [Philosophy.md](Philosophy.md) and
+General-purpose C++20 game engine (Unity/Godot/Unreal category), Windows today,
+with **two GPU backends**: D3D12 is the shipped player backend, and `rhi-vulkan`
+passes the whole gate suite and renders a live frame. A contract change costs two
+implementations and two gate runs — see
+[.claude/rules/renderer-boundaries.md](.claude/rules/renderer-boundaries.md).
+
+Full design principles: [Philosophy.md](Philosophy.md) and
 [Scaffold.md](Scaffold.md). Read those before making architectural calls this
 file doesn't cover.
 

@@ -32,7 +32,7 @@ swap test this engine is built to pass.
   side effects that aren't expressed as a graph dependency.
 - **Two** GPU backends since 2 Sep 2026: `rhi-d3d12` and `rhi-vulkan`. D3D12
   remains the daily driver and the only shipped player backend. Since RHI #24
-  `rhi-vulkan` runs the **whole gate suite** — `solengine gates-vk` is
+  `rhi-vulkan` runs the **whole gate suite** — `.\solengine.bat gates-vk` is
   `--rhi vulkan --gates` with the validation layer armed — and a
   `-DENGINE_RHI_D3D12=OFF` configure builds and passes it standalone. Every
   `--gates` run also stands a Vulkan device up inside it: `Backend parity gate`
@@ -49,9 +49,11 @@ swap test this engine is built to pass.
     Expect tearing there; D3D12 honours vsync normally.
   - The lesson worth carrying past both rows: a green suite is not a working
     backend. If a change touches presentation, the frame loop, or a barrier,
-    run the app and look at it - `solengine run-gpu` and `solengine run-vk`.
+    run the app and look at it - `.\solengine.bat run-gpu` and
+    `.\solengine.bat run-vk`.
   - So a contract change costs **two** implementations, and **two gate runs**:
-    `solengine gates-gpu` and `solengine gates-vk`, each with its debug layer
+    `.\solengine.bat gates-gpu` and `.\solengine.bat gates-vk`, each with its
+    debug layer
     on. Shipping GPU work with only one of them is how a defect reaches the
     other backend.
   - Treat the validation layer exactly like the D3D12 debug layer: any message

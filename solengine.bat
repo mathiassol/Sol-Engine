@@ -5,11 +5,11 @@ rem  the engine.
 rem
 rem  Two ways in, one dispatch table:
 rem
-rem    solengine                     the menu
-rem    solengine <command> [args]    straight to it, for muscle memory and for
+rem    .\solengine.bat                  the menu
+rem    .\solengine.bat <command> [args] straight to it, for muscle memory and for
 rem                                  scripts - the exit code is the command's
 rem
-rem  `solengine help` lists every command. Replaces run.bat, which only knew how
+rem  `.\solengine.bat help` lists every command. Replaces run.bat, which only knew how
 rem  to start the sandbox.
 rem ============================================================================
 setlocal EnableExtensions EnableDelayedExpansion
@@ -142,7 +142,7 @@ if /i "%CMD%"=="clean-shaders"  goto do_clean_shaders
 if /i "%CMD%"=="help"           goto do_help
 if /i "%CMD%"=="-h"             goto do_help
 if /i "%CMD%"=="--help"         goto do_help
-echo Unknown command "%CMD%". Try: solengine help
+echo Unknown command "%CMD%". Try: .\solengine.bat help
 exit /b 2
 
 rem ---------------------------------------------------------------------------
@@ -385,7 +385,7 @@ goto :eof
 
 rem ---------------------------------------------------------------------------
 :do_help
-echo   solengine ^<command^> [args]     - or no command for the menu
+echo   .\solengine.bat ^<command^> [args]  - or no command for the menu
 echo.
 echo   Args after the command go to the exe. The ones it understands:
 echo     --gates             run the gate sequence and exit 0/1
@@ -423,9 +423,9 @@ echo   logs            tail the newest engine log.
 echo   clean-shaders   empty the shader disk cache.
 echo.
 echo   Examples
-echo     solengine gates-gpu
-echo     solengine run --set r.aa=taa --set r.quality=high
-echo     solengine check
+echo     .\solengine.bat gates-gpu
+echo     .\solengine.bat run --set r.aa=taa --set r.quality=high
+echo     .\solengine.bat check
 set "CODE=0"
 goto finish
 
@@ -435,9 +435,9 @@ if exist %1 exit /b 0
 echo Missing %~1
 echo.
 if /i "%~2"=="Debug" (
-    echo Build it:  solengine build
+    echo Build it:  .\solengine.bat build
 ) else (
-    echo Build it:  solengine build-release
+    echo Build it:  .\solengine.bat build-release
 )
 set "CODE=1"
 exit /b 1
@@ -447,7 +447,7 @@ rem A stale binary has produced a confidently wrong answer here before - the
 rem gates pass, against code that is no longer on disk. Cheap to check, and the
 rem one thing a launcher can say that the engine cannot say about itself.
 if not exist "%DEBUG_EXE%" goto :eof
-%PS% -Command "$exe = Get-Item -LiteralPath '%DEBUG_EXE%'; $newest = Get-ChildItem packages -Recurse -File -Include *.cpp,*.hpp,*.h,*.hlsl,*.hlsli,CMakeLists.txt -EA 0 | Where-Object { $_.FullName -notmatch 'third_party' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($newest -and $newest.LastWriteTime -gt $exe.LastWriteTime) { Write-Host ''; Write-Host ('  STALE: ' + $newest.Name + ' is newer than sandbox.exe. Run: solengine build') -ForegroundColor Yellow; Write-Host '' }"
+%PS% -Command "$exe = Get-Item -LiteralPath '%DEBUG_EXE%'; $newest = Get-ChildItem packages -Recurse -File -Include *.cpp,*.hpp,*.h,*.hlsl,*.hlsli,CMakeLists.txt -EA 0 | Where-Object { $_.FullName -notmatch 'third_party' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($newest -and $newest.LastWriteTime -gt $exe.LastWriteTime) { Write-Host ''; Write-Host ('  STALE: ' + $newest.Name + ' is newer than sandbox.exe. Run: .\solengine.bat build') -ForegroundColor Yellow; Write-Host '' }"
 goto :eof
 
 :run_gates

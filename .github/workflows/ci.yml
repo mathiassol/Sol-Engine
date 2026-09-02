@@ -121,7 +121,8 @@ jobs:
 
   # ── The portability claim, compiled rather than asserted. ────────────────
   # ARCHITECTURE.md says only the backend packages touch a platform API, and a
-  # source scan agrees: 7 of 142 files, every one inside its own package. This
+  # source scan agrees: 10 of the 175 files graphics-api-isolation scans, every
+  # one inside its own package. This
   # job is the difference between that being true of the *text* and true of the
   # *compiler* — gcc, no Windows headers, no MSVC.
   #
@@ -155,7 +156,7 @@ jobs:
       - name: Build
         run: cmake --build build-linux --parallel
 
-      # First execution of this codebase off Windows. 36 of the 74 gates are
+      # First execution of this codebase off Windows. 38 of the 88 gates are
       # classified Cpu in kGates and need no device; the rest are Gpu and are
       # skipped by name, not by silence — the run logs how many of how many it
       # executed, so a headless run that quietly does nothing cannot pass.
@@ -203,9 +204,11 @@ jobs:
   # time and had done for some time, because packages/shaders was gated behind
   # the D3D12 option while debug-draw linked it unconditionally.
   #
-  # Configure only: with a backend switched off the sandbox does not compile
-  # (its PNG includes are unguarded). That is a real gap, but a separate one —
-  # this job checks that the CMake graph stays coherent.
+  # Configure only: this job checks that the CMake graph stays coherent across
+  # the option matrix. It no longer stops at configure because the sandbox
+  # cannot build — main.cpp guards its PNG includes behind ENGINE_HAS_PNG, and
+  # the linux job below builds the sandbox with both backends off. Extending
+  # this job from configure to build is a separate decision, not a gap.
   #
   # `no-vulkan` joined `no-d3d12` with the second backend. The modularity claim
   # now has two backends to keep honest, and shaders-dxc is shared between them

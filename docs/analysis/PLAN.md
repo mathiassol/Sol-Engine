@@ -3,6 +3,10 @@ run: 2026-09-02
 commit: 6dd4ef115d79263080754709befd700bb1b1f6bf
 tasks: 4
 phases: 2
+applied: 2026-09-02
+applied_note: applied directly during a cleanup pass, not via /aim-fix; the
+  commit that carries the four edits is the one touching solengine.bat,
+  renderer-boundaries.md, ci.yml, assert.cpp and CLAUDE.md
 ---
 
 # Remediation plan
