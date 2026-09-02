@@ -47,13 +47,13 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 2 Sep 2026: **32,767 lines** of C++/HLSL in **174 files**, **27
+Measured 2 Sep 2026: **33,038 lines** of C++/HLSL in **175 files**, **27
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the
-largest at 10,997 — 34% — but it is no longer one file: `main.cpp` is 1,676
+largest at 11,268 — 34% — but it is no longer one file: `main.cpp` is 1,697
 lines, the seven `gates/gates_*.cpp` hold the 86 declared gates, and its
-`content/shaders/*.hlsl` (1,297 lines in 23 files) counts here too.
+`content/shaders/*.hlsl` (1,335 lines in 24 files) counts here too.
 **`rhi-vulkan` is 3,843 — 12%, and has overtaken `rhi-d3d12`'s 3,433** after
 parity, which is the honest cost of a second backend that presents and runs the
 whole gate suite rather than one that only renders offscreen; `renderer` is
