@@ -156,6 +156,11 @@ bool run_rhi_contract_gate(
 bool run_color_space_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& srgb_gate_path);
 
+// Shaders #5: SPIR-V really came from a SPIR-V-capable compiler, and the DXIL
+// path still works from the same instance. Gpu-classified despite touching no
+// device - it needs a DLL that ships with a GPU SDK.
+bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
+
 // RHI #12: the same shader, the same asserted pixels, once per backend. Takes
 // the device and the shader target, so one function covers both - a per-backend
 // copy would be a place for the parity comparison to be wrong in the test

@@ -560,6 +560,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         if (fail_on_gate) {
             return false;
         }
+    } else if (!run_spirv_gate(compiler, parity_path) && fail_on_gate) {
+        // Before the parity gates, because the Vulkan one depends on SPIR-V
+        // working and a failure here should name that rather than surface as a
+        // pipeline that would not create.
+        return false;
     } else {
         engine::rhi::DeviceDesc offscreen{};
         offscreen.window_handle = nullptr;

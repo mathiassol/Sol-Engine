@@ -84,8 +84,17 @@ if(WIN32)
 endif()
 
 option(ENGINE_RHI_D3D12 "Build D3D12 RHI backend" ON)
-if(ENGINE_RHI_D3D12 AND WIN32)
+option(ENGINE_RHI_VULKAN "Build Vulkan RHI backend" ON)
+
+# The shader compiler is DXC either way - it emits DXIL for D3D12 and SPIR-V for
+# Vulkan from the same HLSL - so it belongs to both backends rather than to
+# D3D12. Gating it on D3D12 alone would make a Vulkan-only configure fail to
+# link, which is the same class of mistake that once made -DENGINE_RHI_D3D12=OFF
+# fail at generate time (see the note above packages/shaders).
+if((ENGINE_RHI_D3D12 OR ENGINE_RHI_VULKAN) AND WIN32)
     add_subdirectory(packages/shaders-dxc)
+endif()
+if(ENGINE_RHI_D3D12 AND WIN32)
     add_subdirectory(packages/rhi-d3d12)
 endif()
 

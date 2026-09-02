@@ -173,11 +173,12 @@ public:
             error_log = "Shader compiler missing";
             return false;
         }
-        if (desc.target != ShaderTarget::Dxil) {
-            error_log = "Shader target SPIR-V is not implemented (DXC backend emits DXIL only)";
-            log(LogLevel::Error, LogChannel::Render, error_log);
-            return false;
-        }
+        // No target check here. This wrapper caches whatever the inner
+        // compiler can produce, and cache_key already folds desc.target, so
+        // DXIL and SPIR-V of the same source land in different files. A second
+        // rejection here is what made the SPIR-V path look unimplemented after
+        // it was implemented - the sandbox uses the cached compiler, not the
+        // bare one.
 
         const std::filesystem::path shader_path{std::string(desc.file_path)};
         if (!std::filesystem::exists(shader_path)) {

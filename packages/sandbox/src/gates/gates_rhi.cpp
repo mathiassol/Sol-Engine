@@ -307,6 +307,94 @@ bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompile
     return passed;
 }
 
+bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path) {
+    // Shaders #5. The DXC this engine ships - the Windows SDK's - cannot emit
+    // SPIR-V at all: it answers "SPIR-V CodeGen not available", and nothing in
+    // the DLL's strings says so, because the option table is compiled in
+    // whether the backend is or not. So this asserts that a *different*,
+    // SPIR-V-capable DXC was found and used, not merely that compile()
+    // returned true.
+    //
+    // Four things:
+    //   1. SPIR-V comes back with SPIR-V's magic word
+    //   2. it is not the DXIL blob for the same shader, which catches both a
+    //      wrong DLL and a cache key that stops folding the target
+    //   3. DXIL still works from the same compiler instance - the proof that
+    //      two same-named DXC builds coexist in one process
+    //   4. a second SPIR-V request returns the same bytes, so the disk cache
+    //      round-trips SPIR-V rather than serving the DXIL
+
+    // Set when the compiler says no SPIR-V DXC exists on this machine, which is
+    // an environment fact and not a defect. Matched on the message because the
+    // alternative is new interface surface that exists only for this gate; it
+    // is one string in one repository, and the compiler's own log line says the
+    // same thing next to it.
+    bool no_compiler = false;
+
+    auto compile = [&](engine::shaders::ShaderTarget target,
+                       engine::shaders::ShaderBytecode& out, bool& from_cache) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = "vs_main";
+        desc.target_profile = "vs_6_0";
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        from_cache = compiler.last_compile_from_cache();
+        if (!ok && error.find("No SPIR-V-capable DXC") != std::string::npos) {
+            no_compiler = true;
+        } else if (!ok && !error.empty()) {
+            // Not for the absent-compiler case: the compiler already said so
+            // once, with the fix in it, and repeating it per call turns one
+            // fact into three lines.
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode spirv{};
+    engine::shaders::ShaderBytecode dxil{};
+    engine::shaders::ShaderBytecode spirv_again{};
+    bool ignored = false;
+    bool second_from_cache = false;
+    const bool spirv_ok = compile(engine::shaders::ShaderTarget::Spirv, spirv, ignored);
+    const bool dxil_ok = compile(engine::shaders::ShaderTarget::Dxil, dxil, ignored);
+    const bool repeat_ok =
+        compile(engine::shaders::ShaderTarget::Spirv, spirv_again, second_from_cache);
+
+    if (no_compiler) {
+        engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
+            "SPIR-V gate: no SPIR-V-capable DXC on this machine - install the Vulkan SDK, "
+            "or set ENGINE_DXC_SPIRV (skip)");
+        return true;
+    }
+
+    engine::u32 spirv_magic = 0;
+    engine::u32 dxil_magic = 0;
+    if (spirv.data.size() >= 4) {
+        std::memcpy(&spirv_magic, spirv.data.data(), 4);
+    }
+    if (dxil.data.size() >= 4) {
+        std::memcpy(&dxil_magic, dxil.data.data(), 4);
+    }
+
+    const bool magic_ok = spirv_ok && spirv_magic == 0x07230203u;
+    const bool dxil_still_ok = dxil_ok && dxil_magic == 0x43425844u;
+    const bool distinct = spirv_ok && dxil_ok && spirv.data != dxil.data;
+    const bool cache_ok = repeat_ok && spirv_again.data == spirv.data;
+
+    const bool passed = magic_ok && dxil_still_ok && distinct && cache_ok;
+    char message[240];
+    std::snprintf(message, sizeof(message),
+        "SPIR-V gate: spirv=0x%08X (%zu bytes) dxil=0x%08X (%zu bytes) distinct=%s "
+        "round_trip=%s cached=%s (%s)",
+        spirv_magic, spirv.data.size(), dxil_magic, dxil.data.size(), distinct ? "yes" : "no",
+        cache_ok ? "yes" : "no", second_from_cache ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_backend_parity_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
     engine::shaders::ShaderTarget target, const char* api, engine::u32& lit_out) {
@@ -560,24 +648,33 @@ bool run_rhi_contract_gate(
     const bool sampler_ok = sampler != nullptr
         && engine::rhi::GraphicsPipelineDesc::kMaxSamplers >= 2;
 
-    engine::shaders::ShaderCompileDesc spirv{};
-    spirv.file_path = "unused.hlsl";
-    spirv.entry_point = "main";
-    spirv.target_profile = "vs_6_0";
-    spirv.target = engine::shaders::ShaderTarget::Spirv;
+    // This used to assert that SPIR-V was *rejected*, which was true and worth
+    // checking for as long as no SPIR-V compiler existed. Shaders #5 made it
+    // false, and the gate went red - correctly. What survives is the property
+    // that outlives the change: a source file that does not exist is refused
+    // for either target, rather than one of them reporting success on nothing.
+    // Whether SPIR-V actually works is run_spirv_gate's job now.
     engine::shaders::ShaderBytecode unused;
     std::string error;
-    const bool spirv_rejected = !compiler.compile(spirv, unused, error)
-        && error.find("SPIR-V") != std::string::npos;
+    bool missing_rejected = true;
+    for (const engine::shaders::ShaderTarget target :
+        {engine::shaders::ShaderTarget::Dxil, engine::shaders::ShaderTarget::Spirv}) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = "does_not_exist.hlsl";
+        desc.entry_point = "main";
+        desc.target_profile = "vs_6_0";
+        desc.target = target;
+        missing_rejected = missing_rejected && !compiler.compile(desc, unused, error);
+    }
     const bool target_default =
         engine::shaders::ShaderCompileDesc{}.target == engine::shaders::ShaderTarget::Dxil;
 
-    const bool passed = sampler_ok && spirv_rejected && target_default;
+    const bool passed = sampler_ok && missing_rejected && target_default;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "RHI contract gate: sampler=%s spirv_rejected=%s target_enum=%s (%s)",
+        "RHI contract gate: sampler=%s missing_file_rejected=%s target_enum=%s (%s)",
         sampler_ok ? "yes" : "no",
-        spirv_rejected ? "yes" : "no", target_default ? "yes" : "no",
+        missing_rejected ? "yes" : "no", target_default ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
