@@ -1,7 +1,7 @@
 ---
 name: aim-row
-description: Take one roadmap row from research to shipped in a single unbroken run — resolve it against the server (status, what waits on it, and the decision-log entries that already constrain it), research the codebase and the web, ask everything in one mandatory question round ending in how to execute, then build it, gate it, and ship it via /aim-ship. Invoke as /aim-row renderer #16.
-when_to_use: The user names a category and row number to implement — "/aim-row renderer #16", "do foundation 5", "build the transparency row". Not for auditing (that is /aim-audit), not for choosing (that is /aim-next), and not for closing out work already written (that is /aim-ship, which this invokes at the end).
+description: 'Take one roadmap row from research to shipped in a single unbroken run — resolve it against the server (status, what waits on it, and the decision-log entries that already constrain it), research the codebase and the web, ask everything in one mandatory question round ending in how to execute, then build it, gate it, and ship it via /aim-ship. Invoke as /aim-row renderer #16.'
+when_to_use: 'The user names a category and row number to implement — "/aim-row renderer #16", "do foundation 5", "build the transparency row". Not for auditing (that is /aim-audit), not for choosing (that is /aim-next), and not for closing out work already written (that is /aim-ship, which this invokes at the end).'
 argument-hint: "<category> #<row>   e.g. foundation #5, renderer #16"
 effort: max
 allowed-tools: Bash(git *) Bash(cmake *) Bash(find *) Bash(grep *) Bash(wc *) Bash(ls *) Bash(cat *) Bash(sed *) Bash(awk *) Bash(pwsh *) Bash(./build/bin/Debug/sandbox.exe *) Bash(./build/bin/Release/game.exe *) PowerShell Read Grep Glob Write Edit AskUserQuestion Agent Workflow Skill WebSearch WebFetch

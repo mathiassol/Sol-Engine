@@ -1,7 +1,7 @@
 ---
 name: roadmap
-description: Take one ENGINE_MAP.md row from research to shipped, in a single unbroken run — deep research (codebase and web), one mandatory question round ending in how to execute, then build it, gate it, and ship it (which refreshes the published roadmap page). Invoke as /roadmap foundation #5. Use when the user names a roadmap row to build, or asks to do the next feature.
-when_to_use: The user names a category and row number to implement — "/roadmap renderer #16", "do foundation 5", "build the transparency row". Not for auditing (that is /analizeMax) and not for closing out work already written (that is /ship-feature, which this invokes at the end).
+description: 'Take one ENGINE_MAP.md row from research to shipped, in a single unbroken run — deep research (codebase and web), one mandatory question round ending in how to execute, then build it, gate it, and ship it (which refreshes the published roadmap page). Invoke as /roadmap foundation #5. Use when the user names a roadmap row to build, or asks to do the next feature.'
+when_to_use: 'The user names a category and row number to implement — "/roadmap renderer #16", "do foundation 5", "build the transparency row". Not for auditing (that is /analizeMax) and not for closing out work already written (that is /ship-feature, which this invokes at the end).'
 argument-hint: <category> #<row>   e.g. foundation #5, renderer #16
 effort: max
 allowed-tools: Bash(git *) Bash(cmake *) Bash(find *) Bash(grep *) Bash(wc *) Bash(ls *) Bash(sed *) Bash(awk *) Bash(./build/bin/Debug/sandbox.exe *) Bash(./build/bin/Release/game.exe *) PowerShell Read Grep Glob Write Edit AskUserQuestion Agent Workflow Artifact Skill WebSearch WebFetch
