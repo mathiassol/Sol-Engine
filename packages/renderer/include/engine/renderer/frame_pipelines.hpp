@@ -19,6 +19,10 @@ namespace engine::renderer {
 // point: the completeness gate covers it and it reads like its twelve siblings.
 struct FramePipelines {
     rhi::IGraphicsPipeline* forward = nullptr;
+    // The same shader with BlendMode::Alpha and no depth write. Consumed
+    // per-batch like `forward`, and chosen in world_extract.cpp from the
+    // material's opacity.
+    rhi::IGraphicsPipeline* forward_transparent = nullptr;
     rhi::IGraphicsPipeline* shadow = nullptr;
     rhi::IGraphicsPipeline* sky = nullptr;
     rhi::IGraphicsPipeline* bloom_downsample = nullptr;
@@ -43,6 +47,7 @@ struct FramePipelineEntry {
 
 inline constexpr FramePipelineEntry kFramePipelines[] = {
     {&FramePipelines::forward, "forward"},
+    {&FramePipelines::forward_transparent, "forward_transparent"},
     {&FramePipelines::shadow, "shadow"},
     {&FramePipelines::sky, "sky"},
     {&FramePipelines::bloom_downsample, "bloom_downsample"},

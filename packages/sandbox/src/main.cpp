@@ -356,7 +356,22 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return;
     }
 
+    // Both pipelines, because both are built from this one shader. Rebuilding
+    // only the opaque one leaves every transparent surface running the
+    // *previous* forward.hlsl after an edit - so a shader change would appear
+    // to work on most of the frame and silently not on the blended part, which
+    // is the kind of half-applied reload that costs an afternoon.
+    auto transparent = device.create_graphics_pipeline(
+        make_forward_transparent_pipeline_desc(
+            vs_bytecode.data, ps_bytecode.data, device.depth_convention()));
+    if (!transparent) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "Shader hot-reload transparent pipeline creation failed");
+        return;
+    }
+
     demo.adopt(&engine::renderer::FramePipelines::forward, std::move(pipeline));
+    demo.adopt(&engine::renderer::FramePipelines::forward_transparent, std::move(transparent));
     engine::log(engine::LogLevel::Info, engine::LogChannel::Render, "Shader hot-reload applied");
 }
 
@@ -777,6 +792,19 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
             return false;
         }
         demo->adopt(&engine::renderer::FramePipelines::forward, std::move(p));
+    }
+    {
+        // Same bytecode, so no second compile: the transparent pipeline is the
+        // opaque one's blend and depth-write state, not a different shader.
+        auto p = device->create_graphics_pipeline(
+            make_forward_transparent_pipeline_desc(
+                vs_bytecode.data, ps_bytecode.data, device->depth_convention()));
+        if (!p) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+                "Forward transparent pipeline creation failed");
+            return false;
+        }
+        demo->adopt(&engine::renderer::FramePipelines::forward_transparent, std::move(p));
     }
 
     engine::shaders::ShaderCompileDesc shadow_vs = vs_desc;

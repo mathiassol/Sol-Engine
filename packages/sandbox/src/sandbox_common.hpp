@@ -335,6 +335,16 @@ sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo);
 bool ensure_taa_history(engine::rhi::IDevice& device, engine::renderer::RenderGraph& graph,
     ForwardDemo& demo, engine::u32 width, engine::u32 height);
 
+// The forward pipeline with alpha blending and no depth write.
+//
+// Calls make_forward_pipeline_desc and overrides two fields rather than
+// copying its body. The two must not drift, and the field most likely to
+// drift is the depth convention - which is the engine's most load-bearing
+// value, and the reason run_depth_convention_gate exists.
+engine::rhi::GraphicsPipelineDesc make_forward_transparent_pipeline_desc(
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention);
+
 engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     std::span<const engine::u8> vs, std::span<const engine::u8> ps,
     engine::rhi::DepthConvention convention);

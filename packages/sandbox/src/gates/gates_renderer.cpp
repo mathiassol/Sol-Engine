@@ -63,6 +63,12 @@ bool run_depth_convention_gate(const engine::rhi::IDevice* device) {
     const std::span<const engine::u8> none{};
     const bool pipelines_ok =
         make_forward_pipeline_desc(none, none, live).depth == want_closer
+        && make_forward_transparent_pipeline_desc(none, none, live).depth == want_closer
+        // The transparent maker is the one place depth_write is deliberately
+        // false, so this is where that gets pinned. Nothing else checks it, and
+        // a depth write from a transparent surface removes the motion vectors
+        // of everything behind it with no error anywhere.
+        && make_forward_transparent_pipeline_desc(none, none, live).depth_write == false
         && make_shadow_pipeline_desc(none, live).depth == want_closer
         && make_sky_pipeline_desc(none, none, live).depth == want_closer_eq
         && (make_shadow_pipeline_desc(none, live).slope_scaled_depth_bias < 0.f)
@@ -1382,13 +1388,22 @@ bool run_transparency_gate(engine::rhi::IDevice& device,
 
     // Underlay, then overlay, then read back. The overlay's pipeline is the
     // only thing that differs between the two runs - that is assertion 4.
+    //
+    // `state` is tracked across the two runs rather than assumed: the first
+    // one leaves the texture in CopySrc for the readback, so the second's
+    // barrier starts from there and not from Common. Getting that wrong is a
+    // debug-layer error and nothing else - the pixels came back correct on
+    // this driver, which is exactly why the layer is treated as
+    // build-breaking. resources.hpp already says a fresh texture is not
+    // always Common; neither is a reused one.
+    using State = engine::rhi::ResourceState;
+    State state = State::Common;
     auto draw_pair = [&](engine::rhi::IGraphicsPipeline& overlay_pso,
                           std::vector<engine::u8>& out) {
-        using State = engine::rhi::ResourceState;
         device.begin_frame();
         auto& cmd = device.command_list();
         cmd.begin();
-        cmd.transition(*target_texture, State::Common, State::RenderTarget);
+        cmd.transition(*target_texture, state, State::RenderTarget);
 
         engine::rhi::RenderPassInfo pass{};
         pass.color = target_texture.get();
@@ -1407,6 +1422,7 @@ bool run_transparency_gate(engine::rhi::IDevice& device,
         cmd.end();
         device.submit();
         device.wait_idle();
+        state = State::CopySrc;
         return device.read_texture(*target_texture, out.data(), out.size());
     };
 

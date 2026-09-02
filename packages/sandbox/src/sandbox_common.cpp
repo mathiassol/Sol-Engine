@@ -220,6 +220,26 @@ engine::rhi::GraphicsPipelineDesc make_forward_pipeline_desc(
     return desc;
 }
 
+engine::rhi::GraphicsPipelineDesc make_forward_transparent_pipeline_desc(
+    std::span<const engine::u8> vs, std::span<const engine::u8> ps,
+    engine::rhi::DepthConvention convention) {
+    engine::rhi::GraphicsPipelineDesc desc = make_forward_pipeline_desc(vs, ps, convention);
+    desc.blend = engine::rhi::BlendMode::Alpha;
+    // Not a preference - a requirement. The motion pass draws with
+    // DepthTest::Equal against the depth buffer forward produced, and
+    // extract.cpp records that geometry which does not rasterize identically
+    // to forward silently writes nothing. A transparent surface writing depth
+    // would erase the motion vectors of everything behind it, which surfaces
+    // as TAA ghosting on objects that are not transparent - a symptom nowhere
+    // near its cause.
+    //
+    // Depth *testing* stays on, and that is what makes transparency correct
+    // against opaque geometry with no sorting at all.
+    desc.depth_write = false;
+    desc.debug_name = "forward_transparent";
+    return desc;
+}
+
 engine::rhi::GraphicsPipelineDesc make_shadow_pipeline_desc(
     std::span<const engine::u8> vs, engine::rhi::DepthConvention convention) {
     engine::rhi::GraphicsPipelineDesc desc{};
