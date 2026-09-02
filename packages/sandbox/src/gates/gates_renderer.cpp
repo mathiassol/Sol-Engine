@@ -1257,4 +1257,201 @@ bool run_compute_pass_gate() {
     return ok;
 }
 
+bool run_transparency_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api) {
+    // Renderer #16's baseline: does BlendMode::Alpha do the arithmetic it
+    // claims, and do the two backends do it identically?
+    //
+    // Four assertions, none of which is "it did not crash":
+    //
+    //   1. the overlapped texels equal src*a + dst*(1-a), computed on the CPU
+    //   2. the non-overlapped half is still the underlay, so the blend did not
+    //      smear outside the geometry
+    //   3. the alpha channel equals 1*a + 1*(1-a) = 1. This is the non-obvious
+    //      half of the existing blend state - SrcBlendAlpha is ONE, not
+    //      SRC_ALPHA - and so the field most likely to differ between two
+    //      backends written from the same description
+    //   4. the same shader and the same alpha through an *Opaque* pipeline
+    //      writes src straight through. Without this, assertion 1 could be
+    //      satisfied by a shader that happened to output the blended value
+    //      itself, and the gate would prove nothing about the blend state
+    //
+    // Channel values are chosen so the reference lands on whole numbers: every
+    // one is even and the alpha is exactly 0.5, so src*a + dst*(1-a) is an
+    // integer in every channel. The comparison still allows +/-1, because the
+    // blend runs in float and the store rounds - and a wrong blend factor is
+    // out by tens, so a byte of slack costs the gate nothing.
+    constexpr engine::u32 kExtent = 64;
+    constexpr engine::u8 kDst[4] = {200, 100, 50, 255};
+    constexpr engine::u8 kSrc[4] = {50, 200, 100, 255};
+    constexpr engine::f32 kAlpha = 0.5f;
+
+    auto expected = [](engine::u8 src, engine::u8 dst) {
+        const engine::f32 blended = (static_cast<engine::f32>(src) / 255.f) * kAlpha
+            + (static_cast<engine::f32>(dst) / 255.f) * (1.f - kAlpha);
+        return static_cast<engine::i32>(blended * 255.f + 0.5f);
+    };
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps);
+
+    engine::rhi::TextureDesc color{};
+    color.width = kExtent;
+    color.height = kExtent;
+    color.format = engine::rhi::Format::RGBA8_UNORM;
+    color.usage = engine::rhi::TextureUsage::RenderTarget;
+    auto target_texture = device.create_texture(color, nullptr);
+
+    struct Params {
+        engine::f32 rect[4];
+        engine::f32 tint[4];
+    };
+    auto make_params = [](const engine::f32 (&rect)[4], const engine::u8 (&rgb)[4],
+                           engine::f32 alpha) {
+        Params p{};
+        for (engine::u32 i = 0; i < 4; ++i) {
+            p.rect[i] = rect[i];
+        }
+        p.tint[0] = static_cast<engine::f32>(rgb[0]) / 255.f;
+        p.tint[1] = static_cast<engine::f32>(rgb[1]) / 255.f;
+        p.tint[2] = static_cast<engine::f32>(rgb[2]) / 255.f;
+        p.tint[3] = alpha;
+        return p;
+    };
+    // Full target, then the left half. The right half is the control: it must
+    // come back as the underlay, untouched.
+    constexpr engine::f32 kFullRect[4] = {-1.f, -1.f, 1.f, 1.f};
+    constexpr engine::f32 kHalfRect[4] = {-1.f, -1.f, 0.f, 1.f};
+    const Params under = make_params(kFullRect, kDst, 1.f);
+    const Params over = make_params(kHalfRect, kSrc, kAlpha);
+
+    // Two buffers, not one written twice: rewriting a constant buffer between
+    // two draws in the same command list races the GPU reading the first.
+    engine::rhi::BufferDesc cb{};
+    cb.size = sizeof(Params);
+    cb.usage = engine::rhi::BufferUsage::Uniform;
+    auto under_buffer = device.create_buffer(cb, &under);
+    auto over_buffer = device.create_buffer(cb, &over);
+
+    auto make_pipeline = [&](engine::rhi::BlendMode blend, const char* name) {
+        engine::rhi::GraphicsPipelineDesc desc{};
+        desc.vertex_shader = std::span<const engine::u8>(vs.data);
+        desc.pixel_shader = std::span<const engine::u8>(ps.data);
+        desc.uniform_buffer_count = 1;
+        desc.color_format = engine::rhi::Format::RGBA8_UNORM;
+        desc.depth = engine::rhi::DepthTest::Disabled;
+        desc.depth_write = false;
+        desc.cull = engine::rhi::CullMode::None;
+        desc.blend = blend;
+        desc.debug_name = name;
+        return desc;
+    };
+    auto opaque_pso = compiled
+        ? device.create_graphics_pipeline(
+              make_pipeline(engine::rhi::BlendMode::Opaque, "transparency_gate_opaque"))
+        : nullptr;
+    auto blend_pso = compiled
+        ? device.create_graphics_pipeline(
+              make_pipeline(engine::rhi::BlendMode::Alpha, "transparency_gate_alpha"))
+        : nullptr;
+
+    const bool ready
+        = compiled && target_texture && under_buffer && over_buffer && opaque_pso && blend_pso;
+
+    std::vector<engine::u8> blended_pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    std::vector<engine::u8> opaque_pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    bool read_blended = false;
+    bool read_opaque = false;
+
+    // Underlay, then overlay, then read back. The overlay's pipeline is the
+    // only thing that differs between the two runs - that is assertion 4.
+    auto draw_pair = [&](engine::rhi::IGraphicsPipeline& overlay_pso,
+                          std::vector<engine::u8>& out) {
+        using State = engine::rhi::ResourceState;
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*target_texture, State::Common, State::RenderTarget);
+
+        engine::rhi::RenderPassInfo pass{};
+        pass.color = target_texture.get();
+        pass.clear_color_target = true;
+        pass.clear_depth = false;
+        cmd.begin_render_pass(pass);
+        cmd.set_pipeline(*opaque_pso);
+        cmd.set_constant_buffer(0, *under_buffer);
+        cmd.draw(6, 0);
+        cmd.set_pipeline(overlay_pso);
+        cmd.set_constant_buffer(0, *over_buffer);
+        cmd.draw(6, 0);
+        cmd.end_render_pass();
+
+        cmd.transition(*target_texture, State::RenderTarget, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        return device.read_texture(*target_texture, out.data(), out.size());
+    };
+
+    if (ready) {
+        read_blended = draw_pair(*blend_pso, blended_pixels);
+        read_opaque = draw_pair(*opaque_pso, opaque_pixels);
+    }
+
+    auto texel = [](const std::vector<engine::u8>& pixels, engine::u32 x, engine::u32 y) {
+        return &pixels[(static_cast<engine::usize>(y) * kExtent + x) * 4];
+    };
+    // (16, 32) is inside the overlay; (48, 32) is the control half.
+    const engine::u8* over_texel = texel(blended_pixels, 16, 32);
+    const engine::u8* control = texel(blended_pixels, 48, 32);
+    const engine::u8* opaque_texel = texel(opaque_pixels, 16, 32);
+
+    auto within_one = [](engine::i32 got, engine::i32 want) {
+        const engine::i32 delta = got - want;
+        return delta <= 1 && delta >= -1;
+    };
+
+    const engine::i32 want_r = expected(kSrc[0], kDst[0]);
+    const engine::i32 want_g = expected(kSrc[1], kDst[1]);
+    const engine::i32 want_b = expected(kSrc[2], kDst[2]);
+    const bool blend_ok = read_blended && within_one(over_texel[0], want_r)
+        && within_one(over_texel[1], want_g) && within_one(over_texel[2], want_b);
+    const bool blend_alpha_ok = read_blended && within_one(over_texel[3], 255);
+    const bool control_ok = read_blended && control[0] == kDst[0] && control[1] == kDst[1]
+        && control[2] == kDst[2];
+    const bool opaque_ok = read_opaque && opaque_texel[0] == kSrc[0]
+        && opaque_texel[1] == kSrc[1] && opaque_texel[2] == kSrc[2];
+
+    const bool passed = ready && read_blended && read_opaque && blend_ok && blend_alpha_ok
+        && control_ok && opaque_ok;
+
+    char message[320];
+    std::snprintf(message, sizeof(message),
+        "Transparency gate [%s]: blended=(%u,%u,%u,%u) want=(%d,%d,%d,255) "
+        "control=(%u,%u,%u) want=(%u,%u,%u) opaque_passthrough=(%u,%u,%u) (%s)",
+        api, over_texel[0], over_texel[1], over_texel[2], over_texel[3], want_r, want_g,
+        want_b, control[0], control[1], control[2], kDst[0], kDst[1], kDst[2],
+        opaque_texel[0], opaque_texel[1], opaque_texel[2], passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 } // namespace sandbox

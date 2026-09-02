@@ -562,6 +562,19 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
+    std::string transparency_path;
+    if (!resolve_content(loader, kTransparencyGateShader, transparency_path)) {
+        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+            "transparency_gate.hlsl missing");
+        if (fail_on_gate) {
+            return false;
+        }
+    } else if (!run_transparency_gate(*device, compiler, transparency_path,
+                   shader_target_for(*device), api_name_for(*device))
+        && fail_on_gate) {
+        return false;
+    }
+
     // An offscreen device, not the sandbox's windowed one: the contract's new
     // null-window mode needs a caller, and this gate is the only one that wants
     // a device with no swapchain. It also means the reference pixels are
@@ -702,6 +715,14 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
             // texels, 64 partial-coverage ones and that a mismatched pipeline
             // is diagnosed by name.
             && !run_msaa_gate(*vk_device, compiler, msaa_path,
+                engine::shaders::ShaderTarget::Spirv, "vulkan")
+            && fail_on_gate) {
+            return false;
+        } else if (!transparency_path.empty()
+            // Renderer #16. Both backends translate BlendMode::Alpha from the
+            // same description and nothing had ever compared them, which is
+            // exactly the kind of gap the parity block exists to close.
+            && !run_transparency_gate(*vk_device, compiler, transparency_path,
                 engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;

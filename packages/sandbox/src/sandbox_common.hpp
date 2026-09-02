@@ -113,6 +113,7 @@ constexpr const char* kComputeGateShader = "/shaders/compute_gate.hlsl";
 constexpr const char* kSrgbGateShader = "/shaders/srgb_gate.hlsl";
 constexpr const char* kStorageTextureGateShader = "/shaders/storage_texture_gate.hlsl";
 constexpr const char* kMsaaGateShader = "/shaders/msaa_gate.hlsl";
+constexpr const char* kTransparencyGateShader = "/shaders/transparency_gate.hlsl";
 constexpr const char* kBackendParityGateShader = "/shaders/backend_parity_gate.hlsl";
 constexpr const char* kParityMeshGateShader = "/shaders/parity_mesh_gate.hlsl";
 constexpr const char* kParityTextureGateShader

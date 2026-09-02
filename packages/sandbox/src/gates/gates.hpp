@@ -135,6 +135,19 @@ bool run_motion_gate(const ForwardDemo& demo);
 
 bool run_pcf_gate();
 
+// Renderer #16: alpha blending, measured rather than asserted. An opaque
+// underlay, a blended overlay, and a readback compared against
+// src*a + dst*(1-a) computed on the CPU.
+//
+// Takes `target` and `api` so the same function runs on both devices and the
+// two sets of numbers sit next to each other - the shape RHI #24 established,
+// and worth having here because this is the first geometry consumer either
+// backend has had for BlendMode::Alpha. Both were written from the same
+// description and nothing had compared them.
+bool run_transparency_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api);
+
 bool run_depth_convention_gate(const engine::rhi::IDevice* device);
 
 bool run_compute_pass_gate();
