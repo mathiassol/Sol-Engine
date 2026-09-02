@@ -241,6 +241,19 @@ struct TextureDesc {
     u32 width  = 0;
     u32 height = 0;
     // 0 means a full chain from width/height. 1 means the top mip only.
+    //
+    // **What `data` must contain depends on the texture.** For a
+    // single-layer RGBA8 or RGBA8_SRGB 2D texture, `data` is **mip 0 only**
+    // and the backend generates the rest with a box filter - sRGB averaging in
+    // light rather than in bytes. For anything else - a cube, an array, or any
+    // other format - `data` must be the **whole chain**, slice-major then mip,
+    // tightly packed.
+    //
+    // Written down because it was implicit and is the wrong way round from
+    // what a reader expects: supplying a full chain for the generated case
+    // silently discards everything past mip 0, because the backend refilters
+    // level 0 over the top of it. Found by a gate that supplied one and got
+    // mip 0's value back from level 1.
     u32 mip_levels = 1;
     // Cube is 6 faces. Tex2DArray is N slices. Tex2D stays 1.
     u32 array_size = 1;

@@ -123,15 +123,35 @@ public:
     TextureDimension dimension() const override { return desc_.dimension; }
     Format format() const override { return desc_.format; }
     u32 sample_count() const override { return desc_.sample_count; }
+    // Not on ITexture - the backend needs it to know what layout the
+    // image settles into and what it may be barriered to.
+    TextureUsage usage() const { return desc_.usage; }
 
     VkImage image() const { return image_; }
     VkImageView view() const { return view_; }
+
+    // The layout this image is actually in, tracked here rather than derived
+    // from the `from` argument of transition().
+    //
+    // ResourceState::Common maps to VK_IMAGE_LAYOUT_UNDEFINED, and a barrier
+    // *from* UNDEFINED is permitted to discard the image's contents. So a
+    // caller that transitions Common -> ShaderRead on a texture it has just
+    // uploaded would legally lose the upload. The other backend has the same
+    // hazard on paper and a forgiving driver in practice, which is exactly how
+    // it stays invisible.
+    //
+    // Tracking it makes the contract's `from` advisory - its access and stage
+    // masks are still used, only its layout is ignored - and removes the whole
+    // class of bug.
+    VkImageLayout layout() const { return layout_; }
+    void set_layout(VkImageLayout layout) { layout_ = layout; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
     VkImageView view_ = VK_NULL_HANDLE;
+    VkImageLayout layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     TextureDesc desc_{};
 };
 
@@ -195,11 +215,28 @@ private:
 // samplers baked into a set layout and for create_sampler's standalone objects.
 VkSampler create_vulkan_sampler(VkDevice device, const SamplerDesc& desc);
 
-// Both exist so the device's factory functions have something to return once
-// they are implemented. Neither carries state yet, and creating one reaches
-// not_implemented - see the note at the top of this file.
+class VulkanSampler final : public ISampler {
+public:
+    VulkanSampler(VkDevice device, VkSampler sampler) : device_(device), sampler_(sampler) {}
+    ~VulkanSampler() override {
+        if (device_ != VK_NULL_HANDLE && sampler_ != VK_NULL_HANDLE) {
+            vkDestroySampler(device_, sampler_, nullptr);
+        }
+    }
+
+    VulkanSampler(const VulkanSampler&) = delete;
+    VulkanSampler& operator=(const VulkanSampler&) = delete;
+
+    VkSampler handle() const { return sampler_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkSampler sampler_ = VK_NULL_HANDLE;
+};
+
+// Exists so create_compute_pipeline has something to return once it is
+// implemented; creating one reaches not_implemented until then.
 class VulkanComputePipeline final : public IComputePipeline {};
-class VulkanSampler final : public ISampler {};
 
 class VulkanCommandList final : public ICommandList {
 public:
@@ -239,10 +276,36 @@ public:
     std::string_view last_debug_marker() const override { return last_marker_; }
 
 private:
+    // One descriptor set per set index per draw, not one per bind.
+    //
+    // The first version of this allocated a set inside set_constant_buffer and
+    // bound it immediately, which works for exactly one binding: a pass that
+    // binds a uniform buffer *and* a texture would allocate two sets and bind
+    // the second over the first, silently losing the uniform. So the binds
+    // accumulate here and one flush before the draw writes and binds them.
+    static constexpr u32 kMaxWritesPerSet = 24;
+
+    struct PendingWrites {
+        VkDescriptorSetLayoutBinding slots[kMaxWritesPerSet]{};
+        VkDescriptorBufferInfo buffers[kMaxWritesPerSet]{};
+        VkDescriptorImageInfo images[kMaxWritesPerSet]{};
+        u32 count = 0;
+    };
+
+    // Allocates, writes and binds whatever has accumulated, then clears it.
+    // Called at the top of every draw and dispatch.
+    void flush_descriptors(VkPipelineBindPoint bind_point, VkPipelineLayout layout);
+    void queue_write(u32 set, u32 binding, VkDescriptorType type,
+        const VkDescriptorBufferInfo& buffer);
+    void queue_write(u32 set, u32 binding, VkDescriptorType type,
+        const VkDescriptorImageInfo& image);
+
     static constexpr u32 kMaxDebugEvents = 16;
 
+    PendingWrites pending_[2]{};
     VulkanDevice& device_;
     VulkanPipeline* bound_pipeline_ = nullptr;
+    VulkanComputePipeline* bound_compute_ = nullptr;
     // Which stride variant is currently bound, so set_vertex_buffer only
     // rebinds when the stride actually changes. ~0u means none yet.
     u32 bound_stride_ = ~0u;
@@ -310,7 +373,10 @@ public:
     bool stage_and_submit(const void* data, usize size,
         const std::function<void(VkCommandBuffer, VkBuffer)>& record);
     bool upload_to_buffer(VkBuffer dest, const void* data, usize size);
-    bool upload_to_image(VkImage dest, const TextureDesc& desc, const void* data);
+    bool upload_to_image(VulkanTexture& texture, const void* data);
+    bool settle_image(VulkanTexture& texture, VkImageLayout layout);
+    void barrier_image(VkCommandBuffer cmd, VulkanTexture& texture, VkImageLayout to,
+        VkAccessFlags2 access, VkPipelineStageFlags2 stage);
 
     // For the command list and the pipeline factory, which live in other
     // translation units.

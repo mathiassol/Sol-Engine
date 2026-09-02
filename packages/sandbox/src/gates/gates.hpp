@@ -168,6 +168,13 @@ bool run_vulkan_device_gate();
 // device - it needs a DLL that ships with a GPU SDK.
 bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
 
+// RHI #24: texture parity. A hand-written mip level and a cube face, so the
+// two things that go wrong quietly on upload - the mip offset and the array
+// layer - are each read at a value the gate chose.
+bool run_parity_texture_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api);
+
 // RHI #24: vertex input parity. An indexed quad whose per-vertex normal and uv
 // both reach the output, so a wrong attribute location is a wrong colour rather
 // than a missing triangle.

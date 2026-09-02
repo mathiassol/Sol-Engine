@@ -449,6 +449,165 @@ bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::strin
     return passed;
 }
 
+bool run_parity_texture_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api) {
+    // Texture parity: one mip level and one cube face, both read at an exact
+    // value. Those are the two things that go wrong quietly when uploading -
+    // the mip offset and the array layer - so sampling mip 0 of a 2D texture
+    // would prove almost nothing.
+    //
+    // The mip chain is written by hand rather than filtered, so mip 1 is a
+    // value the gate chose. A backend that computes the wrong offset returns
+    // mip 0's value, or garbage, and either is visibly not 153.
+
+    constexpr engine::u32 kExtent = 32;
+    // mip 0 is two black and two white texels, so its box filter is 127 -
+    // a value none of its own texels has. That is what makes level 1 a real
+    // assertion: reading 0 or 255 means the sampler fell back to level 0, and
+    // reading 127 means the *generated* chain reached the GPU at level 1.
+    //
+    // These are the colour-space gate's own numbers, reused rather than
+    // reinvented: it already asserts build_rgba8_mip_chain produces 127 for
+    // a linear-format split like this one.
+    constexpr engine::u8 kMip0Texel = 0;
+    constexpr engine::u8 kMip1 = 127;
+    constexpr engine::u8 kFace0 = 204;
+    constexpr engine::u8 kOtherFace = 102;
+
+    // Mip 0 only. For a single-layer RGBA8 2D texture the contract says `data`
+    // is level 0 and the backend generates the rest - supplying a full chain
+    // here would be silently refiltered over the top, which is how this gate's
+    // first version read 51 from level 1.
+    const engine::u8 albedo_bytes[2 * 2 * 4] = {
+        0, 0, 0, 255,          255, 255, 255, 255,
+        0, 0, 0, 255,          255, 255, 255, 255,
+    };
+
+    // Six 2x2 faces, slice-major, the whole chain - because a cube is not the
+    // generated case. Face 0 is +X and the only one the shader reads; the rest
+    // carry a different value, so wrong layer indexing reads 102 rather than
+    // merely reading nothing.
+    engine::u8 cube_bytes[6 * 2 * 2 * 4]{};
+    for (engine::u32 face = 0; face < 6; ++face) {
+        const engine::u8 value = face == 0 ? kFace0 : kOtherFace;
+        for (engine::u32 i = 0; i < 4; ++i) {
+            engine::u8* texel = &cube_bytes[(face * 4 + i) * 4];
+            texel[0] = value;
+            texel[1] = value;
+            texel[2] = value;
+            texel[3] = 255;
+        }
+    }
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps);
+
+    engine::rhi::TextureDesc albedo_desc{};
+    albedo_desc.width = 2;
+    albedo_desc.height = 2;
+    albedo_desc.mip_levels = 2;
+    albedo_desc.format = engine::rhi::Format::RGBA8_UNORM;
+    albedo_desc.usage = engine::rhi::TextureUsage::ShaderResource;
+    auto albedo = device.create_texture(albedo_desc, albedo_bytes);
+
+    engine::rhi::TextureDesc cube_desc{};
+    cube_desc.width = 2;
+    cube_desc.height = 2;
+    cube_desc.array_size = 6;
+    cube_desc.dimension = engine::rhi::TextureDimension::Cube;
+    cube_desc.format = engine::rhi::Format::RGBA8_UNORM;
+    cube_desc.usage = engine::rhi::TextureUsage::ShaderResource;
+    auto cube = device.create_texture(cube_desc, cube_bytes);
+
+    engine::rhi::TextureDesc color{};
+    color.width = kExtent;
+    color.height = kExtent;
+    color.format = engine::rhi::Format::RGBA8_UNORM;
+    color.usage = engine::rhi::TextureUsage::RenderTarget;
+    auto target_texture = device.create_texture(color, nullptr);
+
+    engine::rhi::GraphicsPipelineDesc pipeline{};
+    pipeline.vertex_shader = std::span<const engine::u8>(vs.data);
+    pipeline.pixel_shader = std::span<const engine::u8>(ps.data);
+    pipeline.sampled_texture_count = 2;
+    // Immutable, from the desc - the contract's rule, and there is no
+    // set_sampler to bind one per draw.
+    // Point, so a probe reads one texel instead of a blend of four - the
+    // whole point is which level was read, not how it was filtered.
+    pipeline.samplers[0] = engine::rhi::point_clamp_sampler();
+    pipeline.sampler_count = 1;
+    pipeline.color_format = engine::rhi::Format::RGBA8_UNORM;
+    pipeline.depth = engine::rhi::DepthTest::Disabled;
+    pipeline.depth_write = false;
+    pipeline.cull = engine::rhi::CullMode::None;
+    pipeline.debug_name = "parity_texture";
+    auto pso = compiled ? device.create_graphics_pipeline(pipeline) : nullptr;
+
+    std::vector<engine::u8> pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    bool read_ok = false;
+    const bool ready = compiled && albedo && cube && target_texture && pso;
+
+    if (ready) {
+        using State = engine::rhi::ResourceState;
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*target_texture, State::Common, State::RenderTarget);
+
+        engine::rhi::RenderPassInfo pass{};
+        pass.color = target_texture.get();
+        pass.clear_color_target = true;
+        pass.clear_depth = false;
+        cmd.begin_render_pass(pass);
+        cmd.set_pipeline(*pso);
+        // Two sampled textures and a uniform-free pipeline: the point at which
+        // one descriptor set has to carry more than one binding.
+        cmd.set_shader_resource(0, *albedo);
+        cmd.set_shader_resource(1, *cube);
+        cmd.draw(3, 0);
+        cmd.end_render_pass();
+
+        cmd.transition(*target_texture, State::RenderTarget, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        read_ok = device.read_texture(*target_texture, pixels.data(), pixels.size());
+    }
+
+    const engine::u8* probe = &pixels[(16 * static_cast<engine::usize>(kExtent) + 16) * 4];
+    const bool mip_ok = read_ok && probe[0] == kMip1;
+    const bool face_ok = read_ok && probe[1] == kFace0;
+    const bool base_ok = read_ok && probe[2] == kMip0Texel;
+    const bool passed = ready && read_ok && mip_ok && face_ok && base_ok;
+
+    char message[240];
+    std::snprintf(message, sizeof(message),
+        "Parity texture gate [%s]: mip1=%u (want %u) cube_face0=%u (want %u) mip0=%u "
+        "(want %u) (%s)",
+        api, probe[0], kMip1, probe[1], kFace0, probe[2], kMip0Texel,
+        passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_parity_mesh_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
     engine::shaders::ShaderTarget target, const char* api) {

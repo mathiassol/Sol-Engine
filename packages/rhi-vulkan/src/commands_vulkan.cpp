@@ -58,6 +58,10 @@ void VulkanCommandList::begin() {
     event_depth_ = 0;
     last_marker_.clear();
     bound_pipeline_ = nullptr;
+    bound_compute_ = nullptr;
+    bound_stride_ = ~0u;
+    pending_[0].count = 0;
+    pending_[1].count = 0;
     pass_color_ = nullptr;
     if (device_.cmd() == VK_NULL_HANDLE) {
         return;
@@ -250,7 +254,12 @@ void VulkanCommandList::end_render_pass() {
 void VulkanCommandList::set_pipeline(IGraphicsPipeline& pipeline) {
     auto& vk_pipeline = static_cast<VulkanPipeline&>(pipeline);
     bound_pipeline_ = &vk_pipeline;
+    bound_compute_ = nullptr;
     bound_stride_ = ~0u;
+    // A new pipeline means a new layout, so anything queued against the old
+    // one is not merely stale, it is for a different set layout.
+    pending_[0].count = 0;
+    pending_[1].count = 0;
     if (device_.cmd() == VK_NULL_HANDLE) {
         return;
     }
@@ -267,53 +276,150 @@ void VulkanCommandList::set_pipeline(IGraphicsPipeline& pipeline) {
     }
 }
 
+// ── Descriptor accumulation ─────────────────────────────────────────────────
+//
+// One set per set-index per draw, written and bound once. See the note on
+// PendingWrites: allocating a set inside each bind and binding it immediately
+// works for exactly one binding and silently loses the rest.
+
+void VulkanCommandList::queue_write(
+    u32 set, u32 binding, VkDescriptorType type, const VkDescriptorBufferInfo& buffer) {
+    PendingWrites& pending = pending_[set];
+    if (pending.count >= kMaxWritesPerSet) {
+        log(LogLevel::Error, LogChannel::Render,
+            "descriptor writes exceeded the per-set cap - raise kMaxWritesPerSet");
+        return;
+    }
+    pending.slots[pending.count].binding = binding;
+    pending.slots[pending.count].descriptorType = type;
+    pending.buffers[pending.count] = buffer;
+    ++pending.count;
+}
+
+void VulkanCommandList::queue_write(
+    u32 set, u32 binding, VkDescriptorType type, const VkDescriptorImageInfo& image) {
+    PendingWrites& pending = pending_[set];
+    if (pending.count >= kMaxWritesPerSet) {
+        log(LogLevel::Error, LogChannel::Render,
+            "descriptor writes exceeded the per-set cap - raise kMaxWritesPerSet");
+        return;
+    }
+    pending.slots[pending.count].binding = binding;
+    pending.slots[pending.count].descriptorType = type;
+    pending.images[pending.count] = image;
+    ++pending.count;
+}
+
+void VulkanCommandList::flush_descriptors(
+    VkPipelineBindPoint bind_point, VkPipelineLayout layout) {
+    if (layout == VK_NULL_HANDLE || device_.cmd() == VK_NULL_HANDLE) {
+        return;
+    }
+    for (u32 set = 0; set < 2; ++set) {
+        PendingWrites& pending = pending_[set];
+        if (pending.count == 0) {
+            continue;
+        }
+        VkDescriptorSetLayout set_layout = bound_pipeline_ != nullptr
+            ? bound_pipeline_->set_layout(set)
+            : VK_NULL_HANDLE;
+        if (set_layout == VK_NULL_HANDLE) {
+            pending.count = 0;
+            continue;
+        }
+
+        VkDescriptorSetAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocate.descriptorPool = device_.descriptor_pool();
+        allocate.descriptorSetCount = 1;
+        allocate.pSetLayouts = &set_layout;
+        VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+        if (vk_failed(vkAllocateDescriptorSets(device_.handle(), &allocate, &descriptor_set),
+                "descriptor set allocation")) {
+            pending.count = 0;
+            continue;
+        }
+
+        VkWriteDescriptorSet writes[kMaxWritesPerSet]{};
+        for (u32 i = 0; i < pending.count; ++i) {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = descriptor_set;
+            writes[i].dstBinding = pending.slots[i].binding;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = pending.slots[i].descriptorType;
+            const bool is_image =
+                pending.slots[i].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                || pending.slots[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            if (is_image) {
+                writes[i].pImageInfo = &pending.images[i];
+            } else {
+                writes[i].pBufferInfo = &pending.buffers[i];
+            }
+        }
+        vkUpdateDescriptorSets(device_.handle(), pending.count, writes, 0, nullptr);
+        vkCmdBindDescriptorSets(
+            device_.cmd(), bind_point, layout, set, 1, &descriptor_set, 0, nullptr);
+        pending.count = 0;
+    }
+}
+
 void VulkanCommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
-    ENGINE_ASSERT_MSG(bound_pipeline_ != nullptr, "set_constant_buffer with no pipeline bound");
-    if (device_.cmd() == VK_NULL_HANDLE) {
-        return;
-    }
     auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
-
-    // A set per bind, out of the pool begin_frame resets. Enough while this
-    // device submits and waits inside one frame; under real frames in flight
-    // the pool has to be per-slot, which is the parity pass's problem and is
-    // deliberately not pretended to be solved here.
-    VkDescriptorSetLayout layout = bound_pipeline_->set_layout(0);
-    VkDescriptorSetAllocateInfo allocate{};
-    allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocate.descriptorPool = device_.descriptor_pool();
-    allocate.descriptorSetCount = 1;
-    allocate.pSetLayouts = &layout;
-    VkDescriptorSet set = VK_NULL_HANDLE;
-    if (vk_failed(vkAllocateDescriptorSets(device_.handle(), &allocate, &set),
-            "descriptor set allocation")) {
-        return;
-    }
-
-    VkDescriptorBufferInfo buffer_info{};
-    buffer_info.buffer = vk_buffer.handle();
-    buffer_info.offset = offset_bytes;
-    buffer_info.range = vk_buffer.size() - offset_bytes;
-
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = set;
+    VkDescriptorBufferInfo info{};
+    info.buffer = vk_buffer.handle();
+    info.offset = offset_bytes;
+    info.range = vk_buffer.size() - offset_bytes;
     // The base is the register shift, not zero. See pipeline_vulkan.cpp, which
     // built the layout these bindings have to match.
-    write.dstBinding = kBindingBaseUniform + slot;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    write.pBufferInfo = &buffer_info;
-    vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
+    queue_write(0, kBindingBaseUniform + slot, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, info);
+}
 
-    vkCmdBindDescriptorSets(device_.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-        bound_pipeline_->layout(), 0, 1, &set, 0, nullptr);
+void VulkanCommandList::set_shader_resource(u32 slot, ITexture& texture) {
+    auto& vk_texture = static_cast<VulkanTexture&>(texture);
+    VkDescriptorImageInfo info{};
+    info.imageView = vk_texture.view();
+    // The layout the image is actually in, not a guess. A descriptor written
+    // with the wrong layout is a validation error and, worse, undefined reads.
+    info.imageLayout = vk_texture.layout();
+    queue_write(0, kBindingBaseSampledTexture + slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, info);
+}
+
+void VulkanCommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+    VkDescriptorBufferInfo info{};
+    info.buffer = vk_buffer.handle();
+    info.offset = offset_bytes;
+    info.range = vk_buffer.size() - offset_bytes;
+    // Set 1, at the t-shift: a StructuredBuffer is a `t` register in register
+    // space 1, and space 1 is descriptor set 1. Measured, and exactly what the
+    // binding contract predicted for storage buffers.
+    queue_write(1, kBindingBaseSampledTexture + slot, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, info);
+}
+
+void VulkanCommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
+    auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
+    VkDescriptorBufferInfo info{};
+    info.buffer = vk_buffer.handle();
+    info.range = vk_buffer.size();
+    queue_write(0, kBindingBaseStorageTexture + slot, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, info);
+}
+
+void VulkanCommandList::set_unordered_access(u32 slot, ITexture& texture) {
+    auto& vk_texture = static_cast<VulkanTexture&>(texture);
+    VkDescriptorImageInfo info{};
+    info.imageView = vk_texture.view();
+    // A storage image is read and written through GENERAL, which is the one
+    // layout that permits both.
+    info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    queue_write(0, kBindingBaseStorageTexture + slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, info);
 }
 
 void VulkanCommandList::draw(u32 vertex_count, u32 start_vertex) {
     if (device_.cmd() == VK_NULL_HANDLE) {
         return;
     }
+    flush_descriptors(VK_PIPELINE_BIND_POINT_GRAPHICS,
+        bound_pipeline_ != nullptr ? bound_pipeline_->layout() : VK_NULL_HANDLE);
     vkCmdDraw(device_.cmd(), vertex_count, 1, start_vertex, 0);
 }
 
@@ -420,31 +526,6 @@ void VulkanCommandList::set_index_buffer(IBuffer& buffer, usize offset_bytes) {
 }
 
 
-void VulkanCommandList::set_shader_resource(u32 slot, ITexture& texture) {
-    (void)slot;
-    (void)texture;
-    not_implemented("set_shader_resource");
-}
-
-void VulkanCommandList::set_unordered_access(u32 slot, IBuffer& buffer) {
-    (void)slot;
-    (void)buffer;
-    not_implemented("set_unordered_access(IBuffer)");
-}
-
-void VulkanCommandList::set_unordered_access(u32 slot, ITexture& texture) {
-    (void)slot;
-    (void)texture;
-    not_implemented("set_unordered_access(ITexture)");
-}
-
-void VulkanCommandList::set_structured_buffer(u32 slot, IBuffer& buffer, usize offset_bytes) {
-    (void)slot;
-    (void)buffer;
-    (void)offset_bytes;
-    not_implemented("set_structured_buffer");
-}
-
 
 void VulkanCommandList::draw_indexed(
     u32 index_count, u32 start_index, i32 base_vertex, u32 instance_count) {
@@ -455,6 +536,8 @@ void VulkanCommandList::draw_indexed(
     // start_instance because D3D excludes it from SV_InstanceID while Vulkan
     // includes it in gl_InstanceIndex - so the same shader would read different
     // data on each backend. A batch base offset goes in a constant buffer.
+    flush_descriptors(VK_PIPELINE_BIND_POINT_GRAPHICS,
+        bound_pipeline_ != nullptr ? bound_pipeline_->layout() : VK_NULL_HANDLE);
     vkCmdDrawIndexed(device_.cmd(), index_count, instance_count, start_index, base_vertex, 0);
 }
 

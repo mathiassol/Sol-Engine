@@ -2475,10 +2475,26 @@ std::unique_ptr<ITexture> D3D12Device::create_sampled_texture(const TextureDesc&
         upload_data = mip_bytes.data();
     }
 
+    // NOT shader-visible, deliberately.
+    //
+    // set_shader_resource binds a texture by copying its descriptor into the
+    // device's own shader-visible heap, and CopyDescriptorsSimple cannot read
+    // *from* a shader-visible heap - those are CPU-write-only. This heap was
+    // created shader-visible and the copy was invalid every time, which the
+    // debug layer says out loud:
+    //
+    //   CopyDescriptorsSimple: SrcDescriptorRangeStart points to a descriptor
+    //   heap type that is CPU write only, so reading it (in this case a copy
+    //   source) is invalid.
+    //
+    // Latent until now because `--gates` compiles the render graph without
+    // executing the forward pass, so nothing bound a sampled texture with the
+    // debug layer armed. The Vulkan texture-parity gate is the first thing
+    // that did. The GPU handle this heap existed to provide was read by
+    // nothing - D3D12Texture::gpu_view() had no callers at all.
     D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
     heap_desc.NumDescriptors = 1;
     heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ID3D12DescriptorHeap* view_heap = nullptr;
     if (FAILED(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&view_heap)))) {
         return nullptr;
@@ -2516,7 +2532,6 @@ std::unique_ptr<ITexture> D3D12Device::create_sampled_texture(const TextureDesc&
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE cpu = view_heap->GetCPUDescriptorHandleForHeapStart();
-    D3D12_GPU_DESCRIPTOR_HANDLE gpu = view_heap->GetGPUDescriptorHandleForHeapStart();
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
     srv.Format = dxgi;
     srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -2535,8 +2550,11 @@ std::unique_ptr<ITexture> D3D12Device::create_sampled_texture(const TextureDesc&
     set_object_name(resource, "engine/sampled");
     set_object_name(view_heap, "engine/sampled_srv");
 
+    // srv_cpu passed explicitly rather than relying on the constructor's
+    // fallback, which keys on a non-null GPU handle and would now leave the
+    // texture with no shader-resource view at all.
     return std::make_unique<D3D12Texture>(this, resource, desc.width, desc.height,
-        desc.format, view_heap, cpu, false, true, gpu, D3D12_CPU_DESCRIPTOR_HANDLE{}, mips,
+        desc.format, view_heap, cpu, false, true, D3D12_GPU_DESCRIPTOR_HANDLE{}, cpu, mips,
         array_size, desc.dimension);
 }
 

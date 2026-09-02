@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 2 Sep 2026: **30,446 lines** of C++/HLSL in **171 files**, **27
+Measured 2 Sep 2026: **31,027 lines** of C++/HLSL in **172 files**, **27
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the

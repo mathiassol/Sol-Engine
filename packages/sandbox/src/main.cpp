@@ -569,7 +569,9 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
 
     std::string parity_path;
     std::string mesh_path;
+    std::string texture_path;
     (void)resolve_content(loader, kParityMeshGateShader, mesh_path);
+    (void)resolve_content(loader, kParityTextureGateShader, texture_path);
     engine::u32 d3d12_lit = 0;
     if (!resolve_content(loader, kBackendParityGateShader, parity_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
@@ -614,6 +616,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                 engine::shaders::ShaderTarget::Dxil, "d3d12")
             && fail_on_gate) {
             return false;
+        } else if (!texture_path.empty()
+            && !run_parity_texture_gate(*offscreen_device, compiler, texture_path,
+                engine::shaders::ShaderTarget::Dxil, "d3d12")
+            && fail_on_gate) {
+            return false;
         }
     }
 #endif
@@ -640,6 +647,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
             return false;
         } else if (!mesh_path.empty()
             && !run_parity_mesh_gate(*vk_device, compiler, mesh_path,
+                engine::shaders::ShaderTarget::Spirv, "vulkan")
+            && fail_on_gate) {
+            return false;
+        } else if (!texture_path.empty()
+            && !run_parity_texture_gate(*vk_device, compiler, texture_path,
                 engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;

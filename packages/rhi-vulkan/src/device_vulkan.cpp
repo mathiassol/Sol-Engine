@@ -1,5 +1,7 @@
 #include "device_vulkan.hpp"
 
+#include <engine/math/mip.hpp>
+
 #include <functional>
 #include <string>
 #include <unordered_set>
@@ -201,6 +203,12 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 64},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64},
+        // Immutable samplers still consume a pool slot when a set carrying
+        // them is allocated, even though nothing writes them. Leaving this out
+        // is a validation warning that some implementations turn into
+        // VK_ERROR_OUT_OF_POOL_MEMORY and others silently tolerate - which is
+        // the worst kind of difference to ship.
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 64},
     };
     VkDescriptorPoolCreateInfo descriptor_info{};
     descriptor_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -443,22 +451,64 @@ std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, con
     return std::make_unique<VulkanBuffer>(device_, buffer, memory, desc.size, mapped);
 }
 
+// What each usage needs from the image, and what it must be left in.
+//
+// The named combinations are the contract's, not this backend's - a storage
+// texture nothing ever reads has no use, so there is no bare Storage. Every
+// sampled kind also gets TRANSFER_DST because that is how initial data
+// arrives, and the render-target kinds get TRANSFER_SRC because read_texture
+// copies out of them.
+struct ImageUsagePlan {
+    VkImageUsageFlags usage = 0;
+    // Where the image is left once created and uploaded. A sampled texture is
+    // left ready to sample, matching the other backend, which barriers to its
+    // final state at the end of the upload rather than leaving that to a caller
+    // who would then have to transition from UNDEFINED and lose the data.
+    VkImageLayout settled = VK_IMAGE_LAYOUT_UNDEFINED;
+    bool ok = true;
+};
+
+ImageUsagePlan plan_image_usage(TextureUsage usage) {
+    ImageUsagePlan plan{};
+    switch (usage) {
+    case TextureUsage::RenderTarget:
+        plan.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        break;
+    case TextureUsage::DepthStencil:
+        plan.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        break;
+    case TextureUsage::ShaderResource:
+        plan.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        plan.settled = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        break;
+    case TextureUsage::DepthShaderResource:
+        plan.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        break;
+    case TextureUsage::ColorShaderResource:
+        plan.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        break;
+    case TextureUsage::StorageShaderResource:
+        plan.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        break;
+    }
+    plan.ok = plan.usage != 0;
+    return plan;
+}
+
+VkImageViewType to_view_type(TextureDimension dimension) {
+    switch (dimension) {
+    case TextureDimension::Tex2D:      return VK_IMAGE_VIEW_TYPE_2D;
+    case TextureDimension::Tex2DArray: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    case TextureDimension::Cube:       return VK_IMAGE_VIEW_TYPE_CUBE;
+    }
+    return VK_IMAGE_VIEW_TYPE_2D;
+}
+
 std::unique_ptr<ITexture> VulkanDevice::create_texture(
     const TextureDesc& desc, const void* data) {
     if (device_ == VK_NULL_HANDLE) {
-        return nullptr;
-    }
-    if (data != nullptr) {
-        not_implemented("create_texture with initial data");
-        return nullptr;
-    }
-    if (desc.usage != TextureUsage::RenderTarget) {
-        not_implemented("create_texture (non-render-target usage)");
-        return nullptr;
-    }
-    if (desc.dimension != TextureDimension::Tex2D || desc.array_size != 1
-        || desc.mip_levels != 1) {
-        not_implemented("create_texture (cube, array or mip chain)");
         return nullptr;
     }
 
@@ -467,22 +517,33 @@ std::unique_ptr<ITexture> VulkanDevice::create_texture(
         log(LogLevel::Error, LogChannel::Render, "create_texture: unsupported format");
         return nullptr;
     }
+    const ImageUsagePlan plan = plan_image_usage(desc.usage);
+    if (!plan.ok) {
+        log(LogLevel::Error, LogChannel::Render, "create_texture: unsupported usage");
+        return nullptr;
+    }
+    // Cube is six faces, so the layer count comes from the dimension rather
+    // than from array_size alone - the contract says Cube is 6 and Tex2D is 1.
+    const u32 layers = desc.dimension == TextureDimension::Cube ? 6u : desc.array_size;
+    const u32 mips = desc.mip_levels == 0 ? 1u : desc.mip_levels;
 
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {desc.width, desc.height, 1};
-    image_info.mipLevels = 1;
-    image_info.arrayLayers = 1;
+    image_info.mipLevels = mips;
+    image_info.arrayLayers = layers;
     image_info.samples = static_cast<VkSampleCountFlagBits>(
         desc.sample_count == 0 ? 1u : desc.sample_count);
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    // TRANSFER_SRC so read_texture can copy out of it. On D3D12 that needs no
-    // creation flag at all, which is the kind of asymmetry a second backend is
-    // for finding.
-    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    image_info.usage = plan.usage;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (desc.dimension == TextureDimension::Cube) {
+        // Without this a cube view of the image is a validation error, and the
+        // sky and IBL passes are the only things that would notice.
+        image_info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    }
 
     VkImage image = VK_NULL_HANDLE;
     if (vk_failed(vkCreateImage(device_, &image_info, nullptr, &image), "image creation")) {
@@ -516,13 +577,11 @@ std::unique_ptr<ITexture> VulkanDevice::create_texture(
     VkImageViewCreateInfo view_info{};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view_info.image = image;
-    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.viewType = to_view_type(desc.dimension);
     view_info.format = format;
-    view_info.subresourceRange.aspectMask = desc.format == Format::D32_FLOAT
-        ? VK_IMAGE_ASPECT_DEPTH_BIT
-        : VK_IMAGE_ASPECT_COLOR_BIT;
-    view_info.subresourceRange.levelCount = 1;
-    view_info.subresourceRange.layerCount = 1;
+    view_info.subresourceRange.aspectMask = aspect_of(desc.format);
+    view_info.subresourceRange.levelCount = mips;
+    view_info.subresourceRange.layerCount = layers;
     VkImageView view = VK_NULL_HANDLE;
     if (vk_failed(vkCreateImageView(device_, &view_info, nullptr, &view), "image view")) {
         vkFreeMemory(device_, memory, nullptr);
@@ -530,7 +589,131 @@ std::unique_ptr<ITexture> VulkanDevice::create_texture(
         return nullptr;
     }
 
-    return std::make_unique<VulkanTexture>(device_, image, memory, view, desc);
+    auto texture = std::make_unique<VulkanTexture>(device_, image, memory, view, desc);
+    if (data != nullptr) {
+        // The contract's asymmetry, matched exactly: for a single-layer RGBA8
+        // 2D texture `data` is mip 0 and the chain is generated here; for
+        // anything else `data` is the whole chain. Getting this backwards
+        // uploads garbage into every level past the first, and nothing about
+        // the resulting image looks wrong until something samples a low mip.
+        const bool is_srgb = desc.format == Format::RGBA8_UNORM_SRGB;
+        const bool rgba8 = desc.format == Format::RGBA8_UNORM || is_srgb;
+        const bool generate = rgba8 && layers == 1 && mips > 1;
+        std::vector<u8> generated;
+        if (generate) {
+            generated = math::build_rgba8_mip_chain(data, desc.width, desc.height, mips,
+                is_srgb);
+        }
+        if (!upload_to_image(*texture, generate ? generated.data() : data)) {
+            return nullptr;
+        }
+    } else if (plan.settled != VK_IMAGE_LAYOUT_UNDEFINED) {
+        // A sampled texture with no initial data still has to leave UNDEFINED
+        // before anything samples it, and there is no upload to do it.
+        if (!settle_image(*texture, plan.settled)) {
+            return nullptr;
+        }
+    }
+    return texture;
+}
+
+// The source layout is slice-major then mip, tightly packed - the same order
+// the other backend walks, and the same order build_rgba8_mip_chain produces.
+// Vulkan copies straight out of it: bufferRowLength 0 means tightly packed, so
+// unlike D3D12 there is no 256-byte row pitch to repack around.
+bool VulkanDevice::upload_to_image(VulkanTexture& texture, const void* data) {
+    const u32 bytes_per_texel = format_bytes(texture.format());
+    if (bytes_per_texel == 0) {
+        log(LogLevel::Error, LogChannel::Render, "upload_to_image: format cannot be packed");
+        return false;
+    }
+    const u32 layers = texture.array_size();
+    const u32 mips = texture.mip_levels();
+
+    std::vector<VkBufferImageCopy> regions;
+    usize total = 0;
+    for (u32 layer = 0; layer < layers; ++layer) {
+        u32 w = texture.width();
+        u32 h = texture.height();
+        for (u32 mip = 0; mip < mips; ++mip) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = total;
+            region.imageSubresource.aspectMask = aspect_of(texture.format());
+            region.imageSubresource.mipLevel = mip;
+            region.imageSubresource.baseArrayLayer = layer;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {w, h, 1};
+            regions.push_back(region);
+            total += static_cast<usize>(w) * h * bytes_per_texel;
+            w = w > 1 ? w / 2 : 1;
+            h = h > 1 ? h / 2 : 1;
+        }
+    }
+
+    const VkImageLayout settled = plan_image_usage(texture.usage()).settled;
+    const VkImageLayout final_layout = settled != VK_IMAGE_LAYOUT_UNDEFINED
+        ? settled
+        : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    return stage_and_submit(data, total, [&](VkCommandBuffer cmd, VkBuffer staging) {
+        barrier_image(cmd, texture, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT);
+        vkCmdCopyBufferToImage(cmd, staging, texture.image(),
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<u32>(regions.size()),
+            regions.data());
+        barrier_image(cmd, texture, final_layout, VK_ACCESS_2_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+    });
+}
+
+// Moves an image out of UNDEFINED with no data to copy. A one-command submit,
+// which is the same cost as an upload and only happens at creation.
+bool VulkanDevice::settle_image(VulkanTexture& texture, VkImageLayout layout) {
+    // stage_and_submit needs something to stage; one byte is the smallest
+    // honest ask, and the record callback ignores the buffer entirely.
+    const u8 unused = 0;
+    return stage_and_submit(&unused, 1, [&](VkCommandBuffer cmd, VkBuffer staging) {
+        (void)staging;
+        barrier_image(cmd, texture, layout, VK_ACCESS_2_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+    });
+}
+
+// One barrier, from whatever layout the image is actually in to the one asked
+// for, updating the tracked layout. The old layout comes from the image rather
+// than from a caller's belief about it - see VulkanTexture::layout().
+void VulkanDevice::barrier_image(VkCommandBuffer cmd, VulkanTexture& texture,
+    VkImageLayout to, VkAccessFlags2 access, VkPipelineStageFlags2 stage) {
+    VkImageMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    barrier.dstStageMask = stage;
+    barrier.dstAccessMask = access;
+    barrier.oldLayout = texture.layout();
+    barrier.newLayout = to;
+    barrier.image = texture.image();
+    barrier.subresourceRange.aspectMask = aspect_of(texture.format());
+    barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+    barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    VkDependencyInfo dependency{};
+    dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.imageMemoryBarrierCount = 1;
+    dependency.pImageMemoryBarriers = &barrier;
+    vkCmdPipelineBarrier2(cmd, &dependency);
+    texture.set_layout(to);
+}
+
+std::unique_ptr<ISampler> VulkanDevice::create_sampler(const SamplerDesc& desc) {
+    if (device_ == VK_NULL_HANDLE) {
+        return nullptr;
+    }
+    const VkSampler sampler = create_vulkan_sampler(device_, desc);
+    if (sampler == VK_NULL_HANDLE) {
+        return nullptr;
+    }
+    return std::make_unique<VulkanSampler>(device_, sampler);
 }
 
 void VulkanDevice::write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) {
@@ -747,12 +930,6 @@ std::unique_ptr<IComputePipeline> VulkanDevice::create_compute_pipeline(
     const ComputePipelineDesc& desc) {
     (void)desc;
     not_implemented("create_compute_pipeline");
-    return nullptr;
-}
-
-std::unique_ptr<ISampler> VulkanDevice::create_sampler(const SamplerDesc& desc) {
-    (void)desc;
-    not_implemented("create_sampler");
     return nullptr;
 }
 
