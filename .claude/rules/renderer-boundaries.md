@@ -31,13 +31,19 @@ swap test this engine is built to pass.
 - Every pass declares its reads/writes on the graph explicitly. Avoid pass
   side effects that aren't expressed as a graph dependency.
 - **Two** GPU backends since 2 Sep 2026: `rhi-d3d12` and `rhi-vulkan`. D3D12
-  remains the daily driver and the only shipped player backend, but since
-  RHI #24 `rhi-vulkan` presents and runs the **whole** gate suite:
-  `solengine gates-vk` is `--rhi vulkan --gates` with the validation layer
-  armed, and a `-DENGINE_RHI_D3D12=OFF` configure builds and runs the engine on
-  Vulkan alone. Every `--gates` run also stands a Vulkan device up inside it —
-  `Backend parity gate` draws one HLSL source through both devices and asserts
-  byte-identical readback.
+  remains the daily driver and the only shipped player backend. Since RHI #24
+  `rhi-vulkan` runs the **whole gate suite** — `solengine gates-vk` is
+  `--rhi vulkan --gates` with the validation layer armed — and a
+  `-DENGINE_RHI_D3D12=OFF` configure builds and passes it standalone. Every
+  `--gates` run also stands a Vulkan device up inside it: `Backend parity gate`
+  draws one HLSL source through both devices and asserts byte-identical
+  readback.
+  - **It does not yet render a live frame.** The present reports
+    `VK_ERROR_DEVICE_LOST` on the first windowed frame, which is RHI #25. The
+    gates cannot see it because they never call `Engine::render()`, and that is
+    the lesson worth carrying: a green suite is not a working backend. Renderer
+    #16 found it by looking at a frame, which is the only way it could have
+    been found.
   - So a contract change costs **two** implementations, and **two gate runs**:
     `solengine gates-gpu` and `solengine gates-vk`, each with its debug layer
     on. Shipping GPU work with only one of them is how a defect reaches the
