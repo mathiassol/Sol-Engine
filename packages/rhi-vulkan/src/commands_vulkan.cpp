@@ -6,7 +6,12 @@ namespace engine::rhi::vulkan {
 // Vulkan splits them into three. So this is not a lookup table, it is the
 // translation - and the three results come back together because a barrier that
 // gets two of them right is a barrier that does nothing.
-BarrierState to_vulkan_barrier(ResourceState state) {
+VkImageAspectFlags aspect_of(Format format) {
+    return format == Format::D32_FLOAT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
+BarrierState to_vulkan_barrier(ResourceState state, VkImageAspectFlags aspect) {
+    const bool depth = (aspect & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
     switch (state) {
     case ResourceState::Common:
         return {VK_IMAGE_LAYOUT_UNDEFINED, VK_ACCESS_2_NONE,
@@ -28,7 +33,12 @@ BarrierState to_vulkan_barrier(ResourceState state) {
         return {VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_COPY_BIT};
     case ResourceState::ShaderRead:
-        return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_SHADER_READ_BIT,
+        // The one state that means two layouts. A sampled shadow map reaches
+        // here with the depth aspect, and SHADER_READ_ONLY_OPTIMAL on a depth
+        // image is a validation error rather than a wrong picture.
+        return {depth ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL
+                      : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_ACCESS_2_SHADER_READ_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
     case ResourceState::Storage:
         return {VK_IMAGE_LAYOUT_GENERAL,
@@ -72,8 +82,9 @@ void VulkanCommandList::transition(ITexture& texture, ResourceState from, Resour
         return;
     }
     auto& vk_texture = static_cast<VulkanTexture&>(texture);
-    const BarrierState before = to_vulkan_barrier(from);
-    const BarrierState after = to_vulkan_barrier(to);
+    const VkImageAspectFlags aspect = aspect_of(vk_texture.format());
+    const BarrierState before = to_vulkan_barrier(from, aspect);
+    const BarrierState after = to_vulkan_barrier(to, aspect);
 
     VkImageMemoryBarrier2 barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -84,9 +95,7 @@ void VulkanCommandList::transition(ITexture& texture, ResourceState from, Resour
     barrier.oldLayout = before.layout;
     barrier.newLayout = after.layout;
     barrier.image = vk_texture.image();
-    barrier.subresourceRange.aspectMask = vk_texture.format() == Format::D32_FLOAT
-        ? VK_IMAGE_ASPECT_DEPTH_BIT
-        : VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.aspectMask = aspect;
     barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
     barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
 
@@ -102,8 +111,11 @@ void VulkanCommandList::transition(IBuffer& buffer, ResourceState from, Resource
         return;
     }
     auto& vk_buffer = static_cast<VulkanBuffer&>(buffer);
-    const BarrierState before = to_vulkan_barrier(from);
-    const BarrierState after = to_vulkan_barrier(to);
+    // A buffer has no aspect and no layout. Colour is passed because the
+    // parameter is not optional, and only the access and stage halves of the
+    // result are read below.
+    const BarrierState before = to_vulkan_barrier(from, VK_IMAGE_ASPECT_COLOR_BIT);
+    const BarrierState after = to_vulkan_barrier(to, VK_IMAGE_ASPECT_COLOR_BIT);
 
     // A buffer has no layout, so only the access and stage halves of the
     // translation apply. Using the image path for a buffer is a validation

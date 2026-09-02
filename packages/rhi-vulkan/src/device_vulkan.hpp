@@ -48,7 +48,16 @@ struct BarrierState {
     VkPipelineStageFlags2 stage;
 };
 
-BarrierState to_vulkan_barrier(ResourceState state);
+// The aspect is a parameter because one state means two layouts: ShaderRead on
+// a colour image is SHADER_READ_ONLY_OPTIMAL and on a depth image is
+// DEPTH_READ_ONLY_OPTIMAL. Passing it in rather than deriving the aspect
+// separately at the call site keeps one fact in one place - the two derivations
+// could disagree, and the shadow map is the first thing that would notice.
+BarrierState to_vulkan_barrier(ResourceState state, VkImageAspectFlags aspect);
+
+// The aspect an image's format implies. Depth formats sample and attach through
+// the depth aspect; everything else through colour.
+VkImageAspectFlags aspect_of(Format format);
 
 // resources.hpp's binding contract, as numbers. Built into the descriptor-set
 // layout in pipeline_vulkan.cpp and written to in commands_vulkan.cpp, so they
