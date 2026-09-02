@@ -61,6 +61,33 @@ Reports use two code systems: a dimension letter plus a number is a **finding**
 a grade. Both are tabulated in [docs/analysis/README.md](docs/analysis/README.md),
 which is also where a `(analizeMax D3)` commit tag can be looked up.
 
+## The `aim` skills — prefer these
+
+A separate service at `../AI-Mangment` now owns the data and the presentation of
+all of this: it holds the rubric, validates an audit against it, mirrors the
+roadmap, and computes the graph. **Prefer the `aim-*` skills.** They do the same
+jobs with the derived facts computed instead of re-derived, and with no page for
+an agent to author:
+
+| Prefer | Over | What moved |
+|--------|------|-----------|
+| `/aim-next` | `/whatnow` | Leverage, audit staleness and the graph verdict come from one call, not a `grep` loop that once reported two false dependency loops |
+| `/aim-row` | `/roadmap` | The row, its blockers, what waits on it and its Do-not lines come from the server |
+| `/aim-ship` | `/ship-feature` | The server names which Later rows just became Ready, and round-trips the map to catch a hand-edit the parser reads differently. No artifact to republish |
+| `/aim-audit` | `/analizeMax` | The rubric is fetched, nine validation rules are enforced server-side, and no HTML is written |
+
+Everything is reached through one wrapper — `pwsh -NoProfile -File tools/aim.ps1
+<cmd>` — which resolves `aim` from PATH, npm's global directory, or the sibling
+checkout via node. Skills run in a non-interactive shell where npm's shim
+directory is not on PATH, so calling `aim` bare is what fails. Start with
+`tools/aim.ps1 doctor`.
+
+The older skills still work and are not deprecated: **`/analizeMax-execute` is
+still the only way to apply a plan**, since the service has no plan endpoints by
+decision, and `/aim-audit` writes `docs/analysis/PLAN.md` for it. The repo stays
+canonical for the roadmap file, the gates and the rules — if the service is down,
+commit anyway and re-import later.
+
 ## Non-negotiables
 
 These outrank convenience every time, regardless of what a session's context

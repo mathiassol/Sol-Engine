@@ -30,6 +30,12 @@ x64/
 *.swo
 *~
 
+# AI Management CLI — machine-local. Holds the base URL, the project slug and
+# (later) an API token, plus .aim/outbox/ for writes queued while the server
+# was unreachable. `aim init` recreates it; the CLI also works with no config
+# at all against a localhost server holding one project.
+.aim/
+
 # Claude Code — personal/local, never shared
 CLAUDE.local.md
 .claude/settings.local.json
