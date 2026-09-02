@@ -1,7 +1,7 @@
 # A second GPU backend — `rhi-vulkan`, offscreen first
 
 Date: 2 Sep 2026
-Status: spec
+Status: implemented
 
 ENGINE_MAP **RHI #12** (`rhi-vulkan`) and its stated prerequisite **Shaders #5**
 (SPIR-V compile path). Both were **Far**; the 1 Sep contract pass (RHI #15

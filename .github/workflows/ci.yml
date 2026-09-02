@@ -76,8 +76,16 @@ jobs:
       # generator keeps CI working across image updates instead of breaking the
       # day the image moves. Presets are used here so CI and the README cannot
       # drift apart on everything *else* — architecture, binary dir, options.
+      # ENGINE_RHI_VULKAN is ON by default and stated here anyway, so this job
+      # fails loudly if that default ever changes. It is what stops a second
+      # backend rotting: rhi-vulkan vendors its own headers and volk resolves
+      # the API at runtime, so it compiles on a runner with no Vulkan SDK.
+      #
+      # Compiles, not runs. There is no GPU here and no SDK, so no device and
+      # no SPIR-V compiler - exactly the two reasons --gates is already not run
+      # in this job. See the NOTE below.
       - name: Configure
-        run: cmake --preset ci-build
+        run: cmake --preset ci-build --fresh -DENGINE_RHI_VULKAN=ON
 
       - name: Build Debug
         run: cmake --build --preset ci-debug
@@ -184,8 +192,13 @@ jobs:
   # the D3D12 option while debug-draw linked it unconditionally.
   #
   # Configure only: with a backend switched off the sandbox does not compile
-  # (its DXC and PNG includes are unguarded). That is a real gap, but a
-  # separate one — this job checks that the CMake graph stays coherent.
+  # (its PNG includes are unguarded). That is a real gap, but a separate one —
+  # this job checks that the CMake graph stays coherent.
+  #
+  # `no-vulkan` joined `no-d3d12` with the second backend. The modularity claim
+  # now has two backends to keep honest, and shaders-dxc is shared between them
+  # (DXIL for one, SPIR-V for the other), so switching either off must still
+  # leave a coherent graph.
   configure-options:
     name: Configure (${{ matrix.preset }})
     runs-on: windows-latest
@@ -194,6 +207,7 @@ jobs:
       matrix:
         preset:
           - no-d3d12
+          - no-vulkan
           - no-win32
           - no-sandbox
           - no-game

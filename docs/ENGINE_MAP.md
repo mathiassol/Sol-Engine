@@ -23,7 +23,7 @@ research to shipped.
 | Later | Blocked: **Finish first** names a map row that is not Done, **or** a measurable wall that has not been hit |
 | Far | Valid engine work; do not start until a game actually hurts without it |
 
-86 Done · 39 Ready · 98 Later · 60 Far.
+88 Done · 40 Ready · 98 Later · 58 Far.
 Read the Status column in the tables — it is the only copy. A hand-written
 summary would drift from the tables under it.
 
@@ -124,7 +124,7 @@ Window, OS services, input devices. Win32 is the daily driver.
 
 Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 
-*11 done · 2 ready · 23 rows.*
+*12 done · 3 ready · 24 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -141,22 +141,23 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 17 | GPU crash breadcrumbs (D3D12 DRED) captured on device-removed | **Ready** |  |
 | 18 | MSAA render targets on `TextureDesc` | **Done** |  |
 | 9 | UAV textures (compute write) | **Done** |  |
+| 24 | `rhi-vulkan` parity: surface, swapchain, and every virtual the offscreen slice left calling `not_implemented` — then `--rhi vulkan` and the whole gate suite on it | **Ready** |  |
 | 19 | Copy queue: uploads off the graphics timeline | Later | Uploads big enough to stall the graphics queue. Async loading is what would keep a copy queue busy, and it can start on the graphics queue. |
 | 20 | Transient memory pool / resource aliasing for graph transients | Later | Renderer #18 depth+normals — enough transients that peak VRAM is the wall. |
 | 21 | Indirect draw (`ExecuteIndirect`) on the contract | Later | A pass submitting more draws than the CPU can afford to record. Instanced draws already cut that cost a long way. |
 | 22 | HDR output: HDR10 / scRGB swapchain formats | Later | Platform #11 monitor enumeration, to know the display can do it. |
 | 23 | Occlusion and pipeline-statistics query pools | Later | Debug #6 memory/stat reporting, which is what would read them. |
 | 8 | Dynamic sampler tables (`set_sampler` actually binds) | Later | A shader that **cannot** use static `SamplerDesc` on the PSO — many unique samplers, bindless-ish materials. `set_sampler` is a stub on purpose. |
-| 10 | Timestamp queries already exist; expose them on `IRHI` if a second backend needs them | Far | RHI #12 (`rhi-vulkan`). D3D12 already timestamps for F3. |
+| 10 | Timestamp queries already exist; expose them on `IRHI` if a second backend needs them | Far | Still nothing needs them: `rhi-vulkan` exists but reports `last_gpu_time_ms()` as 0 and no gate reads it. The blocker is a *consumer*, not a backend. |
 | 11 | Mesh shaders / bindless heaps | Far |  |
-| 12 | `rhi-vulkan` (SPIR-V compiler + this contract; D3D12 stays daily driver) | Far | Shaders #5 SPIR-V path. **Platform #9 was dropped from this list on 1 Sep 2026** — Vulkan runs on Windows, so a non-Windows platform package is not a prerequisite, and doing the second backend on Windows first validates the contract against one new variable instead of two. RHI #15, #9 and #18 went in ahead of it deliberately: each changes the contract and is API-neutral, so it costs one implementation now and two later. |
-| 13 | Metal / console backends | Far | RHI #12 proves the contract survives a second backend first. |
+| 12 | `rhi-vulkan` offscreen: SPIR-V, one contract, byte-identical readback against D3D12 | **Done** |  |
+| 13 | Metal / console backends | Far | RHI #24 first, not #12. #12 proved the contract survives a second API - same shader source, byte-identical readback - but only for the surface one triangle needs. A third backend should be written against a contract a second one has taken all the way through a frame, or it will discover the same gaps twice. |
 
 ---
 
 ## 4. Shaders
 
-*3 done · 3 ready · 10 rows.*
+*4 done · 3 ready · 10 rows.*
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
@@ -168,7 +169,7 @@ Interface first, one production impl. Vulkan is a **package**, not a rewrite.
 | 10 | Emit shader PDBs so PIX can show source | **Ready** |  |
 | 4 | Permutations / #defines as data (not a new .hlsl per knob) | Later | Assets #10 skins **or** Renderer #16 alpha — a second `.hlsl` path. One `forward.hlsl` with PBR constants is enough until then. |
 | 6 | Shader reflection (auto root layout from bytecode) | Later | Enough PSOs that hand-written root layouts hurt. Few pipelines today; layouts stay written by hand. |
-| 5 | SPIR-V compile path (for Vulkan) | Far | A second GPU backend actually being started. D3D12 is the daily driver and `ShaderTarget` already rejects SPIR-V. This is the **first** step of that work, not a consequence of it — the Vulkan backend row waits on this one. |
+| 5 | SPIR-V compile path (for Vulkan) | **Done** |  |
 | 7 | Node material graph (tools) | Far | Shaders #4 permutations as data — a graph emits permutations, so that has to work first. |
 
 ---

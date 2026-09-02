@@ -30,9 +30,16 @@ swap test this engine is built to pass.
   `ExtractInstance` and hands the renderer only that snapshot.
 - Every pass declares its reads/writes on the graph explicitly. Avoid pass
   side effects that aren't expressed as a graph dependency.
-- One production GPU backend (`rhi-d3d12`) until a second is justified as its
-  own package (e.g. `rhi-vulkan`) — grow the `rhi` interface now, implement a
-  second backend only when actually needed.
+- **Two** GPU backends since 2 Sep 2026: `rhi-d3d12` and `rhi-vulkan`. D3D12
+  remains the daily driver; `rhi-vulkan` is offscreen-only (no swapchain) and
+  exists to keep the contract honest, which it does on every `--gates` run —
+  `Backend parity gate` draws one HLSL source through both devices and asserts
+  byte-identical readback.
+  - So a contract change now costs **two** implementations. That is the reason
+    the 1 Sep pass front-loaded RHI #15, #9 and #18: they were API-neutral and
+    cheaper with one backend present.
+  - A third backend waits on RHI #24 (Vulkan parity), not on #12. See
+    ENGINE_MAP.md category 3.
 
 ## Adding a render pass — the whole checklist
 

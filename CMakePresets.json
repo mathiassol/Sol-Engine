@@ -42,6 +42,12 @@
       "cacheVariables": { "ENGINE_RHI_D3D12": "OFF" }
     },
     {
+      "name": "no-vulkan",
+      "inherits": "options-off",
+      "displayName": "ENGINE_RHI_VULKAN=OFF (configure only)",
+      "cacheVariables": { "ENGINE_RHI_VULKAN": "OFF" }
+    },
+    {
       "name": "no-win32",
       "inherits": "options-off",
       "displayName": "ENGINE_PLATFORM_WIN32=OFF (configure only)",

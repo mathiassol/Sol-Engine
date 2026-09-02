@@ -90,7 +90,7 @@ question about which side is wrong.
   `packages/sandbox/src/gates/gate_registry.cpp`,
   `packages/sandbox/src/main.cpp`
 
-- [ ] **Step 1.1: Write the shader both backends will draw**
+- [x] **Step 1.1: Write the shader both backends will draw**
 
 `packages/sandbox/content/shaders/backend_parity_gate.hlsl`:
 
@@ -138,7 +138,7 @@ float4 ps_main(VSOutput input) : SV_TARGET {
 }
 ```
 
-- [ ] **Step 1.2: Extend the contract**
+- [x] **Step 1.2: Extend the contract**
 
 In `packages/rhi/include/engine/rhi/rhi.hpp`, replace the `window_handle` line
 of `DeviceDesc`:
@@ -181,7 +181,7 @@ and immediately after `read_buffer`:
     virtual bool read_texture(ITexture& texture, void* out, usize size) = 0;
 ```
 
-- [ ] **Step 1.3: Write the gate, and watch it fail to compile**
+- [x] **Step 1.3: Write the gate, and watch it fail to compile**
 
 The gate is parameterised by device on purpose: **this same function runs
 against the Vulkan device in Task 4.** Add to
@@ -333,7 +333,7 @@ bool run_backend_parity_gate(engine::rhi::IDevice& device,
 }
 ```
 
-- [ ] **Step 1.4: The shared coverage count**
+- [x] **Step 1.4: The shared coverage count**
 
 In `packages/sandbox/src/sandbox_common.hpp`, beside the other shader paths:
 
@@ -367,7 +367,7 @@ engine::u32 count_lit_texels(const engine::u8* rgba, engine::u32 width, engine::
 }
 ```
 
-- [ ] **Step 1.5: Declare and register the gate**
+- [x] **Step 1.5: Declare and register the gate**
 
 `packages/sandbox/src/gates/gates.hpp`, beside the other RHI gates:
 
@@ -385,7 +385,7 @@ bool run_backend_parity_gate(engine::rhi::IDevice& device,
     {"run_backend_parity_gate", GateKind::Gpu, nullptr},
 ```
 
-- [ ] **Step 1.6: Call it with an offscreen D3D12 device**
+- [x] **Step 1.6: Call it with an offscreen D3D12 device**
 
 In `packages/sandbox/src/main.cpp`, after the MSAA gate call site:
 
@@ -424,7 +424,7 @@ In `packages/sandbox/src/main.cpp`, after the MSAA gate call site:
     }
 ```
 
-- [ ] **Step 1.7: Build, and confirm the gate fails for the right reason**
+- [x] **Step 1.7: Build, and confirm the gate fails for the right reason**
 
 ```bash
 cmake --build build --config Debug
@@ -433,7 +433,7 @@ cmake --build build --config Debug
 Expected: **compile errors** — `offscreen()` and `read_texture()` are new pure
 virtuals with no `D3D12Device` override. That is the red.
 
-- [ ] **Step 1.8: The D3D12 offscreen branch**
+- [x] **Step 1.8: The D3D12 offscreen branch**
 
 In `packages/rhi-d3d12/src/device_d3d12.hpp`, add to `D3D12Device`'s public
 section:
@@ -481,7 +481,7 @@ first line:
 `present()` (line ~2763) and `resize()` (line ~1501) already guard on
 `!swapchain_` — leave them.
 
-- [ ] **Step 1.9: `read_texture` on D3D12**
+- [x] **Step 1.9: `read_texture` on D3D12**
 
 Append to `packages/rhi-d3d12/src/device_d3d12.cpp`:
 
@@ -590,7 +590,7 @@ assumed — hence the explicit `wait_for_fence_blocking` above the `Map`, which
 is the same shape `upload_to_default` uses at
 `device_d3d12.cpp:1996`.
 
-- [ ] **Step 1.10: Build and watch the gate go from FAIL to pass**
+- [x] **Step 1.10: Build and watch the gate go from FAIL to pass**
 
 ```bash
 cmake --build build --config Debug
@@ -616,7 +616,7 @@ Which is the same 2,016 the MSAA gate's single-sample reference already
 produces for the same triangle — so the new API reaches the number the old
 workaround reached.
 
-- [ ] **Step 1.11: Falsify it**
+- [x] **Step 1.11: Falsify it**
 
 Change the shader's `corners` to the *other* half — `float2(1.0, -1.0)` in place
 of `float2(-1.0, 1.0)` — rebuild, and confirm the gate goes red at
@@ -628,7 +628,7 @@ window the gate allows. So the coverage count alone would have *passed* a fully
 inverted image. Only the mirror probes caught it. That is the concrete reason
 the probes are the assertion and the count is only reported.
 
-- [ ] **Step 1.12: Debug layer, then commit**
+- [x] **Step 1.12: Debug layer, then commit**
 
 ```bash
 ENGINE_GPU_DEBUG=1 ./build/bin/Debug/sandbox.exe --gates
@@ -661,7 +661,7 @@ two has pushed a red invariant before.
   `packages/sandbox/src/main.cpp`,
   `CMakeLists.txt`
 
-- [ ] **Step 2.1: Write the gate first**
+- [x] **Step 2.1: Write the gate first**
 
 In `packages/sandbox/src/gates/gates_rhi.cpp`:
 
@@ -747,7 +747,7 @@ why the two gates share one resolved path rather than each resolving its own.
 `GateKind::Gpu` even though it touches no device: it needs a DLL that ships with
 a GPU SDK, so it cannot run in the headless Linux job.
 
-- [ ] **Step 2.2: Run it and watch it fail**
+- [x] **Step 2.2: Run it and watch it fail**
 
 ```bash
 ./build/bin/Debug/sandbox.exe --gates
@@ -756,7 +756,7 @@ a GPU SDK, so it cannot run in the headless Linux job.
 Expected: `Shader target SPIR-V is not implemented (DXC backend emits DXIL
 only)` then `SPIR-V gate: spirv=0x00000000 (0 bytes) ... (FAIL)`.
 
-- [ ] **Step 2.3: Resolve and load the SPIR-V DXC**
+- [x] **Step 2.3: Resolve and load the SPIR-V DXC**
 
 In `packages/shaders-dxc/src/shader_compiler_dxc.cpp`, in the anonymous
 namespace:
@@ -843,7 +843,7 @@ and a method:
     }
 ```
 
-- [ ] **Step 2.4: Take the SPIR-V branch in `compile`**
+- [x] **Step 2.4: Take the SPIR-V branch in `compile`**
 
 Replace the rejection at `shader_compiler_dxc.cpp:70`:
 
@@ -895,7 +895,7 @@ after the existing `-Zi/-Od/-Qembed_debug` block:
         }
 ```
 
-- [ ] **Step 2.5: Widen the CMake gate**
+- [x] **Step 2.5: Widen the CMake gate**
 
 In `CMakeLists.txt`, replace the D3D12 block:
 
@@ -915,7 +915,7 @@ endif()
 
 `packages/rhi-vulkan` is added in Task 3, not here.
 
-- [ ] **Step 2.6: Green, invariants, commit**
+- [x] **Step 2.6: Green, invariants, commit**
 
 ```bash
 cmake --build build --config Debug && ./build/bin/Debug/sandbox.exe --gates
@@ -936,7 +936,7 @@ pwsh -NoProfile -File tools/check-invariants.ps1
 
 **Cost:** medium · **Closes:** nothing yet
 
-- [ ] **Step 3.1: Vendor the minimal set**
+- [x] **Step 3.1: Vendor the minimal set**
 
 ```bash
 mkdir -p packages/rhi-vulkan/third_party/vulkan packages/rhi-vulkan/third_party/vk_video
@@ -959,7 +959,7 @@ note that rather than duplicating it.
 and the ROADMAP LOC audit excludes it too — verified before vendoring, not
 after.
 
-- [ ] **Step 3.2: The package**
+- [x] **Step 3.2: The package**
 
 `packages/rhi-vulkan/CMakeLists.txt`:
 
@@ -1016,7 +1016,7 @@ if(ENGINE_RHI_VULKAN AND WIN32)
 endif()
 ```
 
-- [ ] **Step 3.3: Update the invariants — before writing code, not after**
+- [x] **Step 3.3: Update the invariants — before writing code, not after**
 
 In `tools/check-invariants.ps1`:
 
@@ -1041,7 +1041,7 @@ pwsh -NoProfile -File tools/check-invariants.ps1
 
 Expected: `all 16 checks passed`, with `package-layers` at 27 packages.
 
-- [ ] **Step 3.4: `vulkan_common.hpp`**
+- [x] **Step 3.4: `vulkan_common.hpp`**
 
 ```cpp
 #pragma once
@@ -1095,7 +1095,7 @@ inline bool vk_failed(VkResult result, const char* what) {
 } // namespace engine::rhi::vulkan
 ```
 
-- [ ] **Step 3.5: Instance, layer, messenger, physical device**
+- [x] **Step 3.5: Instance, layer, messenger, physical device**
 
 `packages/rhi-vulkan/src/instance_vulkan.cpp` — `volkInitialize()`, then an
 instance at `VK_API_VERSION_1_3`. When `ENGINE_GPU_DEBUG=1` *and*
@@ -1113,7 +1113,7 @@ Physical device: enumerate, reject `VK_PHYSICAL_DEVICE_TYPE_CPU`, prefer
 `DXGI_ADAPTER_FLAG_SOFTWARE`, and it is why `--gates` cannot run on a hosted
 runner on either backend.
 
-- [ ] **Step 3.6: Logical device, queue, and the not-yet-implemented virtuals**
+- [x] **Step 3.6: Logical device, queue, and the not-yet-implemented virtuals**
 
 `device_vulkan.hpp` declares `VulkanDevice`, `VulkanBuffer`, `VulkanTexture`,
 `VulkanPipeline`, `VulkanCommandList`, `VulkanSampler`, `VulkanComputePipeline`.
@@ -1150,7 +1150,7 @@ void not_implemented(const char* what) {
 }
 ```
 
-- [ ] **Step 3.7: A device-creation gate, watched failing**
+- [x] **Step 3.7: A device-creation gate, watched failing**
 
 In `gates_rhi.cpp`:
 
@@ -1216,7 +1216,7 @@ deliberately not copied, because two 14–20 MB DLLs with the same name in one
 directory is a coin flip nobody should have to think about. Linking
 `shaders-dxc` twice is harmless and states that both backends need it.
 
-- [ ] **Step 3.8: Build, run, invariants, commit**
+- [x] **Step 3.8: Build, run, invariants, commit**
 
 ```bash
 cmake -B build -G "Visual Studio 18 2026" -A x64 && cmake --build build --config Debug
@@ -1238,7 +1238,7 @@ the validation layer silent, `all 16 checks passed` with 27 packages.
 Everything here exists to make **the Task 1 gate function** pass against the
 Vulkan device with the same asserted pixels. Nothing more.
 
-- [ ] **Step 4.1: Call the parity gate with the Vulkan device, and watch it fail**
+- [x] **Step 4.1: Call the parity gate with the Vulkan device, and watch it fail**
 
 In `main.cpp`, immediately after the D3D12 parity call site:
 
@@ -1287,7 +1287,7 @@ Run it. Expected: FAIL, with `not implemented` warnings naming exactly which
 virtuals Task 4 has to fill. **That list is the task's own checklist** — write
 it down.
 
-- [ ] **Step 4.2: Memory and buffers**
+- [x] **Step 4.2: Memory and buffers**
 
 In `device_vulkan.cpp`, a memory helper:
 
@@ -1318,7 +1318,7 @@ frame ring's shape); `Vertex`/`Index`/`Storage` → the matching usage +
 needs `Uniform` and nothing else, so implement `Uniform` and `Readback` fully
 and let the rest reach `not_implemented` until parity.
 
-- [ ] **Step 4.3: Textures and `read_texture`**
+- [x] **Step 4.3: Textures and `read_texture`**
 
 `create_texture` for `TextureUsage::RenderTarget`: a `VkImage`
 (`COLOR_ATTACHMENT_BIT | TRANSFER_SRC_BIT`, `VK_IMAGE_TILING_OPTIMAL`,
@@ -1329,7 +1329,7 @@ Unlike D3D12 there is **no row-pitch repack**: `bufferRowLength = 0` means
 tightly packed, which is what the contract promises. Say that in a comment —
 it is the kind of asymmetry that otherwise looks like a missing step.
 
-- [ ] **Step 4.4: `ResourceState` → Vulkan barriers**
+- [x] **Step 4.4: `ResourceState` → Vulkan barriers**
 
 One function, `to_vulkan_barrier(ResourceState)`, returning layout, access mask
 and stage mask together — because a barrier needs all three and returning them
@@ -1384,7 +1384,7 @@ BarrierState to_vulkan_barrier(ResourceState state) {
 `transition(ITexture&, from, to)` becomes one `vkCmdPipelineBarrier2` with a
 `VkImageMemoryBarrier2` built from both ends.
 
-- [ ] **Step 4.5: Descriptor-set layout from the counts**
+- [x] **Step 4.5: Descriptor-set layout from the counts**
 
 `pipeline_vulkan.cpp` — this is the translation the spec says this pass exists
 to test:
@@ -1432,7 +1432,7 @@ Depth compare maps straight through — `DepthTest::Greater` →
 `VK_COMPARE_OP_GREATER` — because both APIs put depth in [0, 1] and reversed-Z
 needs no adjustment. Note that in a comment; it is the RHI #15 payoff.
 
-- [ ] **Step 4.6: Command list, dynamic rendering, descriptor sets**
+- [x] **Step 4.6: Command list, dynamic rendering, descriptor sets**
 
 `commands_vulkan.cpp` — `begin()`/`end()` on a per-frame `VkCommandPool`;
 `begin_render_pass` as `vkCmdBeginRendering` with one
@@ -1451,7 +1451,7 @@ the two backends fail the same way if a caller binds more than a frame's worth.
 real 3-frame flight is deferred rather than solved badly — say so in a comment
 next to the pool.
 
-- [ ] **Step 4.7: Green on both backends, with the same numbers**
+- [x] **Step 4.7: Green on both backends, with the same numbers**
 
 ```bash
 cmake --build build --config Debug
@@ -1468,14 +1468,14 @@ Backend agreement gate: d3d12_lit=<n> vulkan_lit=<n> spread=<=64 (pass)
 
 and the validation layer silent.
 
-- [ ] **Step 4.8: Falsify the parity claim**
+- [x] **Step 4.8: Falsify the parity claim**
 
 Delete the negative sign from the viewport height, rebuild, and confirm the
 Vulkan parity gate goes red at `inside=(0,0,0,255) outside=(51,153,204,255)` —
 the Y probes catching an inverted image rather than a coverage count averaging
 it away. Restore.
 
-- [ ] **Step 4.9: Release, invariants, commit**
+- [x] **Step 4.9: Release, invariants, commit**
 
 ```bash
 cmake --build build --config Release --target game && ./build/bin/Release/game.exe --gates
@@ -1490,7 +1490,7 @@ pwsh -NoProfile -File tools/check-invariants.ps1
 
 **Cost:** small
 
-- [ ] **Step 5.1: CI builds the Vulkan backend**
+- [x] **Step 5.1: CI builds the Vulkan backend**
 
 In `.github/workflows/ci.yml`, the `build` job's Configure step gains
 `-DENGINE_RHI_VULKAN=ON` (it is the default, so state it to make the intent
@@ -1501,7 +1501,7 @@ SPIR-V compiler and no device, exactly as `--gates` is already not run there.
 Add `no-vulkan` to the `configure-options` matrix and `CMakePresets.json`,
 matching `no-d3d12` — the modularity claim now has two backends to keep honest.
 
-- [ ] **Step 5.2: The ROADMAP entry**
+- [x] **Step 5.2: The ROADMAP entry**
 
 A Why / Choice / Gate / Do-not entry covering Shaders #5 and RHI #12 together.
 It must carry the five measurements from the spec (the SPIR-V-incapable DXC, the
@@ -1518,7 +1518,7 @@ returning silently; `not_implemented` exists so a partial backend cannot be
 mistaken for a working one. Do not run `--gates` on a hosted runner for either
 backend.
 
-- [ ] **Step 5.3: The map**
+- [x] **Step 5.3: The map**
 
 Shaders #5 and RHI #12 to **Done**, with category subtotals and the header
 totals recounted. RHI #13 (Metal/console) still names RHI #12 as its blocker —
@@ -1529,7 +1529,7 @@ Add a new **Ready** RHI row for the parity work this pass deliberately left:
 presentation (surface, swapchain, acquire/present, resize) and the remaining
 virtuals, naming this pass as what unblocked it.
 
-- [ ] **Step 5.4: LOC recount**
+- [x] **Step 5.4: LOC recount**
 
 ```bash
 pwsh -NoProfile -Command "$f = Get-ChildItem -Path packages -Recurse -File -Include '*.cpp','*.hpp','*.h','*.hlsl','*.hlsli' | Where-Object { $_.FullName -notmatch '[\\/]third_party[\\/]' }; '{0} lines in {1} files' -f (($f | ForEach-Object { (Get-Content -LiteralPath $_.FullName).Count } | Measure-Object -Sum).Sum), $f.Count"
@@ -1540,7 +1540,7 @@ Vendored files are excluded, so the figure is engine code only — say so, since
 a reader seeing a 2 MB vendor drop and an unchanged LOC line would otherwise
 suspect the audit.
 
-- [ ] **Step 5.5: The boundary rule**
+- [x] **Step 5.5: The boundary rule**
 
 `.claude/rules/renderer-boundaries.md` says *"One production GPU backend
 (`rhi-d3d12`) until a second is justified as its own package (e.g.
@@ -1550,7 +1550,7 @@ are two, that D3D12 remains the daily driver, and that a contract change now
 costs two implementations — which is the reason the 1 Sep pass front-loaded
 #15, #9 and #18.
 
-- [ ] **Step 5.6: Commit**
+- [x] **Step 5.6: Commit**
 
 ```bash
 pwsh -NoProfile -File tools/check-invariants.ps1
@@ -1562,20 +1562,20 @@ pwsh -NoProfile -File tools/check-invariants.ps1
 
 ## Definition of done
 
-- [ ] Shaders #5 and RHI #12 are **Done**, subtotals and header totals recounted
-- [ ] `Backend parity gate` passes for **both** backends with byte-identical
+- [x] Shaders #5 and RHI #12 are **Done**, subtotals and header totals recounted
+- [x] `Backend parity gate` passes for **both** backends with byte-identical
       `inside`/`outside` probes, and `Backend agreement gate` reports both
       coverage counts
-- [ ] 0 `FAIL` in Debug and Release; D3D12 debug layer 0/0/0 **and** the Vulkan
+- [x] 0 `FAIL` in Debug and Release; D3D12 debug layer 0/0/0 **and** the Vulkan
       validation layer silent
-- [ ] every new gate was watched failing, and the two parity claims were
+- [x] every new gate was watched failing, and the two parity claims were
       falsified on purpose (wrong triangle half; positive viewport height)
-- [ ] `all 16 checks passed` under both shells, with 27 packages, a Vulkan
+- [x] `all 16 checks passed` under both shells, with 27 packages, a Vulkan
       API-isolation rule, and Vulkan terms forbidden in the public `rhi` headers
-- [ ] CI compiles `rhi-vulkan` on `windows-latest` with no SDK installed, and
+- [x] CI compiles `rhi-vulkan` on `windows-latest` with no SDK installed, and
       `no-vulkan` configures
-- [ ] every unimplemented Vulkan virtual says so by name, once
-- [ ] the register shifts and the binding bases each carry a comment naming the
+- [x] every unimplemented Vulkan virtual says so by name, once
+- [x] the register shifts and the binding bases each carry a comment naming the
       other
 
 ## What this plan does not do

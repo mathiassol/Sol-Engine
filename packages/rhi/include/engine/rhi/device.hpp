@@ -115,6 +115,14 @@ public:
     // False, with the reason logged, when `size` does not match
     // width * height * bytes_per_texel or the format cannot be packed. Never a
     // partial read into a buffer the caller believes is full.
+    //
+    // **The texture must already be in `ResourceState::CopySrc`.** Found by
+    // implementing this against a second backend, and stated here for that
+    // reason: one backend tracks a per-image layout that the copy requires,
+    // and the other does not care what state the caller left the texture in.
+    // From the permissive one alone the requirement is invisible - it works
+    // either way - so a caller written against it breaks on the strict one
+    // with a diagnostic from deep inside a driver.
     virtual bool read_texture(ITexture& texture, void* out, usize size) = 0;
     virtual void set_debug_name(IBuffer& buffer, std::string_view name) = 0;
     virtual void set_debug_name(ITexture& texture, std::string_view name) = 0;

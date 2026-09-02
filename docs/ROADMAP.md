@@ -47,7 +47,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 2 Sep 2026: **29,735 lines** of C++/HLSL in **170 files**, **27
+Measured 2 Sep 2026: **29,743 lines** of C++/HLSL in **170 files**, **27
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the
@@ -1390,6 +1390,145 @@ real graph used — the shadow gate runs against its own probe. Verified across
 the render-graph transient rebuild. Do not persist them: `config.cfg` is read and
 never written, and the cvar writer is Foundation #17. Do not add a preset knob
 for something the renderer does not actually expose.
+
+---
+
+## Shaders #5 / RHI #12 — a second GPU backend (done)
+
+**Why:** The question was whether `rhi-vulkan` could start. The 1 Sep contract
+pass (#15 reversed-Z, #9 storage textures, #18 MSAA) existed to clear the way
+for it — those three change the contract and are API-neutral, so each cost one
+implementation then and would cost two now. With them in, the answer was yes,
+and RHI #12's *Finish first* was corrected to name Shaders #5 alone: Vulkan runs
+on Windows, so a non-Windows platform package was never a prerequisite.
+
+**Choice:** Offscreen first, and five things measured before any of it was
+designed. Each measurement would otherwise have been a guess that shaped the
+work.
+
+*1. The DXC this engine ships cannot emit SPIR-V.* A probe against the exact
+`dxcompiler.dll` the build copies next to `sandbox.exe` answered
+`SPIR-V CodeGen not available. Please recompile with -DENABLE_SPIRV_CODEGEN=ON`.
+The DLL's *strings* say otherwise — `fvk-` and `SPIR-V` are both in it, because
+the option table is compiled in whether the backend is or not — so the compiler
+had to be asked rather than the binary. The Vulkan SDK ships a second build with
+DirectX codegen disabled instead; they are two different binaries with the same
+name.
+
+*2. Two same-named DXC builds coexist in one process.* The worry was the
+loader's base-name dedup silently returning the already-loaded module, which
+would hand back a working compiler that quietly cannot do SPIR-V — the worst
+possible shape. Measured false: Windows dedups by *resolved path*, so a
+full-path `LoadLibraryExW` gets a distinct module and both compile. No rename,
+no copy step.
+
+*3. Every shader in the tree already compiles to SPIR-V.* All 23 real entry
+points, first try, with disjoint register shifts. This is where a second backend
+usually discovers its HLSL is not portable; here it was not a risk at all, and
+knowing that before designing around it was worth the probe.
+
+*4. Coordinate systems cost almost nothing.* Depth is [0,1] in both APIs, so
+reversed-Z transferred untouched — RHI #15 needed no adjustment anywhere in the
+Vulkan pipeline code. Y flips, and a negative viewport height (core since Vulkan
+1.1) fixes it in the backend, so the shaders stay byte-identical.
+`-fvk-invert-y` is deliberately unused: it would put the difference in the
+shaders, which is the property worth protecting.
+
+*5. The SDK ships volk and VMA*, plus the validation layer and the SPIR-V DXC.
+
+**Offscreen, not a triangle in a window.** `--rhi vulkan` would put the sandbox
+on the Vulkan device, and the sandbox immediately runs 82 gates and a render
+graph needing samplers, compute, structured buffers, mips and cube maps. So a
+windowed slice produces a wall of *not implemented* and cannot run the engine —
+presentation buys nothing usable until parity. Worse, a gate behind a flag rots.
+So the Vulkan device is stood up **inside the ordinary `--gates` run**, on the
+D3D12 build, and asserts the same numbers.
+
+**Two contract gaps filled first, on D3D12**, so the reference pixels were
+established through the new API before a second backend existed to disagree with
+them. `window_handle == nullptr` was an undefined state; it now means an
+offscreen device, and `swapchain()` on one asserts by name rather than returning
+a null object whose `present()` quietly does nothing. And `read_texture` is the
+twin `read_buffer` never had — its absence is why the MSAA gate reads its target
+back through a compute pass and a storage buffer, which is a lot of machinery
+for four numbers.
+
+**Vendored, not depended on.** volk plus the minimal Vulkan C headers, ~2 MB,
+under the package's own `third_party/` following the `cgltf.h` precedent. volk
+resolves the API at runtime from the driver's loader, so the build needs no SDK
+and **CI compiles the second backend on every push**. That is the entire reason
+for vendoring rather than `find_package(Vulkan)`. `vulkan.hpp` (16 MB of C++
+bindings) and `vk_enum_string_helper.h` (817 KB) are not vendored.
+
+**Gate (met):** **87 (pass) / 0 FAIL** in Debug and Release, D3D12 debug layer
+**0/0/0**, Vulkan validation layer **silent**, 16/16 invariants, 27 packages.
+
+One gate function, one shader source, two devices:
+
+```
+Backend parity gate [d3d12]:  inside=(51,153,204,255) outside=(0,0,0,255) lit=2016
+Backend parity gate [vulkan]: inside=(51,153,204,255) outside=(0,0,0,255) lit=2016
+Backend agreement gate: d3d12_lit=2016 vulkan_lit=2016 spread=0
+```
+
+The falsifications are the more interesting half. Removing the negative viewport
+height — the Y flip, and the only place it happens — leaves `lit` at **exactly
+2016**, the correct value, while both probes read the clear colour. Flipping the
+shader's triangle to the other half on D3D12 moved it to 2,080, still inside the
+gate's geometric window. So a coverage count is blind to a vertically inverted
+image on *both* backends, and only the two mirror-probe texels catch it. That is
+now measured twice, and it is why the probes are the assertion and the count is
+only reported.
+
+**What the second backend found about the contract.** This is what the pass was
+for, and the counts binding model was kept precisely so the answer would be
+evidence rather than prediction. It held: `uniform_buffer_count` translated into
+a `VkDescriptorSetLayout` without argument, and both asymmetries the contract
+calls out — storage buffers visible to every stage, samplers immutable —
+survived as written. Four strains, all recorded in code:
+
+- **`read_texture` needs the texture in `CopySrc`.** One backend tracks a
+  per-image layout the copy requires; the other does not care. From the
+  permissive one alone the requirement is invisible. Now stated on the
+  interface.
+- **A render target needs an extra creation flag to be readable back**
+  (`TRANSFER_SRC`). The other backend needs none for the same operation.
+- **`GpuBaseline` is D3D-shaped.** `shader_model` has an honest Vulkan answer —
+  SM 6.0, what DXC compiles the SPIR-V from — but `feature_level` has no
+  equivalent at all, so it reports 0 and the gate asserts that rather than
+  accepting any number.
+- **`gpu_memory_stats` splits.** Budget is available; usage needs
+  `VK_EXT_memory_budget`, so it reports 0 rather than an estimate. A made-up
+  usage figure is worse than an obviously absent one.
+
+Two invariants were extended before the code was written, and both watched
+failing: `graphics-api-isolation` now fences `vulkan/` and `volk.h` to
+`rhi-vulkan`, and `rhi-vocabulary` now bans Vulkan vocabulary from the public
+`rhi` headers as well as D3D12's — a header kept neutral in only one direction
+drifts toward whichever backend was written second. That second check caught two
+of this pass's own comments.
+
+**Do not (still):** do not add a second way to select depth direction *or* Y
+direction. Depth is `DeviceDesc::depth_convention` and nothing else; Y is the
+viewport sign in `begin_render_pass` and nothing else, and `-fvk-invert-y` would
+put a second one in the shaders. Do not let the register shifts in
+`shaders-dxc` and the binding bases in `device_vulkan.hpp` drift — they are the
+same numbers in two places, a mismatch is a shader reading the wrong descriptor
+with nothing logged, and both sites carry a comment naming the other. Do not
+implement a Vulkan virtual by returning silently; `not_implemented` exists so a
+deliberately partial backend cannot be mistaken for a working one. Do not run
+`--gates` on a hosted runner for either backend — both skip software devices on
+purpose. Do not add a target check to `shader_cache_dxc.cpp`: `cache_key`
+already folds `desc.target`, and a second rejection there is what made the
+SPIR-V path look unimplemented after it was implemented.
+
+**What is left, as RHI #24 (Ready):** the surface and swapchain, and every
+virtual the offscreen slice leaves calling `not_implemented` — vertex and index
+buffers, sampled textures and samplers, compute, structured buffers, mip chains,
+cube maps, and `RenderPassInfo::resolve`. Then `--rhi vulkan` and the whole gate
+suite against it. VMA is worth vendoring at that resource count; it is not at
+this one. A2's bind-group model stays open, now with evidence behind the
+decision rather than an expectation.
 
 ---
 
