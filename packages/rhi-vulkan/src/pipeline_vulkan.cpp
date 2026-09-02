@@ -315,6 +315,8 @@ std::unique_ptr<IGraphicsPipeline> VulkanDevice::create_graphics_pipeline(
     // needs them again.
     recipe.vertex = make_module(device_, desc.vertex_shader);
     recipe.fragment = make_module(device_, desc.pixel_shader);
+    recipe.vertex_entry = spirv_entry_point(desc.vertex_shader, "vs_main");
+    recipe.fragment_entry = spirv_entry_point(desc.pixel_shader, "ps_main");
     if (recipe.vertex == VK_NULL_HANDLE
         || (!desc.pixel_shader.empty() && recipe.fragment == VK_NULL_HANDLE)) {
         if (recipe.vertex != VK_NULL_HANDLE) {
@@ -350,15 +352,13 @@ VkPipeline VulkanPipeline::variant(u32 stride) {
     stages[stage_count].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[stage_count].stage = VK_SHADER_STAGE_VERTEX_BIT;
     stages[stage_count].module = recipe_.vertex;
-    // DXC names the SPIR-V entry point after the HLSL one, so "vs_main" and
-    // "ps_main" survive the translation and there is nothing to remap.
-    stages[stage_count].pName = "vs_main";
+    stages[stage_count].pName = recipe_.vertex_entry.c_str();
     ++stage_count;
     if (recipe_.fragment != VK_NULL_HANDLE) {
         stages[stage_count].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[stage_count].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         stages[stage_count].module = recipe_.fragment;
-        stages[stage_count].pName = "ps_main";
+        stages[stage_count].pName = recipe_.fragment_entry.c_str();
         ++stage_count;
     }
 

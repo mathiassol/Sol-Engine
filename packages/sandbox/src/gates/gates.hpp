@@ -168,6 +168,14 @@ bool run_vulkan_device_gate();
 // device - it needs a DLL that ships with a GPU SDK.
 bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
 
+// RHI #24: depth parity. Three full-target draws where the middle one is
+// nearer under the device's own convention, so the probe distinguishes no depth
+// test, an inverted compare, a wrong clear value and disabled depth writes -
+// four failures that look identical in a screenshot.
+bool run_parity_depth_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api);
+
 // RHI #24: texture parity. A hand-written mip level and a cube face, so the
 // two things that go wrong quietly on upload - the mip offset and the array
 // layer - are each read at a value the gate chose.
@@ -193,8 +201,14 @@ bool run_backend_parity_gate(engine::rhi::IDevice& device,
 // RHI #18: a 4x target reports its count, a mismatched pipeline is diagnosed by
 // name, the resolve lands single-sample, and the resolved edge has the partial
 // coverage a single-sample raster cannot produce.
+// Called once per backend since RHI #24. It already asserts exact coverage
+// numbers and that a mismatched pipeline is diagnosed by name, so running the
+// same function against the second device is a stronger resolve parity check
+// than a new gate would be.
 bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
-    const std::string& shader_path);
+    const std::string& shader_path,
+    engine::shaders::ShaderTarget target = engine::shaders::ShaderTarget::Dxil,
+    const char* api = "d3d12");
 
 // Called once per backend since RHI #24. It asserts exact packed probe values,
 // so running the same function against the second device is a stronger compute

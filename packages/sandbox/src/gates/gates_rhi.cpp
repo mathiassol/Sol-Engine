@@ -97,7 +97,7 @@ bool run_storage_texture_gate(engine::rhi::IDevice& device,
 
 
 bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompiler& compiler,
-    const std::string& shader_path) {
+    const std::string& shader_path, engine::shaders::ShaderTarget target, const char* api) {
     // RHI #18. Multisampling is the first RHI feature whose shape differs
     // between D3D12 and Vulkan - one resolves with a call after the pass, the
     // other with an attachment on it - so the contract had to say *what*
@@ -120,7 +120,7 @@ bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompile
         desc.file_path = shader_path;
         desc.entry_point = entry;
         desc.target_profile = profile;
-        desc.target = engine::shaders::ShaderTarget::Dxil;
+        desc.target = target;
         std::string error;
         const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
         if (!ok && !error.empty()) {
@@ -303,9 +303,9 @@ bool run_msaa_gate(engine::rhi::IDevice& device, engine::shaders::IShaderCompile
 
     char message[256];
     std::snprintf(message, sizeof(message),
-        "MSAA gate: samples=%u/%u resolved=(blend=%u lit=%u) single=(blend=%u lit=%u) "
+        "MSAA gate [%s]: samples=%u/%u resolved=(blend=%u lit=%u) single=(blend=%u lit=%u) "
         "mismatch_diagnosed=%u (%s)",
-        ms_target ? ms_target->sample_count() : 0u, resolved ? resolved->sample_count() : 0u,
+        api, ms_target ? ms_target->sample_count() : 0u, resolved ? resolved->sample_count() : 0u,
         resolved_blend, resolved_lit, reference_blend, reference_lit, mismatch_hits,
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
@@ -450,6 +450,153 @@ bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::strin
         "round_trip=%s cached=%s (%s)",
         spirv_magic, spirv.data.size(), dxil_magic, dxil.data.size(), distinct ? "yes" : "no",
         cache_ok ? "yes" : "no", second_from_cache ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
+bool run_parity_depth_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api) {
+    // Depth parity under the device's own convention, which is reversed-Z
+    // here: near is 1 and far is 0, and the compare, the clear value and the
+    // sign of the bias all follow from that one field.
+    //
+    // Three full-target draws. The middle one is nearer and must win; the
+    // third is at the first one's depth and must lose. That distinguishes four
+    // failures that all look identical in a screenshot - no depth test (the
+    // last draw wins), an inverted compare (the first wins), a clear value
+    // that rejects everything (the clear colour survives), and depth writes
+    // off (the last wins again).
+
+    constexpr engine::u32 kExtent = 32;
+    struct Constants {
+        engine::f32 tint[4];
+        engine::f32 params[4];
+    };
+    // 51, 153 and 204 exactly in UNORM8.
+    constexpr engine::u8 kFirst = 51;
+    constexpr engine::u8 kNearest = 153;
+    constexpr engine::u8 kLast = 204;
+
+    const bool reversed = device.depth_convention() == engine::rhi::DepthConvention::Reversed;
+    // Derived from the convention, never hard-coded: writing 0.75 as "near"
+    // would bake Reversed into the gate and pass for the wrong reason if the
+    // device ever declared Standard.
+    const engine::f32 far_z = reversed ? 0.25f : 0.75f;
+    const engine::f32 near_z = reversed ? 0.75f : 0.25f;
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps);
+
+    engine::rhi::TextureDesc color{};
+    color.width = kExtent;
+    color.height = kExtent;
+    color.format = engine::rhi::Format::RGBA8_UNORM;
+    color.usage = engine::rhi::TextureUsage::RenderTarget;
+    auto target_texture = device.create_texture(color, nullptr);
+
+    engine::rhi::TextureDesc depth_desc{};
+    depth_desc.width = kExtent;
+    depth_desc.height = kExtent;
+    depth_desc.format = engine::rhi::Format::D32_FLOAT;
+    depth_desc.usage = engine::rhi::TextureUsage::DepthStencil;
+    auto depth_texture = device.create_texture(depth_desc, nullptr);
+
+    engine::rhi::GraphicsPipelineDesc pipeline{};
+    pipeline.vertex_shader = std::span<const engine::u8>(vs.data);
+    pipeline.pixel_shader = std::span<const engine::u8>(ps.data);
+    pipeline.uniform_buffer_count = 1;
+    pipeline.color_format = engine::rhi::Format::RGBA8_UNORM;
+    pipeline.depth_format = engine::rhi::Format::D32_FLOAT;
+    // Say the intent and derive the mechanism - depth_closer is what stops a
+    // call site hard-coding Less and producing five-of-six reversed-Z.
+    pipeline.depth = engine::rhi::depth_closer(device.depth_convention());
+    pipeline.depth_write = true;
+    pipeline.cull = engine::rhi::CullMode::None;
+    pipeline.debug_name = "parity_depth";
+    auto pso = compiled ? device.create_graphics_pipeline(pipeline) : nullptr;
+
+    auto make_constants = [&](engine::u8 value, engine::f32 z) {
+        Constants c{};
+        c.tint[0] = static_cast<engine::f32>(value) / 255.f;
+        c.tint[1] = c.tint[0];
+        c.tint[2] = c.tint[0];
+        c.tint[3] = 1.f;
+        c.params[0] = z;
+        engine::rhi::BufferDesc desc{};
+        desc.size = sizeof(Constants);
+        desc.usage = engine::rhi::BufferUsage::Uniform;
+        return device.create_buffer(desc, &c);
+    };
+    auto first = make_constants(kFirst, far_z);
+    auto nearest = make_constants(kNearest, near_z);
+    auto last = make_constants(kLast, far_z);
+
+    std::vector<engine::u8> pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    bool read_ok = false;
+    const bool ready =
+        compiled && target_texture && depth_texture && pso && first && nearest && last;
+
+    if (ready) {
+        using State = engine::rhi::ResourceState;
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*target_texture, State::Common, State::RenderTarget);
+        // Not from Common: a depth texture is created in DepthWrite, which
+        // the render graph knows and the contract now says. Transitioning from
+        // Common is a barrier whose before-state never happened.
+        (void)State::DepthWrite;
+
+        engine::rhi::RenderPassInfo pass{};
+        pass.color = target_texture.get();
+        pass.depth = depth_texture.get();
+        pass.clear_color_target = true;
+        // Cleared to whatever the convention says is farthest, by the backend.
+        // A backend that clears to the other end rejects every fragment and
+        // the probe reads the clear colour.
+        pass.clear_depth = true;
+        cmd.begin_render_pass(pass);
+        cmd.set_pipeline(*pso);
+        for (engine::rhi::IBuffer* constants : {first.get(), nearest.get(), last.get()}) {
+            cmd.set_constant_buffer(0, *constants);
+            cmd.draw(3, 0);
+        }
+        cmd.end_render_pass();
+
+        cmd.transition(*target_texture, State::RenderTarget, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        read_ok = device.read_texture(*target_texture, pixels.data(), pixels.size());
+    }
+
+    const engine::u8* probe = &pixels[(16 * static_cast<engine::usize>(kExtent) + 16) * 4];
+    const bool passed = ready && read_ok && probe[0] == kNearest;
+
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Parity depth gate [%s]: convention=%s near_z=%.2f got=%u (want %u, first=%u "
+        "last=%u) (%s)",
+        api, reversed ? "reversed" : "standard", static_cast<double>(near_z), probe[0],
+        kNearest, kFirst, kLast, passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
     return passed;

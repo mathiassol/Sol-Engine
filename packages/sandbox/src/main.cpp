@@ -570,8 +570,10 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     std::string parity_path;
     std::string mesh_path;
     std::string texture_path;
+    std::string depth_path;
     (void)resolve_content(loader, kParityMeshGateShader, mesh_path);
     (void)resolve_content(loader, kParityTextureGateShader, texture_path);
+    (void)resolve_content(loader, kParityDepthGateShader, depth_path);
     engine::u32 d3d12_lit = 0;
     if (!resolve_content(loader, kBackendParityGateShader, parity_path)) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
@@ -595,6 +597,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         offscreen.window_handle = nullptr;
         offscreen.width = 64;
         offscreen.height = 64;
+        // Inherited, not defaulted. A parity device on DeviceDesc's default
+        // Standard convention would exercise a configuration the engine never
+        // runs in - the depth gate printed `convention=standard` and gave this
+        // away.
+        offscreen.depth_convention = device->depth_convention();
         offscreen.preferred_api = engine::rhi::GraphicsAPI::D3D12;
         auto offscreen_rhi = engine::rhi::d3d12::create_rhi();
         auto offscreen_device = offscreen_rhi ? offscreen_rhi->create_device(offscreen) : nullptr;
@@ -621,6 +628,11 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                 engine::shaders::ShaderTarget::Dxil, "d3d12")
             && fail_on_gate) {
             return false;
+        } else if (!depth_path.empty()
+            && !run_parity_depth_gate(*offscreen_device, compiler, depth_path,
+                engine::shaders::ShaderTarget::Dxil, "d3d12")
+            && fail_on_gate) {
+            return false;
         }
     }
 #endif
@@ -635,6 +647,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         vk_desc.window_handle = nullptr;
         vk_desc.width = 64;
         vk_desc.height = 64;
+        vk_desc.depth_convention = device->depth_convention();
         vk_desc.preferred_api = engine::rhi::GraphicsAPI::Vulkan;
         auto vk_rhi = engine::rhi::vulkan::create_rhi();
         auto vk_device = vk_rhi ? vk_rhi->create_device(vk_desc) : nullptr;
@@ -655,12 +668,25 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                 engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;
+        } else if (!depth_path.empty()
+            && !run_parity_depth_gate(*vk_device, compiler, depth_path,
+                engine::shaders::ShaderTarget::Spirv, "vulkan")
+            && fail_on_gate) {
+            return false;
         } else if (!storage_tex_path.empty()
             // The same gate the D3D12 device ran, against the Vulkan one. It
             // asserts exact packed probe values, so this is compute, a storage
             // image and a storage buffer all checked against numbers that were
             // already true rather than newly invented.
             && !run_storage_texture_gate(*vk_device, compiler, storage_tex_path,
+                engine::shaders::ShaderTarget::Spirv, "vulkan")
+            && fail_on_gate) {
+            return false;
+        } else if (!msaa_path.empty()
+            // Likewise for the resolve: this gate already asserts 2,016 lit
+            // texels, 64 partial-coverage ones and that a mismatched pipeline
+            // is diagnosed by name.
+            && !run_msaa_gate(*vk_device, compiler, msaa_path,
                 engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;

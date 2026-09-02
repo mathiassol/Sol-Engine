@@ -31,6 +31,16 @@ enum class TextureUsage : u8 {
     // texture nothing ever reads has no use here.
     StorageShaderResource,
 };
+// The state a resource is *in*, and what a transition moves it between.
+//
+// **A freshly created texture is not always in `Common`.** A depth texture is
+// created in `DepthWrite` and a sampled texture with initial data is left ready
+// to sample - so `transition(tex, Common, DepthWrite)` on a new depth target is
+// a lie about where it started, which one backend reports as a barrier
+// mismatch and the other may quietly accept. The render graph already knows
+// this (`record.state = is_depth ? DepthWrite : Common`); it is written here
+// because nothing else did, and a gate that transitioned from Common found out
+// the hard way.
 enum class ResourceState : u8 {
     Common,
     Present,

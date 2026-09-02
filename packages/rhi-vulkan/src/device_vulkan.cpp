@@ -500,6 +500,12 @@ ImageUsagePlan plan_image_usage(TextureUsage usage) {
         break;
     case TextureUsage::DepthStencil:
         plan.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        // Settled at creation, because the other backend creates a depth
+        // texture in DEPTH_WRITE and the render graph therefore never
+        // transitions one *into* it. Leaving this UNDEFINED means the first
+        // vkCmdBeginRendering that uses it fails at submit with a layout
+        // mismatch nobody asked for.
+        plan.settled = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         break;
     case TextureUsage::ShaderResource:
         plan.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -507,6 +513,7 @@ ImageUsagePlan plan_image_usage(TextureUsage usage) {
         break;
     case TextureUsage::DepthShaderResource:
         plan.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        plan.settled = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         break;
     case TextureUsage::ColorShaderResource:
         plan.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
@@ -696,10 +703,17 @@ bool VulkanDevice::settle_image(VulkanTexture& texture, VkImageLayout layout) {
     // stage_and_submit needs something to stage; one byte is the smallest
     // honest ask, and the record callback ignores the buffer entirely.
     const u8 unused = 0;
+    const bool depth = layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    const VkAccessFlags2 access = depth
+        ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+        : VK_ACCESS_2_SHADER_READ_BIT;
+    const VkPipelineStageFlags2 stage = depth
+        ? VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+        : (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+            | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
     return stage_and_submit(&unused, 1, [&](VkCommandBuffer cmd, VkBuffer staging) {
         (void)staging;
-        barrier_image(cmd, texture, layout, VK_ACCESS_2_SHADER_READ_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+        barrier_image(cmd, texture, layout, access, stage);
     });
 }
 
@@ -970,7 +984,8 @@ std::unique_ptr<IComputePipeline> VulkanDevice::create_compute_pipeline(
     // No VkPipeline yet: the set layout depends on whether each `u` slot is an
     // image or a texel buffer, and only a bind knows that. See ComputeVariant.
     return std::make_unique<VulkanComputePipeline>(device_, module,
-        desc.uniform_buffer_count, desc.sampled_texture_count, desc.storage_texture_count);
+        spirv_entry_point(desc.compute_shader, "cs_main"), desc.uniform_buffer_count,
+        desc.sampled_texture_count, desc.storage_texture_count);
 }
 
 VulkanComputePipeline::~VulkanComputePipeline() {
@@ -1045,8 +1060,10 @@ const ComputeVariant* VulkanComputePipeline::variant(u32 image_mask) {
     info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     info.stage.module = module_;
-    // DXC keeps the HLSL entry point name, so cs_main survives.
-    info.stage.pName = "cs_main";
+    // From the module, not a constant: msaa_gate.hlsl's compute entry point is
+    // cs_count, and a hard-coded "cs_main" failed pipeline creation with
+    // "entry point not found" - the shader had told us the answer all along.
+    info.stage.pName = entry_.c_str();
     info.layout = variant.layout;
     if (vk_failed(
             vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr,

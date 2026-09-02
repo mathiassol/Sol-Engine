@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <cstring>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace engine::rhi::vulkan {
 
@@ -82,6 +84,50 @@ inline bool is_spirv(std::span<const u8> bytecode, const char* what) {
         "0x43425844)", what, bytecode.size(), magic);
     log(LogLevel::Error, LogChannel::Render, message);
     return false;
+}
+
+// The name of the module's entry point, read out of the SPIR-V itself.
+//
+// Vulkan wants the entry point name at pipeline creation; the contract supplies
+// it at *compile* time, on ShaderCompileDesc, and the other backend needs it
+// never - a D3D12 pipeline takes bytecode and nothing else. Rather than add a
+// field to GraphicsPipelineDesc and ComputePipelineDesc that only one backend
+// reads, the module is asked: it declares its own entry point, so this cannot
+// disagree with the shader the way a duplicated string can.
+//
+// This is the fourth place the contract holds a fact at bind or compile time
+// that Vulkan needs at pipeline creation - after the vertex stride, the `u`
+// slot descriptor type, and the resolve. The others needed a variant cache;
+// this one is just a read.
+//
+// SPIR-V layout: five header words, then instructions. OpEntryPoint is opcode
+// 15 - word 0 is (wordCount << 16) | opcode, word 1 the execution model, word 2
+// the function id, and words 3.. the null-terminated name packed four bytes to
+// a word.
+inline std::string spirv_entry_point(std::span<const u8> bytecode, const char* fallback) {
+    if (bytecode.size() < 20 || bytecode.size() % 4 != 0) {
+        return fallback;
+    }
+    const usize word_count = bytecode.size() / 4;
+    std::vector<u32> words(word_count);
+    std::memcpy(words.data(), bytecode.data(), bytecode.size());
+    usize at = 5;
+    while (at < word_count) {
+        const u32 instruction = words[at];
+        const u32 length = instruction >> 16;
+        const u32 opcode = instruction & 0xFFFFu;
+        if (length == 0 || at + length > word_count) {
+            break;
+        }
+        if (opcode == 15u && length >= 4) {
+            const char* name = reinterpret_cast<const char*>(&words[at + 3]);
+            const usize available = (length - 3) * 4;
+            const usize len = ::strnlen(name, available);
+            return std::string(name, len);
+        }
+        at += length;
+    }
+    return fallback;
 }
 
 // Says so, once per name, the first time it is reached.

@@ -89,6 +89,12 @@ void VulkanCommandList::transition(ITexture& texture, ResourceState from, Resour
     const VkImageAspectFlags aspect = aspect_of(vk_texture.format());
     const BarrierState before = to_vulkan_barrier(from, aspect);
     const BarrierState after = to_vulkan_barrier(to, aspect);
+    // oldLayout comes from the image, not from `from`. The caller's belief
+    // about where a texture started can be stale or simply wrong - and a
+    // barrier from the wrong old layout either discards the contents or
+    // mismatches at submit. `from` still supplies the access and stage masks,
+    // which is all it is authoritative about.
+    const VkImageLayout old_layout = vk_texture.layout();
 
     VkImageMemoryBarrier2 barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -96,7 +102,7 @@ void VulkanCommandList::transition(ITexture& texture, ResourceState from, Resour
     barrier.srcAccessMask = before.access;
     barrier.dstStageMask = after.stage;
     barrier.dstAccessMask = after.access;
-    barrier.oldLayout = before.layout;
+    barrier.oldLayout = old_layout;
     barrier.newLayout = after.layout;
     barrier.image = vk_texture.image();
     barrier.subresourceRange.aspectMask = aspect;
@@ -108,6 +114,10 @@ void VulkanCommandList::transition(ITexture& texture, ResourceState from, Resour
     dependency.imageMemoryBarrierCount = 1;
     dependency.pImageMemoryBarriers = &barrier;
     vkCmdPipelineBarrier2(device_.cmd(), &dependency);
+    // Written back, so the next descriptor built from this texture names the
+    // layout it is actually in. Recorded rather than executed, which is fine
+    // because the whole command list is submitted before anything reads it.
+    vk_texture.set_layout(after.layout);
 }
 
 void VulkanCommandList::transition(IBuffer& buffer, ResourceState from, ResourceState to) {
@@ -174,13 +184,7 @@ void VulkanCommandList::begin_render_pass(const RenderPassInfo& info) {
     }
     pass_color_ = info.color ? static_cast<VulkanTexture*>(info.color) : nullptr;
     auto* depth = info.depth ? static_cast<VulkanTexture*>(info.depth) : nullptr;
-    if (info.resolve != nullptr) {
-        // RenderPassInfo::resolve maps to VkRenderingAttachmentInfo's
-        // resolveImageView, which is the divergence RHI #18 was designed
-        // around - but nothing offscreen is multisampled yet, so it is named
-        // rather than written against a case no gate covers.
-        not_implemented("begin_render_pass with a resolve target");
-    }
+    auto* resolve = info.resolve ? static_cast<VulkanTexture*>(info.resolve) : nullptr;
 
     const u32 w =
         pass_color_ ? pass_color_->width() : (depth ? depth->width() : device_.width());
@@ -197,6 +201,38 @@ void VulkanCommandList::begin_render_pass(const RenderPassInfo& info) {
         color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         color_attachment.clearValue.color = {{info.clear_color.r, info.clear_color.g,
             info.clear_color.b, info.clear_color.a}};
+        // The divergence RHI #18 designed the contract around. The other
+        // backend issues a resolve *after* the pass; here it hangs off the
+        // attachment and no call is ever made. Same intent, and the contract
+        // says only the intent.
+        if (resolve != nullptr) {
+            const char* problem = nullptr;
+            if (pass_color_->sample_count() <= 1) {
+                problem = "the source is single-sample, so there is nothing to resolve";
+            } else if (resolve->sample_count() != 1) {
+                problem = "the destination is itself multisampled";
+            } else if (resolve->width() != pass_color_->width()
+                || resolve->height() != pass_color_->height()) {
+                problem = "source and destination extents differ";
+            } else if (resolve->format() != pass_color_->format()) {
+                problem = "source and destination formats differ";
+            }
+            if (problem != nullptr) {
+                // The same refusal the other backend makes, and for the same
+                // reason: naming the numbers beats reading a driver's opinion.
+                char message[224];
+                std::snprintf(message, sizeof(message),
+                    "Resolve skipped: %s (src %ux%u x%u, dst %ux%u x%u)", problem,
+                    pass_color_->width(), pass_color_->height(), pass_color_->sample_count(),
+                    resolve->width(), resolve->height(), resolve->sample_count());
+                log(LogLevel::Error, LogChannel::Render, message);
+            } else {
+                color_attachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+                color_attachment.resolveImageView = resolve->view();
+                color_attachment.resolveImageLayout =
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            }
+        }
     }
 
     VkRenderingAttachmentInfo depth_attachment{};
@@ -253,6 +289,18 @@ void VulkanCommandList::end_render_pass() {
 
 void VulkanCommandList::set_pipeline(IGraphicsPipeline& pipeline) {
     auto& vk_pipeline = static_cast<VulkanPipeline&>(pipeline);
+    if (pass_color_ != nullptr && vk_pipeline.sample_count() != pass_color_->sample_count()) {
+        // The draw would be dropped with a diagnostic naming neither the
+        // pipeline nor the target. Say both numbers instead - and say it in
+        // both backends, because a check that exists in only one is a gate
+        // that passes for the wrong reason on the other.
+        char message[224];
+        std::snprintf(message, sizeof(message),
+            "Pipeline sample count %u does not match the %u-sample target it is bound "
+            "against; the draw will be rejected",
+            vk_pipeline.sample_count(), pass_color_->sample_count());
+        log(LogLevel::Error, LogChannel::Render, message);
+    }
     bound_pipeline_ = &vk_pipeline;
     bound_compute_ = nullptr;
     bound_stride_ = ~0u;

@@ -174,6 +174,9 @@ private:
 struct PipelineRecipe {
     VkShaderModule vertex = VK_NULL_HANDLE;
     VkShaderModule fragment = VK_NULL_HANDLE;
+    // Read out of each module rather than assumed - see spirv_entry_point.
+    std::string vertex_entry;
+    std::string fragment_entry;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkVertexInputAttributeDescription attributes[GraphicsPipelineDesc::kMaxAttributes]{};
     u32 attribute_count = 0;
@@ -208,6 +211,7 @@ public:
     u32 uniform_count() const { return uniform_count_; }
     u32 storage_buffer_count() const { return storage_buffer_count_; }
     u32 attribute_count() const { return recipe_.attribute_count; }
+    u32 sample_count() const { return recipe_.sample_count; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
@@ -271,10 +275,11 @@ struct ComputeVariant {
 
 class VulkanComputePipeline final : public IComputePipeline {
 public:
-    VulkanComputePipeline(VkDevice device, VkShaderModule module, u32 uniform_count,
-        u32 sampled_count, u32 storage_count)
-        : device_(device), module_(module), uniform_count_(uniform_count),
-          sampled_count_(sampled_count), storage_count_(storage_count) {}
+    VulkanComputePipeline(VkDevice device, VkShaderModule module, std::string entry,
+        u32 uniform_count, u32 sampled_count, u32 storage_count)
+        : device_(device), module_(module), entry_(std::move(entry)),
+          uniform_count_(uniform_count), sampled_count_(sampled_count),
+          storage_count_(storage_count) {}
     ~VulkanComputePipeline() override;
 
     VulkanComputePipeline(const VulkanComputePipeline&) = delete;
@@ -287,6 +292,7 @@ public:
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkShaderModule module_ = VK_NULL_HANDLE;
+    std::string entry_;
     u32 uniform_count_ = 0;
     u32 sampled_count_ = 0;
     u32 storage_count_ = 0;
