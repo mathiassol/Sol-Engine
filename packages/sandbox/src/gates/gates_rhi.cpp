@@ -455,6 +455,143 @@ bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::strin
     return passed;
 }
 
+bool run_parity_frames_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api) {
+    // The first parity assertion about *time* rather than about a pixel.
+    //
+    // Four frames, each drawing with constants taken from the frame ring, with
+    // no wait between them. That is the one thing the offscreen slice could
+    // not have found: it submitted and waited inside a single frame, so one
+    // command buffer, one fence and one descriptor pool were sufficient by
+    // accident. With frames genuinely in flight, a pool reset or a command
+    // buffer reused while the GPU is still reading it is a use-after-free that
+    // shows up as garbage or a device loss.
+    //
+    // Four rather than three, so the run wraps past the slot count and reuses
+    // slot 0 - the first reuse is where a missing fence wait bites.
+
+    constexpr engine::u32 kExtent = 32;
+    constexpr engine::u32 kFrames = 4;
+    // One per frame, all exactly representable in UNORM8. The last frame's
+    // value is what must survive, so a stale slot reads as an earlier frame's
+    // colour rather than as nothing.
+    constexpr engine::u8 kTints[kFrames] = {51, 102, 153, 204};
+
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = compile("vs_main", "vs_6_0", vs) && compile("ps_main", "ps_6_0", ps);
+
+    engine::rhi::TextureDesc color{};
+    color.width = kExtent;
+    color.height = kExtent;
+    color.format = engine::rhi::Format::RGBA8_UNORM;
+    color.usage = engine::rhi::TextureUsage::RenderTarget;
+    auto target_texture = device.create_texture(color, nullptr);
+
+    engine::rhi::GraphicsPipelineDesc pipeline{};
+    pipeline.vertex_shader = std::span<const engine::u8>(vs.data);
+    pipeline.pixel_shader = std::span<const engine::u8>(ps.data);
+    pipeline.uniform_buffer_count = 1;
+    pipeline.color_format = engine::rhi::Format::RGBA8_UNORM;
+    pipeline.depth = engine::rhi::DepthTest::Disabled;
+    pipeline.depth_write = false;
+    pipeline.cull = engine::rhi::CullMode::None;
+    pipeline.debug_name = "parity_frames";
+    auto pso = compiled ? device.create_graphics_pipeline(pipeline) : nullptr;
+
+    const engine::rhi::FrameRingStats before = device.frame_ring_stats();
+    std::vector<engine::u8> pixels(static_cast<engine::usize>(kExtent) * kExtent * 4, 0);
+    bool read_ok = false;
+    engine::u32 ring_hits = 0;
+    const bool ready = compiled && target_texture && pso;
+
+    if (ready) {
+        using State = engine::rhi::ResourceState;
+        for (engine::u32 frame = 0; frame < kFrames; ++frame) {
+            device.begin_frame();
+            auto& cmd = device.command_list();
+            cmd.begin();
+            // Common only on the first frame; after that the texture is where
+            // the previous frame left it, and saying Common again would be a
+            // before-state that never happened.
+            cmd.transition(*target_texture,
+                frame == 0 ? State::Common : State::CopySrc, State::RenderTarget);
+
+            const engine::f32 value = static_cast<engine::f32>(kTints[frame]) / 255.f;
+            const engine::f32 constants[4] = {value, value, value, 1.f};
+            const engine::rhi::FrameAllocation slice =
+                device.alloc_frame_memory(sizeof(constants));
+            if (slice.buffer != nullptr) {
+                ++ring_hits;
+                device.write_buffer(*slice.buffer, slice.offset, constants, sizeof(constants));
+            }
+
+            engine::rhi::RenderPassInfo pass{};
+            pass.color = target_texture.get();
+            pass.clear_color_target = true;
+            pass.clear_depth = false;
+            cmd.begin_render_pass(pass);
+            cmd.set_pipeline(*pso);
+            if (slice.buffer != nullptr) {
+                cmd.set_constant_buffer(0, *slice.buffer, slice.offset);
+            }
+            cmd.draw(3, 0);
+            cmd.end_render_pass();
+
+            cmd.transition(*target_texture, State::RenderTarget, State::CopySrc);
+            cmd.end();
+            // Submitted and *not* waited. The next begin_frame waits its own
+            // slot's fence, which is the whole mechanism under test.
+            device.submit();
+            device.end_frame();
+        }
+        device.wait_idle();
+        read_ok = device.read_texture(*target_texture, pixels.data(), pixels.size());
+    }
+
+    const engine::rhi::FrameRingStats after = device.frame_ring_stats();
+    // (8, 8) is inside the drawn half - the same probe the backend parity gate
+    // uses, for the same shader.
+    const engine::u8* probe = &pixels[(8 * static_cast<engine::usize>(kExtent) + 8) * 4];
+    const bool last_frame_won = read_ok && probe[0] == kTints[kFrames - 1];
+    const bool ring_served = ring_hits == kFrames;
+    // The capacity is a backend constant and must be the same on both, because
+    // the frame-ring budget gate compares headroom against it.
+    const bool capacity_ok = after.capacity_bytes == 1024u * 1024u;
+    const bool peak_moved = after.peak_bytes >= before.peak_bytes && after.peak_bytes > 0;
+    const bool no_exhaustion = after.exhausted_frames == before.exhausted_frames;
+    const bool passed = ready && read_ok && last_frame_won && ring_served && capacity_ok
+        && peak_moved && no_exhaustion;
+
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "Parity frames gate [%s]: frames=%u ring_hits=%u last=%u (want %u) peak=%llu "
+        "capacity=%lluK exhausted=%llu (%s)",
+        api, kFrames, ring_hits, probe[0], kTints[kFrames - 1],
+        static_cast<unsigned long long>(after.peak_bytes),
+        static_cast<unsigned long long>(after.capacity_bytes / 1024),
+        static_cast<unsigned long long>(after.exhausted_frames), passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
 bool run_parity_depth_gate(engine::rhi::IDevice& device,
     engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
     engine::shaders::ShaderTarget target, const char* api) {

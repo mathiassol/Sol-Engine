@@ -120,11 +120,16 @@ VulkanPipeline::~VulkanPipeline() {
 VulkanDevice::~VulkanDevice() {
     if (device_ != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_);
-        if (descriptor_pool_ != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
-        }
-        if (fence_ != VK_NULL_HANDLE) {
-            vkDestroyFence(device_, fence_, nullptr);
+        for (u32 i = 0; i < kFrameCount; ++i) {
+            // Before the pools: a ring buffer's memory is unmapped in its own
+            // destructor and must not outlive the device.
+            frame_ring_[i].reset();
+            if (descriptor_pools_[i] != VK_NULL_HANDLE) {
+                vkDestroyDescriptorPool(device_, descriptor_pools_[i], nullptr);
+            }
+            if (fences_[i] != VK_NULL_HANDLE) {
+                vkDestroyFence(device_, fences_[i], nullptr);
+            }
         }
         if (cmd_pool_ != VK_NULL_HANDLE) {
             vkDestroyCommandPool(device_, cmd_pool_, nullptr);
@@ -200,16 +205,22 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmd_info.commandPool = cmd_pool_;
     cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_info.commandBufferCount = 1;
-    if (vk_failed(vkAllocateCommandBuffers(device_, &cmd_info, &cmd_buffer_),
+    cmd_info.commandBufferCount = kFrameCount;
+    if (vk_failed(vkAllocateCommandBuffers(device_, &cmd_info, cmd_buffers_),
             "command buffer allocation")) {
         return false;
     }
 
     VkFenceCreateInfo fence_info{};
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    if (vk_failed(vkCreateFence(device_, &fence_info, nullptr, &fence_), "fence creation")) {
-        return false;
+    // Created signalled: the first begin_frame waits every slot's fence, and a
+    // slot that has never been submitted would otherwise block forever.
+    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (u32 i = 0; i < kFrameCount; ++i) {
+        if (vk_failed(vkCreateFence(device_, &fence_info, nullptr, &fences_[i]),
+                "fence creation")) {
+            return false;
+        }
     }
 
     // One pool, reset each begin_frame. This device submits and waits inside a
@@ -232,12 +243,59 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     };
     VkDescriptorPoolCreateInfo descriptor_info{};
     descriptor_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    descriptor_info.maxSets = 64;
+    descriptor_info.maxSets = 256;
     descriptor_info.poolSizeCount = static_cast<u32>(std::size(sizes));
     descriptor_info.pPoolSizes = sizes;
-    if (vk_failed(vkCreateDescriptorPool(device_, &descriptor_info, nullptr, &descriptor_pool_),
-            "descriptor pool creation")) {
-        return false;
+    for (u32 i = 0; i < kFrameCount; ++i) {
+        if (vk_failed(
+                vkCreateDescriptorPool(device_, &descriptor_info, nullptr,
+                    &descriptor_pools_[i]),
+                "descriptor pool creation")) {
+            return false;
+        }
+    }
+
+    // One host-visible ring per slot, mapped for its lifetime. VERTEX_BUFFER
+    // as well as UNIFORM_BUFFER because debug-draw puts its *vertex* data in
+    // the ring - alloc_frame_memory hands out slices that are bound both ways,
+    // which is invisible from the interface and would fail only when the
+    // overlay is switched on.
+    for (u32 i = 0; i < kFrameCount; ++i) {
+        VkBufferCreateInfo ring_info{};
+        ring_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        ring_info.size = kFrameRingBytes;
+        ring_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+            | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+        VkBuffer ring = VK_NULL_HANDLE;
+        if (vk_failed(vkCreateBuffer(device_, &ring_info, nullptr, &ring), "frame ring")) {
+            return false;
+        }
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(device_, ring, &requirements);
+        const u32 type = find_memory_type(state_.gpu, requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (type == ~0u) {
+            log(LogLevel::Error, LogChannel::Render, "frame ring: no host-visible memory");
+            return false;
+        }
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = type;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (vk_failed(vkAllocateMemory(device_, &allocate, nullptr, &memory), "frame ring")) {
+            return false;
+        }
+        if (vk_failed(vkBindBufferMemory(device_, ring, memory, 0), "frame ring bind")) {
+            return false;
+        }
+        void* mapped = nullptr;
+        if (vk_failed(vkMapMemory(device_, memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+                "frame ring map")) {
+            return false;
+        }
+        frame_ring_[i] =
+            std::make_unique<VulkanBuffer>(device_, ring, memory, kFrameRingBytes, mapped);
     }
 
     // Shader model is an HLSL notion, and it is the honest one to report: the
@@ -248,6 +306,10 @@ bool VulkanDevice::init(const DeviceDesc& desc) {
     // GpuBaseline - the struct is D3D-shaped - and it is recorded rather than
     // papered over, because finding out where the contract is D3D-shaped is
     // what a second backend is for.
+    VkPhysicalDeviceProperties gpu_properties{};
+    vkGetPhysicalDeviceProperties(state_.gpu, &gpu_properties);
+    max_uniform_range_ = gpu_properties.limits.maxUniformBufferRange;
+
     baseline_.shader_model = kGpuShaderModel_6_0;
     baseline_.feature_level = 0;
 
@@ -290,8 +352,20 @@ void VulkanDevice::begin_frame() {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
-    vkResetFences(device_, 1, &fence_);
-    vkResetDescriptorPool(device_, descriptor_pool_, 0);
+    // Advance, then wait *this* slot. Offscreen has no backbuffer index to
+    // follow, so the slot count is what bounds frames in flight - the same
+    // shape the other backend's offscreen path uses.
+    frame_index_ = (frame_index_ + 1) % kFrameCount;
+    vkWaitForFences(device_, 1, &fences_[frame_index_], VK_TRUE, UINT64_MAX);
+    vkResetFences(device_, 1, &fences_[frame_index_]);
+    // Only now is it safe to reset this slot's pool: the fence says the GPU
+    // has finished every descriptor set allocated from it. Resetting a pool
+    // whose sets are still being read is the exact hazard three slots exist
+    // to avoid, and the offscreen slice never met it because it waited inside
+    // the frame.
+    vkResetDescriptorPool(device_, descriptor_pools_[frame_index_], 0);
+    frame_ring_offset_ = 0;
+    frame_ring_exhausted_ = false;
 }
 
 void VulkanDevice::submit() {
@@ -301,8 +375,8 @@ void VulkanDevice::submit() {
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd_buffer_;
-    if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fence_), "queue submit")) {
+    submit.pCommandBuffers = &cmd_buffers_[frame_index_];
+    if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fences_[frame_index_]), "queue submit")) {
         // A lost device never recovers, and the frame loop has to stop rather
         // than keep submitting into it - the same latch the D3D12 backend uses.
         device_lost_ = true;
@@ -318,9 +392,9 @@ void VulkanDevice::wait_idle() {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
-    // Waits the fence submit() signalled, then the queue, so a caller that
-    // submitted nothing this frame is not left blocked on an unsignalled fence.
-    vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX);
+    // The queue, not one fence: a caller that submitted nothing this frame
+    // would otherwise block on a fence that was never signalled, and every
+    // slot's work has to be finished before this returns anyway.
     vkQueueWaitIdle(queue_);
 }
 
@@ -815,11 +889,12 @@ bool VulkanDevice::read_texture(ITexture& texture, void* out, usize size) {
     // texture must already be in ResourceState::CopySrc; that is stated on the
     // interface because D3D12 does not care about layouts and Vulkan does, so
     // the requirement is invisible from the first backend alone.
-    vkResetCommandBuffer(cmd_buffer_, 0);
+    VkCommandBuffer cmd = cmd_buffers_[frame_index_];
+    vkResetCommandBuffer(cmd, 0);
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (vk_failed(vkBeginCommandBuffer(cmd_buffer_, &begin), "readback begin")) {
+    if (vk_failed(vkBeginCommandBuffer(cmd, &begin), "readback begin")) {
         return false;
     }
     VkBufferImageCopy region{};
@@ -831,21 +906,22 @@ bool VulkanDevice::read_texture(ITexture& texture, void* out, usize size) {
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent = {vk_texture.width(), vk_texture.height(), 1};
-    vkCmdCopyImageToBuffer(cmd_buffer_, vk_texture.image(),
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vk_staging.handle(), 1, &region);
-    if (vk_failed(vkEndCommandBuffer(cmd_buffer_), "readback end")) {
+    vkCmdCopyImageToBuffer(cmd, vk_texture.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vk_staging.handle(), 1, &region);
+    if (vk_failed(vkEndCommandBuffer(cmd), "readback end")) {
         return false;
     }
 
-    vkResetFences(device_, 1, &fence_);
+    VkFence fence = fences_[frame_index_];
+    vkResetFences(device_, 1, &fence);
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd_buffer_;
-    if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fence_), "readback submit")) {
+    submit.pCommandBuffers = &cmd;
+    if (vk_failed(vkQueueSubmit(queue_, 1, &submit, fence), "readback submit")) {
         return false;
     }
-    vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX);
+    vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
 
     std::memcpy(out, vk_staging.mapped(), size);
     return true;
@@ -897,25 +973,30 @@ bool VulkanDevice::stage_and_submit(
         std::memcpy(mapped, data, size);
         vkUnmapMemory(device_, memory);
 
-        vkResetCommandBuffer(cmd_buffer_, 0);
+        // The current slot's command buffer and fence. Uploads happen at
+        // creation, outside any frame, so borrowing the slot is safe - and
+        // waiting here is what makes it safe to borrow.
+        VkCommandBuffer cmd = cmd_buffers_[frame_index_];
+        VkFence fence = fences_[frame_index_];
+        vkResetCommandBuffer(cmd, 0);
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        ok = !vk_failed(vkBeginCommandBuffer(cmd_buffer_, &begin), "upload begin");
+        ok = !vk_failed(vkBeginCommandBuffer(cmd, &begin), "upload begin");
         if (ok) {
-            record(cmd_buffer_, staging);
-            ok = !vk_failed(vkEndCommandBuffer(cmd_buffer_), "upload end");
+            record(cmd, staging);
+            ok = !vk_failed(vkEndCommandBuffer(cmd), "upload end");
         }
         if (ok) {
-            vkResetFences(device_, 1, &fence_);
+            vkResetFences(device_, 1, &fence);
             VkSubmitInfo submit{};
             submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submit.commandBufferCount = 1;
-            submit.pCommandBuffers = &cmd_buffer_;
-            ok = !vk_failed(vkQueueSubmit(queue_, 1, &submit, fence_), "upload submit");
+            submit.pCommandBuffers = &cmd;
+            ok = !vk_failed(vkQueueSubmit(queue_, 1, &submit, fence), "upload submit");
         }
         if (ok) {
-            vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX);
+            vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
         }
     }
 
@@ -954,9 +1035,40 @@ void VulkanDevice::set_debug_name(ITexture& texture, std::string_view name) {
 // backend cannot be mistaken for a working one.
 
 FrameAllocation VulkanDevice::alloc_frame_memory(usize size) {
-    (void)size;
-    not_implemented("alloc_frame_memory");
-    return {};
+    ENGINE_ASSERT(size > 0);
+    if (frame_ring_[frame_index_] == nullptr) {
+        return {};
+    }
+    const usize aligned = (size + (kBufferAlign - 1)) & ~(kBufferAlign - 1);
+
+    // How much a frame needs depends on how much is on screen, so running out
+    // is a content outcome, not a bug. Return an empty slice; the caller skips
+    // that draw and the frame is missing an object instead of the process
+    // being gone. Same behaviour, same one-shot message and same bookkeeping
+    // as the other backend, because the frame-ring budget gate compares the
+    // headroom figure and it has to mean the same thing.
+    if (aligned > kFrameRingBytes - frame_ring_offset_) {
+        if (!frame_ring_exhausted_) {
+            frame_ring_exhausted_ = true;
+            frame_ring_exhausted_frames_ += 1;
+            char message[192];
+            std::snprintf(message, sizeof(message),
+                "Frame constant ring exhausted: %zu of %zu bytes used. Dropping draws this "
+                "frame - raise kFrameRingBytes.",
+                frame_ring_offset_, kFrameRingBytes);
+            log(LogLevel::Error, LogChannel::Render, message);
+        }
+        return {};
+    }
+
+    FrameAllocation allocation{};
+    allocation.buffer = frame_ring_[frame_index_].get();
+    allocation.offset = frame_ring_offset_;
+    frame_ring_offset_ += aligned;
+    if (frame_ring_offset_ > frame_ring_peak_) {
+        frame_ring_peak_ = frame_ring_offset_;
+    }
+    return allocation;
 }
 
 

@@ -420,7 +420,13 @@ public:
     ITexture& swapchain_color() override;
     ITexture& swapchain_depth() override;
     GpuMemoryStats gpu_memory_stats() const override;
-    FrameRingStats frame_ring_stats() const override { return ring_stats_; }
+    FrameRingStats frame_ring_stats() const override {
+        FrameRingStats stats{};
+        stats.peak_bytes = frame_ring_peak_;
+        stats.capacity_bytes = kFrameRingBytes;
+        stats.exhausted_frames = frame_ring_exhausted_frames_;
+        return stats;
+    }
     GpuBaseline gpu_baseline() const override { return baseline_; }
     f32 last_gpu_time_ms() const override { return 0.f; }
 
@@ -448,18 +454,46 @@ public:
     // translation units.
     VkDevice handle() const { return device_; }
     VkPhysicalDevice gpu() const { return state_.gpu; }
-    VkCommandBuffer cmd() const { return cmd_buffer_; }
-    VkDescriptorPool descriptor_pool() const { return descriptor_pool_; }
+    VkCommandBuffer cmd() const { return cmd_buffers_[frame_index_]; }
+    VkDescriptorPool descriptor_pool() const { return descriptor_pools_[frame_index_]; }
     const std::string& device_name() const { return state_.device_name; }
+    // maxUniformBufferRange, read once at init.
+    //
+    // set_constant_buffer(slot, buffer, offset) has no *size*: a root CBV on
+    // the other backend is an address, and the shader's cbuffer declares how
+    // much of it to read. A Vulkan descriptor needs a range, and the obvious
+    // "everything from the offset" is 1 MiB on the frame ring - well past the
+    // 64 KiB most devices allow. So the range is clamped to what the device
+    // permits, which is always at least as much as any cbuffer the engine
+    // declares.
+    usize max_uniform_range() const { return max_uniform_range_; }
 
 private:
     VulkanInstance state_{};
+    // Three of everything a frame owns, matching the other backend's slot
+    // count. The offscreen slice got away with one because it submitted and
+    // waited inside a single frame; with frames genuinely in flight, a
+    // descriptor set or command buffer reset while the GPU is still reading it
+    // is the failure this exists to prevent.
+    static constexpr u32 kFrameCount = 3;
+    // 1 MiB per slot and 256-byte alignment, both the same as the other
+    // backend - a ring that differed in size would make the frame-ring budget
+    // gate's headroom figure mean two different things.
+    static constexpr usize kFrameRingBytes = 1024 * 1024;
+    static constexpr usize kBufferAlign = 256;
+
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue queue_ = VK_NULL_HANDLE;
     VkCommandPool cmd_pool_ = VK_NULL_HANDLE;
-    VkCommandBuffer cmd_buffer_ = VK_NULL_HANDLE;
-    VkFence fence_ = VK_NULL_HANDLE;
-    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
+    VkCommandBuffer cmd_buffers_[kFrameCount]{};
+    VkFence fences_[kFrameCount]{};
+    VkDescriptorPool descriptor_pools_[kFrameCount]{};
+    std::unique_ptr<VulkanBuffer> frame_ring_[kFrameCount];
+    u32 frame_index_ = 0;
+    usize frame_ring_offset_ = 0;
+    usize frame_ring_peak_ = 0;
+    u64 frame_ring_exhausted_frames_ = 0;
+    bool frame_ring_exhausted_ = false;
 
     VulkanCommandList commands_;
     DepthConvention depth_convention_ = DepthConvention::Standard;
@@ -469,7 +503,7 @@ private:
     u32 height_ = 0;
     u32 present_interval_ = 1;
     GpuBaseline baseline_{};
-    FrameRingStats ring_stats_{};
+    usize max_uniform_range_ = 65536;
 };
 
 } // namespace engine::rhi::vulkan

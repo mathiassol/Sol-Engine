@@ -447,7 +447,13 @@ void VulkanCommandList::set_constant_buffer(u32 slot, IBuffer& buffer, usize off
     VkDescriptorBufferInfo info{};
     info.buffer = vk_buffer.handle();
     info.offset = offset_bytes;
-    info.range = vk_buffer.size() - offset_bytes;
+    // Clamped, because the contract gives an offset and no size. "The rest of
+    // the buffer" is 1 MiB on the frame ring and the device allows 64 KiB - so
+    // the descriptor covers what the device permits, which is more than any
+    // cbuffer the engine declares. See max_uniform_range().
+    const usize remaining = vk_buffer.size() - offset_bytes;
+    info.range = remaining < device_.max_uniform_range() ? remaining
+                                                         : device_.max_uniform_range();
     // The base is the register shift, not zero. See pipeline_vulkan.cpp, which
     // built the layout these bindings have to match.
     queue_write(0, kBindingBaseUniform + slot, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, info);

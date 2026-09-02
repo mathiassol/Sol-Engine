@@ -633,6 +633,10 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
                 engine::shaders::ShaderTarget::Dxil, "d3d12")
             && fail_on_gate) {
             return false;
+        } else if (!run_parity_frames_gate(*offscreen_device, compiler, parity_path,
+                       engine::shaders::ShaderTarget::Dxil, "d3d12")
+            && fail_on_gate) {
+            return false;
         }
     }
 #endif
@@ -671,6 +675,10 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         } else if (!depth_path.empty()
             && !run_parity_depth_gate(*vk_device, compiler, depth_path,
                 engine::shaders::ShaderTarget::Spirv, "vulkan")
+            && fail_on_gate) {
+            return false;
+        } else if (!run_parity_frames_gate(*vk_device, compiler, parity_path,
+                       engine::shaders::ShaderTarget::Spirv, "vulkan")
             && fail_on_gate) {
             return false;
         } else if (!storage_tex_path.empty()

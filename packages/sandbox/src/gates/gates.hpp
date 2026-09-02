@@ -168,6 +168,14 @@ bool run_vulkan_device_gate();
 // device - it needs a DLL that ships with a GPU SDK.
 bool run_spirv_gate(engine::shaders::IShaderCompiler& compiler, const std::string& shader_path);
 
+// RHI #24: the first parity assertion about time rather than a pixel. Four
+// frames with no wait between them, so the run wraps past the slot count and
+// reuses slot 0 - which is where a missing fence wait, a pool reset in flight
+// or a reused command buffer actually bites.
+bool run_parity_frames_gate(engine::rhi::IDevice& device,
+    engine::shaders::IShaderCompiler& compiler, const std::string& shader_path,
+    engine::shaders::ShaderTarget target, const char* api);
+
 // RHI #24: depth parity. Three full-target draws where the middle one is
 // nearer under the device's own convention, so the probe distinguishes no depth
 // test, an inverted compare, a wrong clear value and disabled depth writes -
