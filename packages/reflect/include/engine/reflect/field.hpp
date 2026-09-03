@@ -3,6 +3,7 @@
 #include <engine/core/types.hpp>
 
 #include <cstddef>
+#include <span>
 
 // Describes the fields of a POD struct: name, byte offset, size, type.
 //
@@ -90,18 +91,106 @@ struct FieldDesc {
     const char* name = nullptr;
     u32 offset = 0;
     u32 size = 0;
-    FieldType type = FieldType::U32;
+    FieldType type = FieldType::Count;
 };
 
-// A POD struct and its fields. Does not own the array - descriptors are
-// `static constexpr` beside the struct they describe.
+// A POD struct and its fields. Does not own the fields - descriptors are
+// `static constexpr` beside the struct they describe. A span rather than a
+// pointer and a count, so "the count matches the array" is a property of the
+// type instead of an obligation on every call site.
 struct TypeDesc {
     const char* name = nullptr;
     u32 size = 0;
     u32 align = 0;
-    const FieldDesc* fields = nullptr;
-    u32 field_count = 0;
+    std::span<const FieldDesc> fields{};
 };
+
+// What is wrong with a descriptor set. Ordered so the cheapest structural
+// checks come first; validate returns the first failure it finds.
+enum class TypeError : u8 {
+    Ok,
+    NoFields,
+    EmptyName,
+    // The field names FieldType::Count, or a value outside the enum. Caught
+    // explicitly because size_of returns kVariableSize for it, which is the
+    // same signal Name legitimately gives - so without this guard a sentinel
+    // used by mistake would skip the size check exactly like a variable-width
+    // field, which is the hazard Task 2b existed to close.
+    InvalidFieldType,
+    SizeDisagreesWithType,
+    OffsetsNotAscending,
+    FieldOverlapsPrevious,
+    FieldPastEnd,
+    // A gap wide enough to hold another field of the following field's
+    // alignment - the signature of a field left out of the table.
+    InteriorGapTooLarge,
+    // Room after the last field for one more - the signature of a field
+    // appended to the struct and forgotten here. The common case.
+    TrailingGapTooLarge,
+};
+
+// Checks a descriptor set against the struct it claims to describe. constexpr
+// so a type can static_assert its own completeness, which is the generalisation
+// of frame_pipelines.hpp's
+// static_assert(sizeof(FramePipelines) == count * sizeof(void*)) to fields that
+// do not all have the same width.
+//
+// The gap rules are what catch a *missing* field, and they are heuristics with
+// a precise bound: padding between two fields can never be as wide as the
+// following field's alignment, so a gap that wide means something is not
+// described. Same reasoning after the last field, using the struct's alignment.
+constexpr TypeError validate(const TypeDesc& type) {
+    if (type.fields.empty()) {
+        return TypeError::NoFields;
+    }
+    u32 cursor = 0;
+    for (usize i = 0; i < type.fields.size(); ++i) {
+        const FieldDesc& f = type.fields[i];
+        if (f.name == nullptr || f.name[0] == '\0') {
+            return TypeError::EmptyName;
+        }
+        // Before the size cross-check, not after: size_of(Count) is
+        // kVariableSize, so a sentinel would otherwise be waved through by the
+        // `nominal != kVariableSize` test below as if it were a Name field.
+        if (!is_valid_field_type(f.type)) {
+            return TypeError::InvalidFieldType;
+        }
+        const u32 nominal = size_of(f.type);
+        if (nominal != kVariableSize && f.size != nominal) {
+            return TypeError::SizeDisagreesWithType;
+        }
+        if (i > 0) {
+            const FieldDesc& prev = type.fields[i - 1];
+            if (f.offset < prev.offset) {
+                return TypeError::OffsetsNotAscending;
+            }
+            if (f.offset < prev.offset + prev.size) {
+                return TypeError::FieldOverlapsPrevious;
+            }
+            const u32 gap = f.offset - cursor;
+            // align_of never returns 0 since Task 2b's table - Name and any
+            // out-of-range value both report 1 - so no guard is needed here.
+            if (gap >= align_of(f.type)) {
+                return TypeError::InteriorGapTooLarge;
+            }
+        }
+        if (f.offset + f.size > type.size) {
+            return TypeError::FieldPastEnd;
+        }
+        cursor = f.offset + f.size;
+    }
+    const u32 tail = type.size - cursor;
+    // type.align comes from alignof() at the call site, so 0 means a caller
+    // built the TypeDesc by hand and got it wrong; treat it as 1 rather than
+    // dividing the tail rule by nothing.
+    const u32 struct_align = type.align == 0 ? 1 : type.align;
+    if (tail >= struct_align) {
+        return TypeError::TrailingGapTooLarge;
+    }
+    return TypeError::Ok;
+}
+
+const char* to_string(TypeError error);
 
 } // namespace engine::reflect
 
@@ -109,7 +198,7 @@ struct TypeDesc {
 // so a descriptor cannot disagree with the member it describes. Hand-writing
 // the three is the error this removes - the same reason ENGINE_ASSERT captures
 // __FILE__ rather than asking for it.
-#define ENGINE_FIELD(Type, member, field_type)                                 \
-    ::engine::reflect::FieldDesc{                                              \
-        #member, static_cast<::engine::u32>(offsetof(Type, member)),           \
-        static_cast<::engine::u32>(sizeof(Type::member)), field_type}
+#define ENGINE_REFLECT_FIELD(Type, member, field_type)                        \
+    ::engine::reflect::FieldDesc{                                             \
+        #member, static_cast<::engine::u32>(offsetof(Type, member)),          \
+        static_cast<::engine::u32>(sizeof(Type::member)), (field_type)}

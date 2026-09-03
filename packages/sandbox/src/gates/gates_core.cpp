@@ -16,15 +16,20 @@
 
 namespace sandbox {
 
+namespace {
+
 // A stand-in for the kind of POD a component will be. Deliberately has mixed
-// field widths and interior padding, which is what makes the descriptor
-// checks meaningful.
+// field widths and interior padding, which is what makes the descriptor checks
+// meaningful. Anonymous namespace because only this file needs the type, and
+// `namespace sandbox` spans ten files.
 struct ReflectProbe {
     engine::math::Vec3 pos;
     engine::f32 radius;
     engine::u32 flags;
     bool visible;
 };
+
+} // namespace
 
 bool run_gate_registry_gate() {
     // The kGates table's own consistency, at runtime. Invariant 15 checks the
@@ -690,6 +695,21 @@ bool run_quality_preset_gate() {
     return passed;
 }
 
+// A struct with a field deliberately left out of its table, which is the
+// failure `validate` exists to catch. `visible` is absent below.
+static constexpr engine::reflect::FieldDesc kMissingTrailingFields[] = {
+    ENGINE_REFLECT_FIELD(ReflectProbe, pos, engine::reflect::FieldType::Vec3),
+    ENGINE_REFLECT_FIELD(ReflectProbe, radius, engine::reflect::FieldType::F32),
+    ENGINE_REFLECT_FIELD(ReflectProbe, flags, engine::reflect::FieldType::U32),
+};
+
+// `radius` absent, leaving a four-byte hole in the middle.
+static constexpr engine::reflect::FieldDesc kMissingInteriorFields[] = {
+    ENGINE_REFLECT_FIELD(ReflectProbe, pos, engine::reflect::FieldType::Vec3),
+    ENGINE_REFLECT_FIELD(ReflectProbe, flags, engine::reflect::FieldType::U32),
+    ENGINE_REFLECT_FIELD(ReflectProbe, visible, engine::reflect::FieldType::Bool),
+};
+
 bool run_reflect_gate() {
     using engine::reflect::FieldType;
     using engine::reflect::size_of;
@@ -745,38 +765,113 @@ bool run_reflect_gate() {
     const engine::u32 type_count = static_cast<engine::u32>(FieldType::Count);
     const bool covered = checked + 1 == type_count;
 
-    // A descriptor built through ENGINE_FIELD must agree with the struct on
+    // A descriptor built through ENGINE_REFLECT_FIELD must agree with the struct on
     // every field's name, offset and width. Hand-writing these three is the
     // error the macro exists to remove, so this is what proves the macro.
     static constexpr engine::reflect::FieldDesc kProbeFields[] = {
-        ENGINE_FIELD(ReflectProbe, pos, FieldType::Vec3),
-        ENGINE_FIELD(ReflectProbe, radius, FieldType::F32),
-        ENGINE_FIELD(ReflectProbe, flags, FieldType::U32),
-        ENGINE_FIELD(ReflectProbe, visible, FieldType::Bool),
+        ENGINE_REFLECT_FIELD(ReflectProbe, pos, FieldType::Vec3),
+        ENGINE_REFLECT_FIELD(ReflectProbe, radius, FieldType::F32),
+        ENGINE_REFLECT_FIELD(ReflectProbe, flags, FieldType::U32),
+        ENGINE_REFLECT_FIELD(ReflectProbe, visible, FieldType::Bool),
     };
     static constexpr engine::reflect::TypeDesc kProbeType{
         "ReflectProbe", sizeof(ReflectProbe), alignof(ReflectProbe),
-        kProbeFields, 4};
+        kProbeFields};
 
-    bool desc_ok = kProbeType.field_count == 4
-        && kProbeType.size == sizeof(ReflectProbe)
-        && kProbeFields[0].offset == offsetof(ReflectProbe, pos)
+    const bool desc_ok = kProbeFields[0].offset == offsetof(ReflectProbe, pos)
         && kProbeFields[1].offset == offsetof(ReflectProbe, radius)
         && kProbeFields[2].offset == offsetof(ReflectProbe, flags)
         && kProbeFields[3].offset == offsetof(ReflectProbe, visible)
         && std::string_view(kProbeFields[0].name) == "pos"
+        && std::string_view(kProbeFields[1].name) == "radius"
+        && std::string_view(kProbeFields[2].name) == "flags"
         && std::string_view(kProbeFields[3].name) == "visible"
-        && kProbeFields[0].size == sizeof(ReflectProbe::pos);
+        && kProbeFields[0].size == sizeof(ReflectProbe::pos)
+        && kProbeFields[3].size == sizeof(ReflectProbe::visible);
+
+    using engine::reflect::TypeError;
+    using engine::reflect::validate;
+    using engine::reflect::TypeDesc;
+
+    // A wrong FieldType for a field whose width is known.
+    static constexpr engine::reflect::FieldDesc kWrongTypeFields[] = {
+        {"pos", 0, 12, FieldType::F32},
+    };
+    // Two fields at the same offset.
+    static constexpr engine::reflect::FieldDesc kOverlapFields[] = {
+        {"a", 0, 4, FieldType::U32},
+        {"b", 2, 4, FieldType::U32},
+    };
+    // Descending offsets.
+    static constexpr engine::reflect::FieldDesc kUnorderedFields[] = {
+        {"a", 8, 4, FieldType::U32},
+        {"b", 0, 4, FieldType::U32},
+    };
+    // A field running past the end of the struct.
+    static constexpr engine::reflect::FieldDesc kPastEndFields[] = {
+        {"a", 0, 4, FieldType::U32},
+    };
+    // The sentinel named as a field's type. size_of reports kVariableSize for
+    // it, so without validate's explicit guard this would pass as though the
+    // width were per-field.
+    static constexpr engine::reflect::FieldDesc kSentinelFields[] = {
+        {"a", 0, 4, FieldType::Count},
+    };
+
+    struct Case {
+        const char* label;
+        TypeDesc type;
+        TypeError want;
+    };
+    const Case cases[] = {
+        {"good", kProbeType, TypeError::Ok},
+        {"missing_trailing",
+            TypeDesc{"P", sizeof(ReflectProbe), alignof(ReflectProbe),
+                kMissingTrailingFields},
+            TypeError::TrailingGapTooLarge},
+        {"missing_interior",
+            TypeDesc{"P", sizeof(ReflectProbe), alignof(ReflectProbe),
+                kMissingInteriorFields},
+            TypeError::InteriorGapTooLarge},
+        {"wrong_type", TypeDesc{"P", 12, 4, kWrongTypeFields},
+            TypeError::SizeDisagreesWithType},
+        {"overlap", TypeDesc{"P", 8, 4, kOverlapFields},
+            TypeError::FieldOverlapsPrevious},
+        {"unordered", TypeDesc{"P", 12, 4, kUnorderedFields},
+            TypeError::OffsetsNotAscending},
+        {"past_end", TypeDesc{"P", 2, 4, kPastEndFields},
+            TypeError::FieldPastEnd},
+        {"no_fields", TypeDesc{"P", 4, 4, {}}, TypeError::NoFields},
+        {"sentinel_type", TypeDesc{"P", 4, 4, kSentinelFields},
+            TypeError::InvalidFieldType},
+    };
+
+    engine::u32 cases_ok = 0;
+    bool have_bad = false;
+    const char* first_bad_case = "-";
+    TypeError first_bad_got = TypeError::Ok;
+    for (const Case& c : cases) {
+        const TypeError got = validate(c.type);
+        if (got == c.want) {
+            ++cases_ok;
+        } else if (!have_bad) {
+            have_bad = true;
+            first_bad_case = c.label;
+            first_bad_got = got;
+        }
+    }
+    const engine::u32 case_count = static_cast<engine::u32>(std::size(cases));
 
     const bool passed = wrong == 0 && checked == 9 && name_variable && covered
-        && desc_ok;
-    char message[224];
+        && desc_ok && cases_ok == case_count;
+    char message[256];
     std::snprintf(message, sizeof(message),
-        "Reflect size gate: checked=%u wrong=%u first_bad=%s(got %u want %u) "
-        "name_variable=%s covered=%u/%u desc_ok=%s (%s)",
-        checked, wrong, engine::reflect::to_string(first_wrong), first_got, first_want,
-        name_variable ? "yes" : "no", checked + 1, type_count,
-        desc_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+        "Reflect gate: sizes=%u/%u covered=%u/%u name_var=%s desc_ok=%s "
+        "validate=%u/%u first_bad=%s(got %s) (%s)",
+        checked - wrong, checked, checked + 1, type_count,
+        name_variable ? "yes" : "no", desc_ok ? "yes" : "no",
+        cases_ok, case_count, first_bad_case,
+        engine::reflect::to_string(first_bad_got), passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);
     return passed;
