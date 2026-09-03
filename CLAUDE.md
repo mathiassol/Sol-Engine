@@ -288,6 +288,14 @@ use. The mapping, so it does not have to be re-derived every session:
 Where a skill and this file disagree, this file wins — that is the documented
 precedence, not a judgement call.
 
+One skill here is third-party: `codemap` is vendored from
+[beadnall/codemap](https://github.com/beadnall/codemap) (MIT) at a pinned
+commit. It draws the package graph as an explorable isometric HTML page and is
+read-only — it never edits the tree, so it is safe to run mid-feature. Ask for
+"a codemap of this repo" or "diagram the architecture". Provenance, what was
+left out of the vendored copy and how to update it:
+[.claude/skills/codemap/README.md](.claude/skills/codemap/README.md).
+
 ## Docs map
 
 | File | Purpose |
