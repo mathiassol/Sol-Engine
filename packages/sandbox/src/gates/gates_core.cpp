@@ -734,7 +734,7 @@ static constexpr engine::reflect::TypeDesc kProbeType{
 // a build error rather than a runtime discovery. This line is the reason
 // validate is constexpr.
 static_assert(engine::reflect::validate(kProbeType) == engine::reflect::TypeError::Ok,
-    "ReflectProbe's descriptors do not match the struct");
+    "ReflectProbe's descriptors must match the struct they describe");
 
 // And the negative: the table that omits `visible` must not compile clean.
 static_assert(engine::reflect::validate(
@@ -847,6 +847,10 @@ bool run_reflect_gate() {
         TypeError want;
     };
     const Case cases[] = {
+        // Also proven at compile time by the static_assert above, so this row
+        // cannot go red in a shipped binary. Kept deliberately: if that
+        // assertion is ever deleted as duplicate coverage, this becomes the
+        // sole guard on the correct-input path again, at no cost.
         {"good", kProbeType, TypeError::Ok},
         {"missing_leading",
             TypeDesc{"P", sizeof(ReflectProbe), alignof(ReflectProbe),

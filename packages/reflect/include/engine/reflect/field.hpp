@@ -147,6 +147,11 @@ enum class TypeError : u8 {
 // static_assert(sizeof(FramePipelines) == count * sizeof(void*)) to fields that
 // do not all have the same width.
 //
+// For a worked example of a type checking itself this way at namespace scope,
+// see the static_asserts beside `kProbeFields` in
+// packages/sandbox/src/gates/gates_core.cpp - that is the pattern a consumer
+// copies.
+//
 // The gap rules are what catch a *missing* field. Padding before any member can
 // never be as wide as that member's own alignment - the compiler would have
 // placed it earlier - so a gap that wide means something is undescribed. That
