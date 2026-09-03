@@ -728,13 +728,21 @@ bool run_reflect_gate() {
     // Name is per-field, so it must report kVariableSize rather than a width.
     const bool name_variable = size_of(FieldType::Name) == engine::reflect::kVariableSize;
 
-    const bool passed = wrong == 0 && checked == 9 && name_variable;
+    // `expected[]` is hand-written because only the sandbox can name the real
+    // C++ types, so nothing can derive it - but the *count* can be checked.
+    // Name is verified separately just above, hence the + 1. A new FieldType
+    // with no entry here turns this red instead of passing while blind to it.
+    const engine::u32 type_count = static_cast<engine::u32>(FieldType::Count);
+    const bool covered = checked + 1 == type_count;
+
+    const bool passed = wrong == 0 && checked == 9 && name_variable && covered;
     char message[224];
     std::snprintf(message, sizeof(message),
         "Reflect size gate: checked=%u wrong=%u first_bad=%s(got %u want %u) "
-        "name_variable=%s (%s)",
+        "name_variable=%s covered=%u/%u (%s)",
         checked, wrong, engine::reflect::to_string(first_wrong), first_got, first_want,
-        name_variable ? "yes" : "no", passed ? "pass" : "FAIL");
+        name_variable ? "yes" : "no", checked + 1, type_count,
+        passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);
     return passed;
