@@ -67,16 +67,16 @@ static_assert(sizeof(kFieldTypes) / sizeof(kFieldTypes[0])
 // Count is a sentinel, so it is not a valid index. Guarding rather than
 // asserting keeps these usable in a constant expression from a caller that has
 // not validated its input yet.
-constexpr bool is_type(FieldType type) {
+constexpr bool is_valid_field_type(FieldType type) {
     return static_cast<usize>(type) < static_cast<usize>(FieldType::Count);
 }
 
 constexpr u32 size_of(FieldType type) {
-    return is_type(type) ? kFieldTypes[static_cast<usize>(type)].size : kVariableSize;
+    return is_valid_field_type(type) ? kFieldTypes[static_cast<usize>(type)].size : kVariableSize;
 }
 
 constexpr u32 align_of(FieldType type) {
-    return is_type(type) ? kFieldTypes[static_cast<usize>(type)].align : 1;
+    return is_valid_field_type(type) ? kFieldTypes[static_cast<usize>(type)].align : 1;
 }
 
 const char* to_string(FieldType type);
