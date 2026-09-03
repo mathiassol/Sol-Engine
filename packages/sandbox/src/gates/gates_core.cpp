@@ -1,6 +1,12 @@
 #include "../sandbox_common.hpp"
 #include "gate_registry.hpp"
 
+#include <engine/reflect/field.hpp>
+#include <engine/math/vec2.hpp>
+#include <engine/math/vec3.hpp>
+#include <engine/math/vec4.hpp>
+#include <engine/math/mat4.hpp>
+
 // Core, config and identity gates.
 //
 // Moved out of main.cpp, which held all 72 and was 26% of the engine
@@ -671,6 +677,66 @@ bool run_quality_preset_gate() {
         shadow_wins ? "yes" : "no", bounds_ok ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
+    return passed;
+}
+
+bool run_reflect_gate() {
+    using engine::reflect::FieldType;
+    using engine::reflect::size_of;
+    using engine::reflect::align_of;
+
+    // Every byte count reflect hardcodes, against the type it claims to
+    // describe. reflect cannot include math (it is Layer 0 and math is a
+    // sibling), so this gate is the only place the two can be compared - and
+    // a silent disagreement here would corrupt every offset computed from it.
+    struct Expect {
+        FieldType type;
+        engine::u32 size;
+        engine::u32 align;
+    };
+    const Expect expected[] = {
+        {FieldType::Bool, sizeof(bool), alignof(bool)},
+        {FieldType::I32, sizeof(engine::i32), alignof(engine::i32)},
+        {FieldType::U32, sizeof(engine::u32), alignof(engine::u32)},
+        {FieldType::F32, sizeof(engine::f32), alignof(engine::f32)},
+        {FieldType::F64, sizeof(engine::f64), alignof(engine::f64)},
+        {FieldType::Vec2, sizeof(engine::math::Vec2), alignof(engine::math::Vec2)},
+        {FieldType::Vec3, sizeof(engine::math::Vec3), alignof(engine::math::Vec3)},
+        {FieldType::Vec4, sizeof(engine::math::Vec4), alignof(engine::math::Vec4)},
+        {FieldType::Mat4, sizeof(engine::math::Mat4), alignof(engine::math::Mat4)},
+    };
+
+    engine::u32 checked = 0;
+    engine::u32 wrong = 0;
+    FieldType first_wrong = FieldType::Bool;
+    engine::u32 first_got = 0;
+    engine::u32 first_want = 0;
+    for (const Expect& e : expected) {
+        ++checked;
+        const engine::u32 got_size = size_of(e.type);
+        const engine::u32 got_align = align_of(e.type);
+        if (got_size != e.size || got_align != e.align) {
+            if (wrong == 0) {
+                first_wrong = e.type;
+                first_got = got_size;
+                first_want = e.size;
+            }
+            ++wrong;
+        }
+    }
+
+    // Name is per-field, so it must report kVariableSize rather than a width.
+    const bool name_variable = size_of(FieldType::Name) == engine::reflect::kVariableSize;
+
+    const bool passed = wrong == 0 && checked == 9 && name_variable;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Reflect size gate: checked=%u wrong=%u first_bad=%s(got %u want %u) "
+        "name_variable=%s (%s)",
+        checked, wrong, engine::reflect::to_string(first_wrong), first_got, first_want,
+        name_variable ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::General, message);
     return passed;
 }
 

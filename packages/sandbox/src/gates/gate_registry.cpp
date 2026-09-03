@@ -54,6 +54,8 @@ const GateEntry kGates[] = {
         [](const CpuGateContext&) { return run_exposure_gate(); }},
     {"run_quality_preset_gate", GateKind::Cpu,
         [](const CpuGateContext&) { return run_quality_preset_gate(); }},
+    {"run_reflect_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_reflect_gate(); }},
     {"run_physics_gate", GateKind::Cpu,
         [](const CpuGateContext& ctx) { return run_physics_gate(ctx.physics); }},
     {"run_physics_body_gate", GateKind::Cpu,

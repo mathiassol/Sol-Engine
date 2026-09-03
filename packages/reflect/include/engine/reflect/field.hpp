@@ -33,12 +33,32 @@ enum class FieldType : u8 {
 // size_of/align_of answer this for a type whose width is per-field.
 inline constexpr u32 kVariableSize = 0;
 
-constexpr u32 size_of(FieldType) {
-    return 0; // STUB - Task 2 Step 6 replaces this
+// Byte counts for the math types are stated here rather than derived, because
+// reflect does not depend on math. The reflect gate compares every one of them
+// against the real sizeof/alignof - that is what keeps this honest.
+constexpr u32 size_of(FieldType type) {
+    switch (type) {
+    case FieldType::Bool: return 1;
+    case FieldType::I32:  return 4;
+    case FieldType::U32:  return 4;
+    case FieldType::F32:  return 4;
+    case FieldType::F64:  return 8;
+    case FieldType::Vec2: return 8;
+    case FieldType::Vec3: return 12;
+    case FieldType::Vec4: return 16;
+    case FieldType::Mat4: return 64;
+    case FieldType::Name: return kVariableSize;
+    }
+    return kVariableSize;
 }
 
-constexpr u32 align_of(FieldType) {
-    return 0; // STUB - Task 2 Step 6 replaces this
+constexpr u32 align_of(FieldType type) {
+    switch (type) {
+    case FieldType::Bool: return 1;
+    case FieldType::F64:  return 8;
+    case FieldType::Name: return 1;
+    default:              return 4;
+    }
 }
 
 const char* to_string(FieldType type);

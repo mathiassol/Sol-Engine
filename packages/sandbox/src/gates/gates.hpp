@@ -72,6 +72,8 @@ bool run_exposure_gate();
 
 bool run_quality_preset_gate();
 
+bool run_reflect_gate();
+
 // ── physics ──
 bool run_physics_gate(engine::physics::IPhysics* physics);
 

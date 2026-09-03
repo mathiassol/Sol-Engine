@@ -1548,6 +1548,7 @@ int run_app(int argc, char** argv) {
     gates_ok = run_mount_gate(*loader) && gates_ok;
     gates_ok = run_mount_containment_gate(*loader) && gates_ok;
     gates_ok = run_build_gate(app.content_layout()) && gates_ok;
+    gates_ok = run_reflect_gate() && gates_ok;
     if (!run_gate_registry_gate()) {
         gates_ok = false;
     }
