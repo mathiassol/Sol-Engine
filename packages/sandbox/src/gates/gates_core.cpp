@@ -717,6 +717,32 @@ static constexpr engine::reflect::FieldDesc kMissingLeadingFields[] = {
     ENGINE_REFLECT_FIELD(ReflectProbe, visible, engine::reflect::FieldType::Bool),
 };
 
+// A descriptor built through ENGINE_REFLECT_FIELD must agree with the struct on
+// every field's name, offset and width. Hand-writing these three is the
+// error the macro exists to remove, so this is what proves the macro.
+static constexpr engine::reflect::FieldDesc kProbeFields[] = {
+    ENGINE_REFLECT_FIELD(ReflectProbe, pos, engine::reflect::FieldType::Vec3),
+    ENGINE_REFLECT_FIELD(ReflectProbe, radius, engine::reflect::FieldType::F32),
+    ENGINE_REFLECT_FIELD(ReflectProbe, flags, engine::reflect::FieldType::U32),
+    ENGINE_REFLECT_FIELD(ReflectProbe, visible, engine::reflect::FieldType::Bool),
+};
+static constexpr engine::reflect::TypeDesc kProbeType{
+    "ReflectProbe", sizeof(ReflectProbe), alignof(ReflectProbe), kProbeFields};
+
+// The usability claim, enforced by the compiler rather than described: a type
+// checks its own descriptors where they are defined, and a forgotten field is
+// a build error rather than a runtime discovery. This line is the reason
+// validate is constexpr.
+static_assert(engine::reflect::validate(kProbeType) == engine::reflect::TypeError::Ok,
+    "ReflectProbe's descriptors do not match the struct");
+
+// And the negative: the table that omits `visible` must not compile clean.
+static_assert(engine::reflect::validate(
+                  engine::reflect::TypeDesc{"P", sizeof(ReflectProbe),
+                      alignof(ReflectProbe), kMissingTrailingFields})
+        == engine::reflect::TypeError::TrailingGapTooLarge,
+    "validate must reject a table missing a trailing field");
+
 bool run_reflect_gate() {
     using engine::reflect::FieldType;
     using engine::reflect::size_of;
@@ -771,19 +797,6 @@ bool run_reflect_gate() {
     // with no entry here turns this red instead of passing while blind to it.
     const engine::u32 type_count = static_cast<engine::u32>(FieldType::Count);
     const bool covered = checked + 1 == type_count;
-
-    // A descriptor built through ENGINE_REFLECT_FIELD must agree with the struct on
-    // every field's name, offset and width. Hand-writing these three is the
-    // error the macro exists to remove, so this is what proves the macro.
-    static constexpr engine::reflect::FieldDesc kProbeFields[] = {
-        ENGINE_REFLECT_FIELD(ReflectProbe, pos, FieldType::Vec3),
-        ENGINE_REFLECT_FIELD(ReflectProbe, radius, FieldType::F32),
-        ENGINE_REFLECT_FIELD(ReflectProbe, flags, FieldType::U32),
-        ENGINE_REFLECT_FIELD(ReflectProbe, visible, FieldType::Bool),
-    };
-    static constexpr engine::reflect::TypeDesc kProbeType{
-        "ReflectProbe", sizeof(ReflectProbe), alignof(ReflectProbe),
-        kProbeFields};
 
     const bool desc_ok = kProbeFields[0].offset == offsetof(ReflectProbe, pos)
         && kProbeFields[1].offset == offsetof(ReflectProbe, radius)
