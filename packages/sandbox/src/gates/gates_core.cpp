@@ -798,6 +798,11 @@ bool run_reflect_gate() {
     const engine::u32 type_count = static_cast<engine::u32>(FieldType::Count);
     const bool covered = checked + 1 == type_count;
 
+    // `.size` is spot-checked on two fields, not four, on purpose: this block
+    // tests the macro's plumbing, and validate(kProbeType) below already proves
+    // size == size_of(type) for every field, composed with the expected[] loop
+    // above proving size_of(type) == the real sizeof. Offsets and names are
+    // checked on all four, because only the macro can get those wrong.
     const bool desc_ok = kProbeFields[0].offset == offsetof(ReflectProbe, pos)
         && kProbeFields[1].offset == offsetof(ReflectProbe, radius)
         && kProbeFields[2].offset == offsetof(ReflectProbe, flags)

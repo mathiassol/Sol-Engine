@@ -431,7 +431,10 @@ separated.
 
 ## Build order
 
-1. `reflect` — small, unblocks everything
+1. `reflect` — small, unblocks everything. **Done.** Its gate,
+   `run_reflect_gate`, is already the largest CPU-logic body in
+   `gates_core.cpp`; a consumer adding its own reflect assertions should put
+   them in its own domain's gate rather than growing that one
 2. `world` — ids, handles, components, and **removal**
 3. `document` — the authored model and the text format
 4. `commands` — dispatch, log, undo
@@ -460,6 +463,7 @@ overlooked:
 | Cell size, and the significance budget's shape | Needs a real world to measure against |
 | Whether the editor is one process or two | Follows the UI choice |
 | Asset database and import pipeline | A separate parent spec; this one assumes assets are referenced by path |
+| A `find_field(TypeDesc, name)` helper in `reflect` | Raised by step 1's final review, and **deliberately deferred**. Three consumers each need to locate a field, but not the same operation: `document` wants find-by-name while parsing, `commands` wants to resolve a two-level path (`transform.pos`) whose *first* segment is a component lookup owned by `world`, and an inspector wants ordered iteration rather than lookup. Writing one helper before knowing which of those three shapes wins is the same speculative addition the package refused twice for `FieldType`. Revisit when the second consumer exists and the shape is observed rather than guessed |
 
 ---
 

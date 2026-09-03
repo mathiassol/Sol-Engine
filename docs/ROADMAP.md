@@ -28,7 +28,7 @@ how.
 
 ## Audit — foundation today (after phase 14)
 
-Measured 3 Sep 2026: **34,507 lines** of C++/HLSL in **177 files**, **28
+Measured 3 Sep 2026: **34,512 lines** of C++/HLSL in **177 files**, **28
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the
@@ -1528,7 +1528,7 @@ takes out `missing_interior`; loosening the trailing rule takes out
 three jobs, and one experiment cannot test all of them — the interior case is
 the only one sitting *at* the bound.
 
-Tree: 34,507 lines, 28 packages.
+Tree: 34,512 lines, 28 packages.
 
 **What it does not catch**, measured rather than assumed, and written into the
 header because seven more steps will trust this: a missing field narrower than
