@@ -2,6 +2,8 @@
 
 #include <engine/core/types.hpp>
 
+#include <cstddef>
+
 // Describes the fields of a POD struct: name, byte offset, size, type.
 //
 // This exists so that text serialisation, the command layer and an editor
@@ -81,4 +83,33 @@ constexpr u32 align_of(FieldType type) {
 
 const char* to_string(FieldType type);
 
+// One field of a POD struct. `size` is authoritative: for FieldType::Name it is
+// the only width available, and for everything else the reflect gate proves it
+// equals size_of(type).
+struct FieldDesc {
+    const char* name = nullptr;
+    u32 offset = 0;
+    u32 size = 0;
+    FieldType type = FieldType::U32;
+};
+
+// A POD struct and its fields. Does not own the array - descriptors are
+// `static constexpr` beside the struct they describe.
+struct TypeDesc {
+    const char* name = nullptr;
+    u32 size = 0;
+    u32 align = 0;
+    const FieldDesc* fields = nullptr;
+    u32 field_count = 0;
+};
+
 } // namespace engine::reflect
+
+// Builds a FieldDesc whose name, offset and width all come from the same token,
+// so a descriptor cannot disagree with the member it describes. Hand-writing
+// the three is the error this removes - the same reason ENGINE_ASSERT captures
+// __FILE__ rather than asking for it.
+#define ENGINE_FIELD(Type, member, field_type)                                 \
+    ::engine::reflect::FieldDesc{                                              \
+        #member, static_cast<::engine::u32>(offsetof(Type, member)),           \
+        static_cast<::engine::u32>(sizeof(Type::member)), field_type}

@@ -16,6 +16,16 @@
 
 namespace sandbox {
 
+// A stand-in for the kind of POD a component will be. Deliberately has mixed
+// field widths and interior padding, which is what makes the descriptor
+// checks meaningful.
+struct ReflectProbe {
+    engine::math::Vec3 pos;
+    engine::f32 radius;
+    engine::u32 flags;
+    bool visible;
+};
+
 bool run_gate_registry_gate() {
     // The kGates table's own consistency, at runtime. Invariant 15 checks the
     // table against the definitions in source; this checks the table against
@@ -735,14 +745,38 @@ bool run_reflect_gate() {
     const engine::u32 type_count = static_cast<engine::u32>(FieldType::Count);
     const bool covered = checked + 1 == type_count;
 
-    const bool passed = wrong == 0 && checked == 9 && name_variable && covered;
+    // A descriptor built through ENGINE_FIELD must agree with the struct on
+    // every field's name, offset and width. Hand-writing these three is the
+    // error the macro exists to remove, so this is what proves the macro.
+    static constexpr engine::reflect::FieldDesc kProbeFields[] = {
+        ENGINE_FIELD(ReflectProbe, pos, FieldType::Vec3),
+        ENGINE_FIELD(ReflectProbe, radius, FieldType::F32),
+        ENGINE_FIELD(ReflectProbe, flags, FieldType::U32),
+        ENGINE_FIELD(ReflectProbe, visible, FieldType::Bool),
+    };
+    static constexpr engine::reflect::TypeDesc kProbeType{
+        "ReflectProbe", sizeof(ReflectProbe), alignof(ReflectProbe),
+        kProbeFields, 4};
+
+    bool desc_ok = kProbeType.field_count == 4
+        && kProbeType.size == sizeof(ReflectProbe)
+        && kProbeFields[0].offset == offsetof(ReflectProbe, pos)
+        && kProbeFields[1].offset == offsetof(ReflectProbe, radius)
+        && kProbeFields[2].offset == offsetof(ReflectProbe, flags)
+        && kProbeFields[3].offset == offsetof(ReflectProbe, visible)
+        && std::string_view(kProbeFields[0].name) == "pos"
+        && std::string_view(kProbeFields[3].name) == "visible"
+        && kProbeFields[0].size == sizeof(ReflectProbe::pos);
+
+    const bool passed = wrong == 0 && checked == 9 && name_variable && covered
+        && desc_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
         "Reflect size gate: checked=%u wrong=%u first_bad=%s(got %u want %u) "
-        "name_variable=%s covered=%u/%u (%s)",
+        "name_variable=%s covered=%u/%u desc_ok=%s (%s)",
         checked, wrong, engine::reflect::to_string(first_wrong), first_got, first_want,
         name_variable ? "yes" : "no", checked + 1, type_count,
-        passed ? "pass" : "FAIL");
+        desc_ok ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::General, message);
     return passed;
