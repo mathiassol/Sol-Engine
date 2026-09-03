@@ -1473,6 +1473,90 @@ actually re-raised those nine on the service — the file is the only copy.
 
 ---
 
+## `reflect` — field descriptors, and a completeness check that runs at compile time (done)
+
+**Why:** step 1 of eight in
+[the editor architecture spec](superpowers/specs/2026-09-03-editor-architecture-design.md).
+Text serialisation, the command layer and an editor inspector all need to walk a
+struct's fields. Written three times they drift; written once they are one
+mechanism. This is that one.
+
+**Choice:** plain data — `FieldDesc{name, offset, size, type}` and a `TypeDesc`
+over a `std::span` of them. No registry (that is `world`) and no text I/O (that
+is `document`), because a package that does one thing is what makes the next
+seven steps independent.
+
+`reflect` depends on `core` only and **not on `math`**, so it states the byte
+width of `Vec3` rather than deriving it — and the gate, which lives in `sandbox`
+and can see both, compares every one of those constants against the real
+`sizeof`. `FieldType` covers only types that exist today: no `Quat`, because
+`math` has none, and no `EntityId`, because that arrives in step 2 with the
+type. A tag for a type nobody can name is exactly the drift `VISION.md` exists
+to catch.
+
+`validate()` is `constexpr`, which is the whole point: a type asserts its own
+completeness beside the struct it describes, so a field appended and not
+described is a build error rather than a runtime discovery. It generalises
+`static_assert(sizeof(FramePipelines) == count * sizeof(void*))` from
+`frame_pipelines.hpp` to fields that are not all the same width. **It must stay
+in the header** — a `constexpr` body in a `.cpp` cannot be evaluated in a
+`static_assert` from another translation unit, so moving it would silently
+delete the only reason it exists. That trade is written beside the function,
+because it otherwise looks exactly like something to tidy up.
+
+**Gate:** `run_reflect_gate`, classified `Cpu`, so it is one of the 39 gates CI
+can actually run. It checks nine byte widths and alignments against the real
+types; that a descriptor built through `ENGINE_REFLECT_FIELD` agrees with its
+member on name, offset and width; that the gate has an expectation for every
+`FieldType`; and ten `validate` cases of which **nine are deliberately broken
+tables** — a field missing from the front, the middle and the end, a wrong type
+width, overlapping fields, descending offsets, a field past the end, an empty
+set, and a field whose type is the `Count` sentinel.
+
+It was watched red five times, each before the code that fixes it existed:
+`wrong=9` against the stubbed width table; a `static_assert` firing on an
+incomplete `kFieldTypes`; `covered=10/11` with a spare enumerator nobody had
+taught the gate about; `validate=1/9` against the stubbed checker; and
+`validate=9/10` for a field missing from the front. Both `static_assert`s were
+inverted and seen to fail the build.
+
+Three rules were then proven load-bearing by breaking them one character at a
+time, which is the part worth keeping: loosening the gap rule from `>=` to `>`
+takes out `missing_interior`; loosening the trailing rule takes out
+`missing_trailing`; and putting the gap check back inside `if (i > 0)` takes out
+`missing_leading`. Those are three different experiments because the rule does
+three jobs, and one experiment cannot test all of them — the interior case is
+the only one sitting *at* the bound.
+
+Tree: 34,507 lines, 28 packages.
+
+**What it does not catch**, measured rather than assumed, and written into the
+header because seven more steps will trust this: a missing field narrower than
+the gap tolerance is invisible, and it is the total width of a contiguous
+missing run that matters rather than the field count — so a whole 4-byte field
+disappears from `{ f64 d; u32 x; f32 tail; }`, because the `f64` raises the
+struct's alignment to 8 and the tail stays under it. A field described with the
+wrong type but the right width passes everything, since `reflect` stores widths
+and not identity. `alignas` on a member makes a *correct* table get rejected,
+and the gap rules assume that never happens. Packed structs hide a missing
+field more easily. Bitfields cannot be described at all.
+
+**Do not:** do not add a `FieldType` for a type the tree does not have — the
+temptation arose twice and is unfalsifiable until a consumer exists. Do not put
+a registry here; `world` owns which component types exist. Do not put text
+reading or writing here; `document` owns the format. Do not move `validate()`
+out of the header. Do not relax the gap rules, and do not assume one experiment
+verifies them. Do not nest a rule inside a guard it does not need — the gap
+check spent one commit inside `if (i > 0)`, which made the first field exempt
+and let a missing leading field pass. Do not drop a term from the gate's
+`passed` while rewriting its message: two drafts did, each time removing a
+guard that had just been proven, and nothing catches it because the gate still
+says `(pass)`. And do not mark Foundation #14 Done on the strength of this —
+the row promises save/load stops hand-writing both sides, and that arrives with
+`document`.
+
+---
+
 ## RHI #25 — a live Vulkan frame, and the gate that had never presented (in progress)
 
 **Why:** RHI #24 shipped the whole gate suite green on Vulkan and a first
