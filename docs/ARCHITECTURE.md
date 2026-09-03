@@ -11,6 +11,7 @@ Read as `package → what it links`. Derived from `target_link_libraries` in eac
 ```
 Layer 0  core            → (nothing)
          math            → core
+         reflect         → core
 
 Layer 1  platform        → core          rhi       → core
          shaders         → core          assets    → core, math
@@ -56,6 +57,7 @@ Two facts the shape is load-bearing on:
 |---------|-------|------|----------------|
 | `core` | 0 | lib | Clock, frame timer, log, arena, profile scopes, cvars |
 | `math` | 0 | lib | Vec3, Mat4, AABB, Frustum, ortho, column-major RH Y-up |
+| `reflect` | 0 | lib | Field descriptors for POD structs: name, byte offset, size, `FieldType`. `validate()` is `constexpr`, so a type can `static_assert` that its descriptors match the struct. Knows nothing about `math` — the reflect gate cross-checks the vector byte counts |
 | `platform` | 1 | interface | `IPlatform`, `IWindow`, `IInput` (keys, mouse, four `GamepadState` slots), `IFileSystem` |
 | `rhi` | 1 | interface | `IRHI`, `IDevice`, buffers, graphics + compute pipelines, commands, `SamplerDesc`, **instanced `draw_indexed`** + `set_structured_buffer` |
 | `assets` | 1 | lib | `IAssetLoader`, mesh/image types, `SOLC` cooker, `SOLP` pak |

@@ -55,6 +55,7 @@ include(PackageHelpers)
 # ── Layer 0: Foundation ──────────────────────────────────────────────────────
 add_subdirectory(packages/core)
 add_subdirectory(packages/math)
+add_subdirectory(packages/reflect)
 
 # ── Layer 1: Abstractions (interfaces) ───────────────────────────────────────
 add_subdirectory(packages/platform)

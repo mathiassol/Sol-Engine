@@ -42,6 +42,7 @@ $Layers = @{
     # Layer 0 - foundation
     'core' = 0
     'math' = 1
+    'reflect' = 1
     # Layer 1 - interfaces
     'platform' = 2; 'rhi' = 2; 'shaders' = 2; 'assets' = 2; 'audio' = 2; 'physics' = 2
     # Layer 2 - implementations

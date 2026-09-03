@@ -39,6 +39,7 @@ function(engine_add_runtime_app TARGET)
         engine::assets-gpu
         engine::debug-draw
         engine::math
+        engine::reflect
         engine::scene
         engine::gameplay
     )
