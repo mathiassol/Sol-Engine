@@ -246,7 +246,7 @@ The known owners:
 | Package list, layers, dependency graph | `docs/ARCHITECTURE.md` |
 | The render-pass checklist and its file count | `.claude/rules/renderer-boundaries.md` |
 | Which invariants exist | `tools/check-invariants.ps1` — it prints its own list |
-| Gate count, package count, option list | the tree. Do not restate them in prose |
+| Gate count, package count, option list | the tree — `check-invariants.ps1` reports each one. Do not restate them in prose; two of them had already drifted |
 | Audit grades, findings, decisions | the management service |
 
 **Prefer deleting to appending.** A doc that has grown a section per incident
