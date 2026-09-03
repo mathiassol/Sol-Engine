@@ -209,9 +209,9 @@ Add-Result 'header-layout' 'public headers under include/engine/<domain>/' $head
 # Three exclusions, all deliberate:
 #   docs/superpowers/  - specs and plans are dated archives. A link that was
 #                        valid when written is allowed to age.
-#   docs/analysis/     - generated audit reports from /analizeMax. Same reason
-#                        as superpowers/: dated snapshots, and a report five
-#                        runs old may reference a file that has since moved. A
+#   docs/analysis/     - generated audit reports from /aim-audit. Same reason
+#                        as superpowers/: dated snapshots, and an older report
+#                        may reference a file that has since moved. A
 #                        generated file must never be able to turn CI red.
 #   reasarch/          - a personal research library. Its PDFs and figures are
 #                        gitignored (paper extracts, public MIT repo), so its
@@ -489,169 +489,7 @@ if (Test-Path $mapPath) {
         "$($catClaim.Count) subtotals agree, no dependency loops")
 }
 Add-Result 'map-dependencies' $mapSummary $mapViolations
-
-# ── 12. The analizeMax analysis set is internally consistent ─────────────────
-# The publishing contract (.claude/skills/analizeMax/publishing.md) is ~200
-# lines of prose that three skills are asked to obey. The half of it that is
-# machine-checkable should not be prose: a duplicate artifact URL means one
-# document has been silently overwriting another, and a grade that disagrees
-# between the hub and the page it links to is the one failure a reader cannot
-# detect for themselves.
-#
-# Consistency, not completeness. A fresh clone has the registry (committed) but
-# no reports (generated, untracked), and that is a valid state — so completeness
-# is only enforced once LATEST.md proves an audit has actually run here.
-$analysisViolations = @()
-$analysisDir = 'docs/analysis'
-# Newest full report, by name - the filenames are date-prefixed. A metric page
-# whose `derived_from` matches this is current; an older one is superseded and
-# that is expected, because /analizeMax does not regenerate metric pages.
-$newestFull = ''
-if (Test-Path $analysisDir) {
-    $fulls = @(Get-ChildItem -Path $analysisDir -File -Filter '*-full.md' -ErrorAction SilentlyContinue |
-        Sort-Object Name)
-    if ($fulls.Count -gt 0) { $newestFull = $fulls[-1].Name }
-}
-$metricKeys = @('stability', 'architecture', 'capabilities', 'portability', 'devex', 'ai-tooling')
-$registryPath = Join-Path $analysisDir 'artifacts.json'
-$analysisSummary = 'no analysis set present'
-
-if (Test-Path $registryPath) {
-    $registry = $null
-    try {
-        $registry = Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json
-    } catch {
-        $analysisViolations += "$analysisDir/artifacts.json: not valid JSON - $($_.Exception.Message)"
-    }
-
-    if ($registry) {
-        foreach ($key in @('hub', 'full', 'roadmap')) {
-            if (-not $registry.PSObject.Properties.Name.Contains($key)) {
-                $analysisViolations += "$analysisDir/artifacts.json: missing '$key' entry"
-            }
-        }
-        if (-not $registry.PSObject.Properties.Name.Contains('metrics')) {
-            $analysisViolations += "$analysisDir/artifacts.json: missing 'metrics' object"
-        } else {
-            foreach ($key in $metricKeys) {
-                if (-not $registry.metrics.PSObject.Properties.Name.Contains($key)) {
-                    $analysisViolations += "$analysisDir/artifacts.json: metrics is missing '$key'"
-                }
-            }
-            foreach ($extra in $registry.metrics.PSObject.Properties.Name) {
-                if ($extra -notin $metricKeys) {
-                    $analysisViolations += "$analysisDir/artifacts.json: unknown metric key '$extra'"
-                }
-            }
-        }
-
-        # Every entry needs a favicon and title (both fixed at creation), and a
-        # url field even when empty. A duplicate url is the serious one.
-        $entries = @()
-        foreach ($key in @('hub', 'full', 'roadmap')) {
-            if ($registry.PSObject.Properties.Name.Contains($key)) {
-                $entries += [pscustomobject]@{ Name = $key; Entry = $registry.$key }
-            }
-        }
-        if ($registry.PSObject.Properties.Name.Contains('metrics')) {
-            foreach ($key in $registry.metrics.PSObject.Properties.Name) {
-                $entries += [pscustomobject]@{ Name = "metrics.$key"; Entry = $registry.metrics.$key }
-            }
-        }
-        foreach ($e in $entries) {
-            foreach ($field in @('url', 'favicon', 'title')) {
-                if (-not $e.Entry.PSObject.Properties.Name.Contains($field)) {
-                    $analysisViolations += "$analysisDir/artifacts.json: $($e.Name) has no '$field'"
-                }
-            }
-        }
-        $urls = @($entries | ForEach-Object { $_.Entry.url } | Where-Object { $_ })
-        foreach ($dup in ($urls | Group-Object | Where-Object { $_.Count -gt 1 })) {
-            $analysisViolations += "$analysisDir/artifacts.json: $($dup.Count) entries share the URL $($dup.Name) - one has been overwriting the other"
-        }
-    }
-
-    # Grades in the hub, if an audit has run here.
-    $latestPath = Join-Path $analysisDir 'LATEST.md'
-    $hubGrades = @{}
-    $rowToKey = @{
-        'Stability' = 'stability'; 'Architecture' = 'architecture'
-        'Capabilities' = 'capabilities'; 'Cross-platform readiness' = 'portability'
-        'Developer setup' = 'devex'; 'AI tooling' = 'ai-tooling'
-    }
-    if (Test-Path $latestPath) {
-        foreach ($line in Get-Content -LiteralPath $latestPath) {
-            if ($line -notmatch '^\|') { continue }
-            $cells = @($line -split '\|' | ForEach-Object { $_.Trim() })
-            if ($cells.Count -lt 4) { continue }
-            $label = $cells[1]
-            if (-not $rowToKey.ContainsKey($label)) { continue }
-            $grade = ($cells[2] -replace '\*', '').Trim()
-            if ($grade) { $hubGrades[$rowToKey[$label]] = $grade }
-        }
-        foreach ($key in $metricKeys) {
-            if (-not $hubGrades.ContainsKey($key)) {
-                $analysisViolations += "$analysisDir/LATEST.md: scorecard has no grade row for '$key'"
-            }
-            # An audit has run, so every metric must have a page to link to -
-            # a placeholder counts. A hub link that dead-ends is not shareable.
-            if (-not (Test-Path (Join-Path $analysisDir "metric-$key.md"))) {
-                $analysisViolations += "$analysisDir/metric-$key.md: missing, but LATEST.md exists (run /analizeMax-repair)"
-            }
-        }
-    }
-
-    # Each metric file that does exist: known key, valid state, agreeing grade.
-    foreach ($mf in Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue) {
-        $key = $mf.BaseName -replace '^metric-', ''
-        if ($key -notin $metricKeys) {
-            $analysisViolations += "$analysisDir/$($mf.Name): '$key' is not one of the six metric keys"
-            continue
-        }
-        $body = Get-Content -LiteralPath $mf.FullName -Raw
-        $state = ([regex]::Match($body, '(?m)^state:\s*(\S+)\s*$')).Groups[1].Value
-        if (-not $state) {
-            $analysisViolations += "$analysisDir/$($mf.Name): no 'state:' in frontmatter (expected report or empty)"
-        } elseif ($state -notin @('report', 'empty')) {
-            $analysisViolations += "$analysisDir/$($mf.Name): unrecognised state '$state' (use report or empty)"
-        }
-        # Grade agreement, but only against the audit this page actually derives
-        # from. /analizeMax deliberately does not regenerate metric pages - it
-        # would cost six designed pages nobody asked to read - so a page from an
-        # older audit legitimately carries an older grade. What matters is that
-        # `derived_from` says so; the hub labels that row superseded.
-        $derived = ([regex]::Match($body, '(?m)^derived_from:\s*(\S+)\s*$')).Groups[1].Value
-        if (-not $derived) {
-            $analysisViolations += "$analysisDir/$($mf.Name): no 'derived_from:' in frontmatter - nothing can tell which audit this page is from"
-        } elseif ($newestFull -and $derived -ne $newestFull) {
-            # Older audit: stale by design, but it must name a report that exists.
-            if (-not (Test-Path (Join-Path $analysisDir $derived))) {
-                $analysisViolations += "$analysisDir/$($mf.Name): derived_from '$derived' is not a report in this directory"
-            }
-        } elseif ($hubGrades.ContainsKey($key)) {
-            $own = ([regex]::Match($body, '(?m)^\*\*Grade:\s*([^*]+?)\s*\*\*')).Groups[1].Value
-            if ($own -and $own.Trim() -ne $hubGrades[$key]) {
-                $analysisViolations += "$analysisDir/$($mf.Name): derives from the current audit but its grade '$($own.Trim())' disagrees with LATEST.md's '$($hubGrades[$key])'"
-            }
-        }
-    }
-
-    # Distinguish real reports from placeholders. "6/6 metric pages" reads as
-    # complete when five of them may be 80-word stubs carrying only a grade -
-    # a valid state since /analizeMax stopped generating them, but not the same
-    # thing, and the summary line is what anyone actually reads.
-    $published = @($urls).Count
-    $reportCount = 0
-    $emptyCount = 0
-    foreach ($mf2 in Get-ChildItem -Path $analysisDir -File -Filter 'metric-*.md' -ErrorAction SilentlyContinue) {
-        $st2 = ([regex]::Match((Get-Content -LiteralPath $mf2.FullName -Raw), '(?m)^state:\s*(\S+)\s*$')).Groups[1].Value
-        if ($st2 -eq 'report') { $reportCount++ } elseif ($st2 -eq 'empty') { $emptyCount++ }
-    }
-    $analysisSummary = "registry valid, $published/9 published, $reportCount report + $emptyCount placeholder"
-}
-Add-Result 'analysis-set' $analysisSummary $analysisViolations
-
-# ── 13. Conditionally-added packages are only ever linked conditionally ──────
+# ── 12. Conditionally-added packages are only ever linked conditionally ──────
 # `target_link_libraries(app PRIVATE engine::foo)` where foo's add_subdirectory
 # sits inside an `if()` is a CMake **generate-time** error wherever that
 # condition is false - not a warning, and not something a build ever reaches.
@@ -730,7 +568,7 @@ foreach ($file in $cmakeFiles) {
 Add-Result 'conditional-target-links' `
     "$condLinkCount references to conditional packages, all guarded" $condLinkViolations
 
-# ── 14. The tree obeys the .editorconfig it ships ────────────────────────────
+# ── 13. The tree obeys the .editorconfig it ships ────────────────────────────
 # .editorconfig is this project's formatting contract and nothing enforced it
 # until now. The root .clang-format cannot: it is `DisableFormat: true`, a
 # deliberate no-op, because Visual Studio applies a discovered .clang-format as
@@ -834,7 +672,7 @@ Add-Result 'format-hygiene' `
     ("$($fmtSources.Count) sources, $($fmtMarkdown.Count) markdown, $($fmtShell.Count) shell " +
      'match .editorconfig; .clang-format still a no-op') $fmtViolations
 
-# ── 15. Every gate is declared and classified ────────────────────────────────
+# ── 14. Every gate is declared and classified ────────────────────────────────
 # A gate that exists but is in no sequence runs nowhere and says nothing - the
 # same silent-absence failure the FramePipelines static_assert was added to stop
 # (analizeMax A1), one layer up and in the one place a static_assert cannot
@@ -919,7 +757,7 @@ if (Test-Path $gateDir) {
 
 Add-Result 'gate-registry' $gateSummary $gateViolations
 
-# ── 16. The RHI interface speaks no backend's vocabulary ─────────────────────
+# ── 15. The RHI interface speaks no backend's vocabulary ─────────────────────
 # graphics-api-isolation already stops a d3d12.h from being *included* outside
 # its backend. This stops the vocabulary leaking instead of the header, which is
 # what actually happened: GraphicsPipelineDesc's counts were named after D3D12
@@ -995,7 +833,7 @@ if (Test-Path $vocabRoot) {
 
 Add-Result 'rhi-vocabulary' $vocabSummary $vocabViolations
 
-# ── 17. every default-constructed ShaderCompileDesc names its target ─────────
+# ── 16. every default-constructed ShaderCompileDesc names its target ─────────
 # ShaderCompileDesc::target defaults to Dxil, so a desc that never sets it asks
 # for the D3D backend's bytecode wherever it is used. On a Vulkan device the
 # pipeline then rejects the blob, the setup function returns early, and every
@@ -1042,7 +880,7 @@ Add-Result 'shader-target' `
     $targetViolations
 
 
-# ── 18. Skill frontmatter says what it looks like it says ─────────────────
+# ── 17. Skill frontmatter says what it looks like it says ─────────────────
 # In YAML a space-then-hash starts a comment, so an unquoted value carrying a
 # row reference is silently cut at it. `description: ... Invoke as /aim-row
 # renderer #16.` parsed as `... Invoke as /aim-row renderer` - losing the worked
@@ -1100,6 +938,156 @@ foreach ($file in $skillFiles) {
 Add-Result 'skill-frontmatter' `
     "$skillScanned skills, frontmatter intact and named after its directory" `
     $skillViolations
+
+
+# ── 18. Docs state no fact the tree contradicts ──────────────────────────────
+# The drift this catches is always the same shape: one fact lives in several
+# files, something changes, and only some of the copies are updated. `rhi-vulkan`
+# shipped, passed the whole gate suite and rendered a live frame while
+# ARCHITECTURE.md's package table, its interface/implementation table and both
+# CMake-option tables still described one GPU backend - and one of them told the
+# reader not to build the package that already existed.
+#
+# So this checks the three lists that are *derivable from the tree* and were
+# each wrong at once. It deliberately checks lists and names, never prose: a
+# count in a sentence is what `roadmap-audit` does for LOC, and the fix for the
+# rest is to have one owner per fact rather than to verify every copy.
+$claimViolations = @()
+
+$archPath = 'docs/ARCHITECTURE.md'
+$readmePath = 'README.md'
+$arch = if (Test-Path $archPath) { Get-Content -LiteralPath $archPath -Raw } else { '' }
+$readme = if (Test-Path $readmePath) { Get-Content -LiteralPath $readmePath -Raw } else { '' }
+
+# (a) every package directory is a row in ARCHITECTURE.md's package table, and
+#     every row in that table is a real directory.
+$pkgDirs = @(Get-ChildItem -Path 'packages' -Directory | Select-Object -ExpandProperty Name)
+$pkgRows = @([regex]::Matches($arch, '(?m)^\|\s*`([a-z0-9][a-z0-9-]*)`\s*\|\s*(?:[0-9]+|app)\s*\|') |
+    ForEach-Object { $_.Groups[1].Value })
+foreach ($d in $pkgDirs) {
+    if ($pkgRows -notcontains $d) {
+        $claimViolations += "$archPath : package '$d' exists but has no row in the Packages table"
+    }
+}
+foreach ($r in $pkgRows) {
+    if ($pkgDirs -notcontains $r) {
+        $claimViolations += "$archPath : Packages table lists '$r', which is not a directory under packages/"
+    }
+}
+
+# (b) every option(ENGINE_*) is in the CMake-options table of both docs that
+#     publish one. A missing option reads as a capability the build does not have.
+$cmakeOpts = @([regex]::Matches((Get-Content -LiteralPath 'CMakeLists.txt' -Raw),
+    'option\((ENGINE_[A-Z0-9_]+)') | ForEach-Object { $_.Groups[1].Value })
+foreach ($pair in @(@($archPath, $arch), @($readmePath, $readme))) {
+    $docName = $pair[0]
+    $docText = $pair[1]
+    $listed = @([regex]::Matches($docText, '(?m)^\|\s*`(ENGINE_[A-Z0-9_]+)`\s*\|') |
+        ForEach-Object { $_.Groups[1].Value })
+    foreach ($o in $cmakeOpts) {
+        if ($listed -notcontains $o) {
+            $claimViolations += "$docName : CMake option '$o' exists but is not in the options table"
+        }
+    }
+    foreach ($l in $listed) {
+        if ($cmakeOpts -notcontains $l) {
+            $claimViolations += "$docName : options table lists '$l', which no option() declares"
+        }
+    }
+}
+
+# (c) every implementation package of an interface is named on that interface's
+#     row in the interface/implementation table. This is what left `rhi-vulkan`
+#     invisible in the table a reader consults to answer "what backends exist".
+#     `assets` is exempt: it has three documented non-substitutable exceptions
+#     in the prose directly under that table, so the row cannot list them all.
+$ifaceExempt = @('assets')
+# Scope to the interface/implementation table. `rhi` also has a row in the
+# Packages table above it, and that row comes first - matching it instead was
+# this check's own first bug, and it reported every interface as broken.
+$ifaceSection = ''
+$ifaceStart = $arch.IndexOf('## Interface / implementation pattern')
+if ($ifaceStart -ge 0) {
+    $ifaceRest = $arch.Substring($ifaceStart + 4)
+    $ifaceEnd = $ifaceRest.IndexOf("`n## ")
+    $ifaceSection = if ($ifaceEnd -ge 0) { $ifaceRest.Substring(0, $ifaceEnd) } else { $ifaceRest }
+}
+foreach ($iface in @($pkgDirs | Where-Object { $Layers[$_] -eq 2 })) {
+    if ($ifaceExempt -contains $iface) { continue }
+    $impls = @($pkgDirs | Where-Object { $_ -like "$iface-*" })
+    if ($impls.Count -eq 0) { continue }
+    $row = [regex]::Match($ifaceSection, "(?m)^\|\s*``$iface``\s*\|(.+)$")
+    if (-not $row.Success) {
+        $claimViolations += "$archPath : interface '$iface' has no row in the interface/implementation table"
+        continue
+    }
+    foreach ($impl in $impls) {
+        if ($row.Groups[1].Value -notmatch [regex]::Escape($impl)) {
+            $claimViolations += ("$archPath : '$impl' implements '$iface' but is not named on " +
+                "that row of the interface/implementation table")
+        }
+    }
+}
+
+Add-Result 'doc-claims' `
+    ("$($pkgDirs.Count) packages, $($cmakeOpts.Count) CMake options, " +
+     'interface rows complete') `
+    $claimViolations
+
+
+# ── 19. Every command a doc tells you to run exists ──────────────────────────
+# A backticked `/name` is an instruction: run this. When a skill is deleted or
+# renamed, those instructions become traps that cost a session a wrong turn
+# before it notices. Seven skills were retired at once when the management
+# service took over their jobs, leaving stale invocations in four live docs.
+#
+# Only backticked references count, and that distinction is deliberate. Prose
+# naming a past run ("the 29 Aug analizeMax audit") is history and stays true
+# after the command is gone; a backticked command is a present-tense claim that
+# you can run it.
+#
+# docs/superpowers/ is excluded for the same reason doc-links excludes it: specs
+# and plans are dated archives, and an instruction that was correct when written
+# is allowed to age with the document that carries it.
+$refViolations = @()
+$skillDirs = @()
+if (Test-Path '.claude/skills') {
+    $skillDirs = @(Get-ChildItem -Path '.claude/skills' -Directory |
+        Select-Object -ExpandProperty Name)
+}
+
+# Slash tokens that are not commands. Mount roots read identically to a skill
+# name, and there is no structural way to tell them apart - so they are listed.
+$notCommands = @(
+    'content', 'shaders', 'textures', 'meshes', 'debug', 'logs',
+    'register-space', 'api'
+)
+
+$refScanned = 0
+$refMd = @(Get-ChildItem -Path . -Recurse -File -Filter '*.md' -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.FullName -notmatch '[\\/]\.git[\\/]' -and
+        $_.FullName -notmatch '[\\/]node_modules[\\/]' -and
+        $_.FullName -notmatch '[\\/]build[\\/]' -and
+        $_.FullName -notmatch '[\\/]third_party[\\/]' -and
+        $_.FullName -notmatch '[\\/]docs[\\/]superpowers[\\/]' -and
+        $_.FullName -notmatch '[\\/]docs[\\/]analysis[\\/]2[0-9]{3}-'
+    })
+foreach ($f in $refMd) {
+    $refScanned++
+    $text = Get-Content -LiteralPath $f.FullName -Raw
+    $rel = $f.FullName.Substring($repo.Length + 1).Replace('\', '/')
+    foreach ($m in [regex]::Matches($text, '`/([A-Za-z][A-Za-z0-9-]{2,})(?=[ `])')) {
+        $name = $m.Groups[1].Value
+        if ($notCommands -contains $name) { continue }
+        if ($skillDirs -contains $name) { continue }
+        $refViolations += "$rel : ``/$name`` is not a skill under .claude/skills/"
+    }
+}
+
+Add-Result 'doc-skill-refs' `
+    "$refScanned live docs, every ``/command`` resolves to one of $($skillDirs.Count) skills" `
+    $refViolations
 
 
 # ── report ───────────────────────────────────────────────────────────────────

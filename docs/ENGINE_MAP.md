@@ -4,14 +4,15 @@ Everything a general-purpose engine in the Unity / Godot / Unreal category
 eventually needs. Not a sprint. Not an org chart to copy on day one.
 
 **This file is the work list.** Every **Ready** row in the tables below is a
-fair next pick; **Later** rows name what blocks them. There is no dashboard or
-canvas — read this file directly.
+fair next pick; **Later** rows name what blocks them. This file is canonical:
+the management service mirrors it and renders views of it, but the file wins any
+disagreement.
 
 **How to use:** pick **one Ready** item, give it a **gate** (`--gates` and/or
 a visible sandbox check with `ENGINE_GPU_DEBUG=1`), put it behind a package
 interface when it is a system. Live numbered sequence stays in
 [ROADMAP.md](ROADMAP.md). Triggers and "do not scaffold empty packages":
-[PICKING.md](PICKING.md). `/roadmap <category> #<id>` runs one row from
+[PICKING.md](PICKING.md). `/aim-row <category> #<id>` runs one row from
 research to shipped.
 
 **Status**
@@ -556,7 +557,7 @@ file. Not so an inspector can live in the engine.
 
 - Renderer does not include D3D12 or Vulkan headers.
 - Dependencies only downward.
-- One production GPU backend until a second is a **package**.
+- A second GPU backend is a **package** (`rhi-vulkan`), never a fork of the first.
 - Do not copy ECS + fibers + deferred+SSAO+editor in one session.
 - Engine ≠ editor. Demo games are C++. No in-engine inspector.
 - If the debug layer yells, that is the only task.

@@ -12,9 +12,11 @@ sixty percent out of date.
 ## Before you start
 
 - **One row at a time.** Finish it and ship it before picking another.
-- **One gate.** A plain function in `packages/sandbox/src/main.cpp` asserting on
-  real values, plus a visible sandbox check with `ENGINE_GPU_DEBUG=1` if it
-  touches the GPU. See the gate protocol in [../CLAUDE.md](../CLAUDE.md).
+- **One gate.** A plain function in
+  `packages/sandbox/src/gates/gates_<domain>.cpp`, declared in `gates/gates.hpp`
+  and classified in `kGates`, asserting on real values — plus a visible sandbox
+  check with `ENGINE_GPU_DEBUG=1` if it touches the GPU. See the gate protocol in
+  [../CLAUDE.md](../CLAUDE.md).
 - **Write the gate first and watch it fail.** A gate that has never been red
   proves nothing.
 - **Do not scaffold an empty package.** Put new work behind `foo` / `foo-*`
@@ -22,7 +24,7 @@ sixty percent out of date.
 - **Stay inside the row.** Something else will look wrong while you are in
   there. Note it, finish the row, mention it at the end.
 
-`/roadmap <category> #<id>` does all of this — research, one question round,
+`/aim-row <category> #<id>` does all of this — research, one question round,
 build, gate, ship — in a single run.
 
 ## Choosing among the Ready rows

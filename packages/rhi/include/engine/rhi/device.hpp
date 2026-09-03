@@ -114,8 +114,9 @@ public:
         const BufferDesc& desc, const void* data = nullptr) = 0;
     virtual std::unique_ptr<ITexture> create_texture(
         const TextureDesc& desc, const void* data = nullptr) = 0;
-    // Bump-allocates 256-byte-aligned upload memory for this frame_slot(). GPU-safe
-    // because begin_frame waits that slot before resetting the bump pointer.
+    // Bump-allocates 256-byte-aligned upload memory for the current frame-in-flight
+    // slot, which the backend owns. GPU-safe because begin_frame waits that slot
+    // before resetting the bump pointer.
     virtual FrameAllocation alloc_frame_memory(usize size) = 0;
     virtual void write_buffer(IBuffer& buffer, usize offset, const void* data, usize size) = 0;
     virtual void read_buffer(IBuffer& buffer, usize offset, void* data, usize size) = 0;

@@ -4,6 +4,11 @@ How this engine stays **correct and swappable** while it grows into a
 general-purpose runtime (Unity / Godot / Unreal category). Stability is the
 method. The product is still an engine — see [ROADMAP.md](ROADMAP.md).
 
+**This is a rationale document, and its research sections are a dated snapshot.**
+The arguments hold; the examples age. Where it says what the tree currently has,
+believe [ARCHITECTURE.md](ARCHITECTURE.md) and
+[ENGINE_MAP.md](ENGINE_MAP.md) instead — they are the owners of that fact.
+
 This is not a ban on SSAO, Vulkan, an editor, or PBR. Those are on the engine
 map. What *is* banned is copying Unreal or Frostbite’s **org chart** onto an
 unfinished tree (ECS + fibers + deferred+SSAO+editor with no gates). That is
@@ -48,12 +53,12 @@ Practical translation for this engine:
 | Temptation | Why it feels “architectural” | Why it is instability |
 |------------|------------------------------|------------------------|
 | ECS now | Unreal / Unity have one | Arrays and a snapshot already feed the renderer. ECS is a second source of truth. |
-| Fiber job system now | Naughty Dog GDC 2015 | They had ~800–1000 jobs/frame and SPUs. We have one cube and a hitch-free load. Fibers plus D3D12 is a heisenbug factory until log, device, and graph are explicitly main-thread. |
-| Unreal-style game / render / RHI threads | “AAA architecture” | Three timelines for a window + cube. Extract snapshot on one thread is enough until recording is the bottleneck. |
+| Fiber job system now | Naughty Dog GDC 2015 | They had ~800–1000 jobs/frame and SPUs. This tree has one worker thread (shader compile) and a hitch-free load. Fibers plus D3D12 is a heisenbug factory until log, device, and graph are explicitly main-thread. |
+| Unreal-style game / render / RHI threads | “AAA architecture” | Three timelines for a single-window app drawing a few hundred instances. Extract snapshot on one thread is enough until recording is the bottleneck. |
 | Bindless + SM 6.6 ResourceDescriptorHeap | MJP, NVIDIA: simpler at *scale* | Needs DXC, a shader-visible heap, and content volume. Per-draw root CBV is the NVIDIA-recommended *fast* path for constants today. |
 | Transient aliasing / placed heaps | Frostbite FrameGraph | Pays off with many overlapping full-screen targets. One optional transient is not that problem. |
 | Full asset database | O3DE / editor pipelines | Mounts + generational handles + a disk shader cache already iterate. A DB without a cooker is ceremony. |
-| Second GPU API before the contract exists | “Portable from day one” | Scaffold already isolates the RHI. A second **impl** before D3D12 is production-hard doubles every bug. Grow `IDevice` / `ICommandList` **now** so Vulkan is a package later. |
+| ~~Second GPU API before the contract exists~~ | “Portable from day one” | **Settled, and the advice was taken.** The contract was grown first and `rhi-vulkan` arrived as a package (RHI #12, #24, #25), not a fork — which is why a parity gate can prove byte-identical readback from both. The remaining lesson is the one that cost the most: a green gate suite is not a working backend. |
 | SSAO / deferred / shadows as the *first* architecture | “Looks like an engine” | Zero leverage on lifetime if the graph still lives in the sandbox. Shadows/HDR are already in; more graphics wait on renderer-owned passes. |
 
 **Over-engineering is not caution. It is adding states you cannot test.**
@@ -147,7 +152,7 @@ CI for a Windows D3D12 engine is awkward (no GPU on many runners). Practical lad
 2. **Optional local** `ENGINE_GPU_DEBUG=1` smoke: open, resize, quit, no debug-layer breakpoint.
 3. Screenshot/CI ML compare is overkill until you ship content.
 
-Do **not** wait for Google Test + WARP + golden images before writing more engine. Do **extract** the existing sandbox probes into a `sandbox` or `tests` target that can run `-gate` and exit 0/1.
+Do **not** wait for Google Test + WARP + golden images before writing more engine. **Done:** the probes became `--gates`, exiting 0/1, and the gates now live in per-domain files under `packages/sandbox/src/gates/`.
 
 ### 3.7 Profiling
 
@@ -168,7 +173,7 @@ observability stack we need for years.
 - Graph: compile (producer, copy format, cycle), optional transients, always present, shutdown clears GPU objects before the device dies.
 - Extract snapshot; per-draw model; unique CBV assert; overlay `should_execute`.
 - Staging + deferred free + PIX names + 3-frame flight.
-- Mutex log; `cpu_frame_slot` vs `IDevice::frame_slot()`.
+- Mutex log; `cpu_frame_slot` is the CPU timer ring, distinct from the backend's frame-in-flight slot (`IDevice::frame_slot()` was since removed as a D3D12-ism).
 
 **Real remaining instability (do these; they are not features)**
 

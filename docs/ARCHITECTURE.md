@@ -17,7 +17,8 @@ Layer 1  platform        → core          rhi       → core
          audio           → core, math    physics   → core, math
 
 Layer 2  platform-win32  → platform          rhi-d3d12  → rhi, math
-         shaders-dxc     → shaders           audio-xaudio2 → audio
+         shaders-dxc     → shaders           rhi-vulkan → rhi, math
+         audio-xaudio2   → audio
          physics-cpu     → physics           assets-gpu → assets, rhi
          assets-filesystem → assets, platform
          assets-obj / assets-gltf / assets-png-wic → assets
@@ -69,8 +70,9 @@ Two facts the shape is load-bearing on:
 | `assets-gpu` | 2 | lib | CPU mesh → GPU buffers |
 | `audio-xaudio2` | 2 | lib | XAudio2 backend (`create_audio()`); 16-bit PCM one-shots |
 | `physics-cpu` | 2 | lib | Dynamic AABB tree + sequential-impulse solver; AABB / sphere / Y-up capsule; sensor enter/exit; closest-hit raycasts (`create_physics()`) |
-| `shaders-dxc` | 2 | lib | HLSL compile via Windows SDK `dxcompiler` (SM 6.0 / DXIL); `ShaderTarget` enum (SPIR-V rejected); disk cache; worker-thread hot-reload |
+| `shaders-dxc` | 2 | lib | HLSL compile via Windows SDK `dxcompiler` (SM 6.0 / DXIL) **and SPIR-V** through a second, SPIR-V-capable DXC located from the Vulkan SDK (the Windows SDK build ships without `-DENABLE_SPIRV_CODEGEN`); `-fvk-*-shift` binding shifts applied for the Vulkan register-space collision; `ShaderTarget` enum; disk cache keyed per target; worker-thread hot-reload |
 | `rhi-d3d12` | 2 | lib | D3D12 backend (`create_rhi()` is the public header; device types stay in `src/`). Inbox OS D3D12 (FL 11_0 + SM 6.0, no Agility). PIX ANSI `BeginEvent`/`EndEvent`/`SetMarker` on the command list. SamplerDesc static samplers, `create_sampler` (object only — `set_sampler` is a deliberate stub), compute PSO + dispatch + buffer UAV readback, per-SRV tables, device shader-visible SRV heap, color+SRV transients, RGBA8 mip generation, **root SRVs** (`space1`) for per-instance structured buffers |
+| `rhi-vulkan` | 2 | lib | Vulkan backend (`engine::rhi::vulkan::create_rhi()`). Loaded through vendored **volk**; Vulkan and volk headers are vendored under `third_party/` at SDK 1.4.357.0 and must be bumped together. Surface + swapchain, per-frame-slot command pools and fences, depth targets with reversed-Z and end-of-pass resolve, compute and storage resources, sampled textures with mips and cube maps, sampler objects, vertex input and indexed draws with staged uploads. Selected at runtime with `--rhi vulkan`. Presents with IMMEDIATE and warns: FIFO loses the device on the second present (RHI #25) |
 | `renderer` | 3 | lib | Render graph, **standard frame** (shadow → forward → motion → sky → bloom → TAA → tonemap → AA → debug → overlay), per-pass GPU debug events, frustum extract, **GGX PBR** (albedo + packed MR + derivative TBN normals), **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA**, **SMAA 1x / FXAA**, **instanced draws** (extract batches by material/mesh key; one `draw_indexed` and one constant upload per batch) |
 | `debug-draw` | 3 | lib | Frame stats, F3 overlay, F4 world AABBs, F5 AA mode |
 | `scene` | 3 | lib | Flat instance list (**512**) with interned names, parent indices, `solscene` files (`load_world` reads one from a mounted virtual path through `IAssetLoader`), and prefab extract/instantiate (prefix + root transform); world = parent * local; materials (16), camera, sun + point lights (`World`); no ECS |
@@ -88,7 +90,7 @@ GPU / DLL baseline: [GPU_BASELINE.md](GPU_BASELINE.md).
 | Interface | Implementation(s) |
 |-----------|-------------------|
 | `platform` | `platform-win32` |
-| `rhi` | `rhi-d3d12` |
+| `rhi` | `rhi-d3d12`, `rhi-vulkan` |
 | `assets` (`IAssetLoader`) | `assets-filesystem`, plus the in-tree `pak` loader |
 | `assets` (`IMeshLoader`) | `assets-obj` |
 | `audio` | `audio-xaudio2` |
@@ -125,46 +127,55 @@ not portable — D3D excludes it from `SV_InstanceID`, Vulkan folds it into
 Overlay/debug *drawing* stays in `debug-draw`; the graph calls them through
 function pointers on `StandardFrameDesc`.
 
-## Swap cost today
+## Two backends, and what the contract cost
 
-Samplers and compute are on the RHI contract, and D3D12 implements compute (PSO
-+ dispatch + buffer UAV readback) and cube / array textures. Do not implement
-`rhi-vulkan` until you need a second daily driver; D3D12 stays the production
-backend.
+`rhi-vulkan` exists, passes the whole gate suite, and renders a live frame. It
+is a **package**, not a fork: `--rhi vulkan` selects it at runtime, and a parity
+gate proves both backends return byte-identical readback. D3D12 remains the
+shipped player backend — `game.exe` links it and `GPU_BASELINE.md` is written
+against it.
 
-What a second backend would still have to deal with, in rough order of cost:
+What that second implementation actually cost, now that it is written, because
+these are the places a **third** backend will pay again:
 
-- **SPIR-V.** `ShaderTarget` already rejects it; the DXC path needs `-spirv`
-  plus the `-fvk-*-shift` binding shifts, since D3D's separate `b`/`t`/`s`
-  register spaces all collide at binding 0 in Vulkan. No shader edits.
-- **NDC Y.** The one clip-space convention that is not already portable. Depth
-  range, matrix order and texture origin agree across D3D12, Vulkan and Metal.
-  All the Y-dependent helpers live in
-  `packages/sandbox/content/shaders/common.hlsli`, so the flip is one edit —
-  but read the note there about varyings before choosing where to apply it.
+- **SPIR-V** was the cheapest part and needed no shader edits — `-spirv` plus
+  the `-fvk-*-shift` binding shifts, because D3D's separate `b`/`t`/`s` register
+  spaces all collide at binding 0 in Vulkan. The catch was not the flags: the
+  Windows SDK's `dxcompiler.dll` is built without `-DENABLE_SPIRV_CODEGEN` and
+  answers "SPIR-V CodeGen not available", so `shaders-dxc` locates a second DXC
+  from the Vulkan SDK and keeps both alive.
 - **Descriptor sets.** `set_constant_buffer` / `set_shader_resource` are a flat
-  per-slot model with no set concept, so a Vulkan backend must synthesize one
-  (push descriptors, or per-frame pools with a dirty-slot cache). Metal's
-  argument tables map to it almost directly. **The binding contract at the top
-  of `packages/rhi/include/engine/rhi/resources.hpp` is the table** — what each
-  of the four counts means, what D3D12 makes of it, and what Vulkan must
-  synthesise — and the `rhi-vocabulary` invariant fails the build if backend
-  terms return to those headers. Counts rather than an explicit layout is the
-  known debt; bind groups are the expected answer, and the time to design them
-  is when `rhi-vulkan` exists to validate one (RHI #12, Far).
-- **Barriers.** `transition()` takes the old state explicitly, D3D12-style.
-  That works because `RenderGraph` centralizes the tracking — exactly one
-  `transition()` call escapes it, in a compute gate. The gap is that
-  `ResourceState::ShaderRead` does not say *which* stage reads, so a Vulkan
-  backend must over-synchronize until a stage scope is added.
-- **Present.** `ISwapchain::present()` returns `void`, so there is no channel
-  for `VK_ERROR_OUT_OF_DATE_KHR`. Resize is driven only by window events today,
-  which is not sufficient on Wayland.
+  per-slot model with no set concept, and the Vulkan backend synthesises one.
+  **The binding contract at the top of
+  `packages/rhi/include/engine/rhi/resources.hpp` is the table** — what each of
+  the four counts means, what D3D12 makes of it, and what Vulkan synthesises —
+  and the `rhi-vocabulary` invariant fails the build if backend terms return to
+  those headers. Counts rather than an explicit layout is the standing debt;
+  bind groups are the expected answer, and there is now a second backend to
+  validate one against.
+- **NDC Y** was the one clip-space convention that was not already portable.
+  Depth range, matrix order and texture origin agree across D3D12, Vulkan and
+  Metal. All the Y-dependent helpers live in
+  `packages/sandbox/content/shaders/common.hlsli`, so the flip was one edit —
+  read the note there about varyings before changing where it applies.
+- **Barriers.** `transition()` takes the old state explicitly, D3D12-style. That
+  works because `RenderGraph` centralizes the tracking — exactly one
+  `transition()` call escapes it, in a compute gate. The standing gap is that
+  `ResourceState::ShaderRead` does not say *which* stage reads, so the Vulkan
+  backend over-synchronizes until a stage scope is added.
+- **Present.** `ISwapchain::present()` returns `void`, so there is still no
+  channel for `VK_ERROR_OUT_OF_DATE_KHR`. Resize is driven only by window
+  events, which is not sufficient on Wayland. This is unfinished contract work,
+  not a Vulkan implementation detail.
 
-Two D3D12-isms have already been removed rather than left for that author to
-trip over: `IDevice::frame_slot()` (the backbuffer index is not a
-frame-in-flight slot on Vulkan) and `ICommandList::set_sampler` (a dead virtual
-whose only implementation logged an error).
+Two D3D12-isms were removed before that author could trip over them:
+`IDevice::frame_slot()` (the backbuffer index is not a frame-in-flight slot on
+Vulkan) and `ICommandList::set_sampler` (a dead virtual whose only
+implementation logged an error).
+
+A **third** backend's blocker is not the RHI contract — a second backend has now
+taken that all the way through a frame. It is Platform #9, a non-Windows
+platform package. See ENGINE_MAP.md category 3.
 
 ## Build
 
@@ -183,6 +194,7 @@ cmake --build build --config Release --target game
 |--------|---------|-------------|
 | `ENGINE_PLATFORM_WIN32` | ON | Win32 platform backend |
 | `ENGINE_RHI_D3D12` | ON | D3D12 RHI backend |
+| `ENGINE_RHI_VULKAN` | ON | Vulkan RHI backend |
 | `ENGINE_BUILD_SANDBOX` | ON | Build sandbox application |
 | `ENGINE_BUILD_GAME` | ON | Build player `game.exe` (install layout) |
 

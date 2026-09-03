@@ -112,7 +112,7 @@ Three things it does that the raw commands do not:
 - **Warns when the binary is stale** — a source file newer than
   `sandbox.exe` means the gates are about to pass against code that is no
   longer on disk.
-- **Tallies the gate run** (`87 pass, 0 FAIL, 0 skip`) from a teed copy of the
+- **Tallies the gate run** (`N pass, 0 FAIL, 0 skip`) from a teed copy of the
   output, so a `skip` cannot hide in three hundred lines of scrollback.
 - **Recovers `VULKAN_SDK`** from the machine environment when the shell does
   not have it — a terminal opened before the SDK was installed otherwise looks
@@ -262,7 +262,7 @@ packages/
   core, math                          Layer 0 — foundation
   platform, rhi, shaders, assets,     Layer 1 — interfaces
   audio, physics
-  *-win32, *-d3d12, *-dxc,            Layer 2 — implementations
+  *-win32, *-d3d12, *-vulkan, *-dxc,  Layer 2 — implementations
   *-xaudio2, physics-cpu, assets-*
   renderer, debug-draw,               Layer 3 — systems
   scene, gameplay
@@ -285,6 +285,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROAD
 |--------|---------|-------------|
 | `ENGINE_PLATFORM_WIN32` | ON | Win32 platform backend |
 | `ENGINE_RHI_D3D12` | ON | D3D12 RHI backend |
+| `ENGINE_RHI_VULKAN` | ON | Vulkan RHI backend (`--rhi vulkan`) |
 | `ENGINE_BUILD_SANDBOX` | ON | Build sandbox app |
 | `ENGINE_BUILD_GAME` | ON | Build player `game.exe` |
 

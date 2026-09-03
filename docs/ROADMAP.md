@@ -3,10 +3,10 @@
 **Decision log.** Every shipped feature has a Why / Choice / Gate (met) /
 Do-not entry here. This file records *why the tree looks the way it does* — it
 is not the work list. The backlog is [ENGINE_MAP.md](ENGINE_MAP.md): pick one
-**Ready** row. There is no dashboard or canvas; these two files are read
-directly.
+**Ready** row. Those two files are canonical: the management service mirrors
+them and renders views, but the file wins any disagreement.
 
-Last updated: 31 Aug 2026.
+Last updated: 3 Sep 2026.
 
 ---
 
@@ -15,8 +15,9 @@ Last updated: 31 Aug 2026.
 A **general-purpose game engine** — the same product category as Unity, Godot,
 and Unreal — written in C++20, owned by you. The long-term shape is a runtime
 you can ship games on: window and input, content from disk, a scene you can
-edit, a renderer you can extend, tools, and (when the RHI contract is ready)
-more than one platform/GPU backend.
+edit, a renderer you can extend, tools, and more than one platform/GPU backend
+— two GPU backends now exist, and the remaining gap is a non-Windows platform
+package.
 
 The sandbox is the **proving ground**, not the product. A lit scene with
 `--gates` is how we prove a layer. It is not a reason to stop adding engine
@@ -29,9 +30,10 @@ systems.
    machine” are how previous engines died.
 2. **Architecture you can rip.** Interface packages vs implementations,
    dependencies only downward, renderer never includes a graphics API.
-   Replacing the renderer approach, adding a pass, or adding Vulkan later
-   should be a package-sized job, not a whole-tree rewrite. That modularity
-   is designed **now**, even when only D3D12 is implemented.
+   Replacing the renderer approach, adding a pass, or adding a GPU backend
+   should be a package-sized job, not a whole-tree rewrite. That was designed
+   before it was needed and then tested by `rhi-vulkan`, which arrived as a
+   package and not a fork.
 
 Stability is the *method*. A full engine is the *goal*. Those are not opposites.
 
@@ -47,7 +49,7 @@ Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
 
 ## Audit — foundation today (after phase 14)
 
-Measured 2 Sep 2026: **33,989 lines** of C++/HLSL in **175 files**, **27
+Measured 3 Sep 2026: **33,990 lines** of C++/HLSL in **175 files**, **27
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the
@@ -75,7 +77,7 @@ into `game.exe` too — the player binary carries the tests.
 
 The previous figure in this slot (16,078 / 124) had gone stale by more than one
 row — it predated several shipped features, not just cvars. Recount with the
-command in the `ship-feature` skill rather than adjusting it by hand.
+command in the `aim-ship` skill rather than adjusting it by hand.
 
 | Layer | What is real | What is missing for a general engine |
 |-------|----------------|--------------------------------------|
@@ -109,7 +111,7 @@ picked from the map.
 3. Add its Why / Choice / Gate (met) / Do-not entry here, flip the row to
    **Done** in ENGINE_MAP.md, and recount **line counts**
    (`packages/**/*.{cpp,hpp,h,hlsl,hlsli}`, exclude `build/` and `third_party/`).
-   `/ship-feature` does all of this.
+   `/aim-ship` does all of this.
 4. Do not start the next row in the same session unless the gate is green.
 
 **Stability rules (never drop these):** debug-layer-clean GPU changes, RAII,
@@ -735,7 +737,7 @@ name intern is O(n^2) and the parent walk is uncached. Both are invisible at
 ## Stability — frame-ring budget gate (done)
 
 Not an ENGINE_MAP row: this closes the **G3 ceiling** on Stability from the
-29 Aug `/analizeMax` audit — "a foreseeable failure you can name has no gate,
+29 Aug analizeMax audit — "a foreseeable failure you can name has no gate,
 test or check covering it". The named failure was frame-ring exhaustion.
 
 **Why:** The 1 MiB per-slot frame constant ring is the tightest ceiling in the
@@ -925,7 +927,7 @@ visibility and energy-conservation terms all had gates asserting the *formulas*
 while being fed and consumed in the wrong space. Of 67 gates, none mentioned
 colour space, and no doc in the tree mentioned sRGB or gamma at all — this was
 never a decision, it was an omission. Found as finding S1 of the 29 Aug
-`/analizeMax` audit, the only Critical finding in it.
+analizeMax audit, the only Critical finding in it.
 
 **Choice:** hardware sRGB on input, explicit encode in the tonemap shaders on
 output. The full reasoning is in
@@ -1391,6 +1393,70 @@ real graph used — the shadow gate runs against its own probe. Verified across
 the render-graph transient rebuild. Do not persist them: `config.cfg` is read and
 never written, and the cvar writer is Foundation #17. Do not add a preset knob
 for something the renderer does not actually expose.
+
+---
+
+## Tooling / docs — one management system, and two checks that keep docs honest (done)
+
+**Why:** the management service took over the audit, the roadmap mirror, the
+dependency graph and the decision list, and five `aim-*` skills were written
+against it — but the seven skills they replaced were left in place "in case".
+The result was two systems of record for the same facts and 13 skills where the
+service's own migration plan (`../AI-Mangment/docs/SKILLS.md`) specifies 5. That
+cost more than clutter: analizeMax-metric derived from the newest
+`docs/analysis/*-full.md`, which `/aim-audit` never writes, so running it after
+an audit silently described a two-day-old tree.
+
+The same duplication had rotted the docs. `rhi-vulkan` shipped, passed the whole
+gate suite and rendered a live frame while ARCHITECTURE.md's package table, its
+interface/implementation table and both CMake-option tables still described one
+GPU backend — and its "Swap cost today" section told the reader *not to
+implement `rhi-vulkan` until you need a second daily driver*. PICKING.md still
+put gates in `packages/sandbox/src/main.cpp`, three months after they moved to
+`gates/`. CLAUDE.md claimed a render pass spans eight files while
+`renderer-boundaries.md`, the file that owns that checklist, said six.
+
+**Choice:** delete rather than deprecate. `analizeMax`, `analizeMax-execute`,
+`analizeMax-metric`, `analizeMax-repair`, `whatnow`, `roadmap` and
+`ship-feature` are gone, with `publishing.md` and the `analysis-set` invariant
+that existed only to machine-check the artifact-URL registry. The artifact
+system is retired: pages published before the migration keep serving their last
+version, and nothing regenerates them. `docs/analysis/` keeps one full report as
+an offline snapshot.
+
+The nine open decisions the last audit raised moved to
+`docs/analysis/DECISIONS.md`. They existed only in `PLAN.md`, which every audit
+overwrites, because the audit that found them ran two commits before the
+decision-list capability existed — so the server has none. That file is
+explicitly temporary and says so.
+
+Then **one owner per fact**, written into CLAUDE.md with the owners tabulated,
+because the drift was never one wrong document: it was one fact copied into four
+and updated in two.
+
+**Gate:** two new invariants, each watched to fail first on a deliberate break.
+`doc-claims` verifies the three lists that are derivable from the tree and were
+all wrong at once — every package directory is a row in ARCHITECTURE.md's table,
+every `option(ENGINE_*)` is in both CMake-option tables, every implementation
+package is named on its interface's row. `doc-skill-refs` verifies every
+backticked `` `/<name>` `` in a live doc resolves to a real skill. 19/19
+invariants pass; both gate suites pass at exit 0 on D3D12 and Vulkan after a
+full rebuild.
+
+`doc-claims` found its own first bug while being written: `[regex]::Match` on
+the whole document matched `rhi`'s row in the *Packages* table, which appears
+first, so it reported every interface as broken.
+
+**Do not:** do not restate a count in prose that the tree owns — that is what
+`roadmap-audit` exists for, and this change had to move the LOC figure again
+after a two-line comment edit. Do not update a dated document to match the
+present: specs, plans and `*-full.md` reports are evidence, and
+`doc-skill-refs` excludes `docs/superpowers/` for that reason. Do not add a
+check to verify a duplicated fact — move the fact instead. Do not re-add a
+skill because the server might be down: the repo stays canonical for the
+roadmap, the gates and the rules, so a down server means commit and re-import,
+not a second toolchain. And do not delete `DECISIONS.md` until an audit has
+actually re-raised those nine on the service — the file is the only copy.
 
 ---
 
@@ -2231,7 +2297,7 @@ After finishing a phase (or any roadmap edit):
 3. Recount lines: `packages` `*.cpp *.hpp *.h *.hlsl` (exclude `build/` and
    `third_party/`). Recount with the command; do not adjust by hand.
 4. Set the design spec's `Status:` to `implemented`.
-5. Run `sandbox --gates` with `ENGINE_GPU_DEBUG=1` when GPU code changed.
+5. Run `--gates` with `ENGINE_GPU_DEBUG=1` when GPU code changed.
 6. Do not start the next row until the gate is written as done here.
 
-`/ship-feature` performs all six.
+`/aim-ship` performs all six.

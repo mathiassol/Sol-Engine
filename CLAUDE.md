@@ -17,82 +17,35 @@ file doesn't cover.
   Not sure what to pick? `/aim-next` reads git state, the gates and invariants,
   and asks the service for leverage, audit staleness and the graph verdict, then
   offers three directions with the evidence for each. It suggests; it does not
-  start. (`/whatnow` is the older equivalent that derives all of that by hand.)
+  start.
 - **Canonical plan / changelog**: [docs/ROADMAP.md](docs/ROADMAP.md) — every
   shipped feature has a dated Why/Choice/Gate/Do-not entry there.
-- These two files are the source of truth. There is no separate dashboard —
-  read them directly.
 
-## The loop, per Ready row
+Those two files are canonical and stay canonical: if the service is down, commit
+anyway and re-import later. The service renders views of them, but the file wins
+any disagreement.
 
-1. Pick **one** Ready row. Don't start a Later or Far row (see ENGINE_MAP.md's
-   Status table for what that means).
-2. Brainstorm and write a design spec with the `superpowers:brainstorming`
-   skill → `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`.
-3. Plan with `superpowers:writing-plans`, then implement.
-4. Gate it: `sandbox --gates` must pass. If GPU code changed, also run with
-   `ENGINE_GPU_DEBUG=1` and confirm the debug layer is silent.
-5. Run `/ship-feature` to close it out (updates the map/roadmap, commits,
-   pushes).
+## The management service
 
-`/roadmap <category> #<row>` does all five in one unbroken run: deep research
-(codebase **and** web), one mandatory question round that ends by asking
-whether to execute directly, across subagents, or as a workflow, then build,
-gate, `/ship-feature`, and refresh the published roadmap page. The question
-round is its only interruption.
+A separate service at `../AI-Mangment` owns the data and the presentation of
+project management: it holds the audit rubric, validates an audit against it,
+mirrors the roadmap, computes the dependency graph, and keeps the decision list.
+Five skills call it. There is no page for an agent to author and no derived fact
+for a session to recompute by hand.
 
-Separately, `/analizeMax` audits the whole engine — code and non-code — and
-grades six dimensions against an absolute standard. It is expensive and
-deliberate: run it to get the real picture, not during feature work. Output
-lands in [docs/analysis/](docs/analysis/README.md), including a phased plan
-that `/analizeMax-execute` applies. Only fixes that need no approval reach that
-plan; judgement calls stay on a separate list. The `/aim-audit` + `/aim-fix`
-pair below is the current path for both halves of that.
-
-By default it publishes only the report and the scorecard; `/analizeMax core`
-adds the stability, architecture and capability reports, `/analizeMax max` adds
-all six, and naming metrics adds just those.
-
-`/analizeMax-metric <name>` expands one graded dimension into a 1-2 page
-report plus a full ordered action list. It derives purely from the newest full
-report — no build, no research, no re-grading — so it is cheap to re-run.
-
-All of it publishes to permanent artifact URLs tracked in
-`docs/analysis/artifacts.json`: the scorecard is a hub linking to a page per
-metric, each linking back, so sharing the scorecard shares the whole set.
-`/analizeMax-repair` creates anything missing and fixes the links.
-
-Reports use two code systems: a dimension letter plus a number is a **finding**
-(`D3` = developer setup, third finding), and `G1`–`G6` are **ceilings** that cap
-a grade. Both are tabulated in [docs/analysis/README.md](docs/analysis/README.md),
-which is also where a `(analizeMax D3)` commit tag can be looked up.
-
-## The `aim` skills — prefer these
-
-A separate service at `../AI-Mangment` now owns the data and the presentation of
-all of this: it holds the rubric, validates an audit against it, mirrors the
-roadmap, and computes the graph. **Prefer the `aim-*` skills.** They do the same
-jobs with the derived facts computed instead of re-derived, and with no page for
-an agent to author:
-
-| Prefer | Over | What moved |
-|--------|------|-----------|
-| `/aim-next` | `/whatnow` | Leverage, audit staleness and the graph verdict come from one call, not a `grep` loop that once reported two false dependency loops |
-| `/aim-row` | `/roadmap` | The row, its blockers, what waits on it and its Do-not lines come from the server |
-| `/aim-ship` | `/ship-feature` | The server names which Later rows just became Ready, and round-trips the map to catch a hand-edit the parser reads differently. No artifact to republish |
-| `/aim-audit` | `/analizeMax` | The rubric is fetched, nine validation rules are enforced server-side, and no HTML is written |
-| `/aim-fix` | `/analizeMax-execute` | Runs the plan directly instead of always asking which of three modes to use — the plan is small by construction, so the question had one answer. Modes are still there as an argument |
+| Skill | Does |
+|-------|------|
+| `/aim-next` | Three directions with evidence. Suggests; never starts |
+| `/aim-row` | One roadmap row, research to shipped, in a single run |
+| `/aim-ship` | Close out a row. Names which Later rows just became Ready |
+| `/aim-audit` | Audit the whole engine, grade six dimensions, submit |
+| `/aim-fix` | Apply the plan `/aim-audit` wrote |
 
 Everything is reached through one wrapper — `pwsh -NoProfile -File tools/aim.ps1
 <cmd>` — which resolves `aim` from PATH, npm's global directory, or the sibling
 checkout via node. Skills run in a non-interactive shell where npm's shim
 directory is not on PATH, so calling `aim` bare is what fails. Start with
 `tools/aim.ps1 doctor`.
-
-`/aim-fix` completes the set: it applies the `docs/analysis/PLAN.md` that
-`/aim-audit` writes. That one file stays local because the service has no plan
-endpoints by decision, so the plan is the only part of the loop the repo still
-owns end to end.
 
 Two commands worth knowing outside the skills, because they answer questions the
 repo cannot:
@@ -104,19 +57,38 @@ repo cannot:
 - `tools/aim.ps1 decisions` — the questions an audit raised and deliberately
   would not answer, because answering one changes behaviour, an API, or what a
   word in the backlog means. Answer one with
-  `decisions answer <code> --note "..." --ref <where>`. These used to live only
-  in PLAN.md, which every audit overwrote.
+  `decisions answer <code> --note "..." --ref <where>`.
 
-The older skills still work and are not deprecated — the whole `analizeMax`
-family is intact. **One sharp edge:** `/analizeMax-metric` derives from the
-newest `docs/analysis/*-full.md`, and `/aim-audit` writes no such file. Run it
-after an `/aim-audit` and it will silently describe the tree the last
-`/analizeMax` measured, not the current one. For per-metric detail from a new
-audit, read the report view on the dashboard; to regenerate a metric *document*,
-run `/analizeMax` first so there is a report to derive from.
+## The loop, per Ready row
 
-The repo also stays canonical for the roadmap file, the gates and the rules: if
-the service is down, commit anyway and re-import later.
+1. Pick **one** Ready row. Don't start a Later or Far row (see ENGINE_MAP.md's
+   Status table for what that means).
+2. Brainstorm and write a design spec with the `superpowers:brainstorming`
+   skill → `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`.
+3. Plan with `superpowers:writing-plans`, then implement.
+4. Gate it: `.\build\bin\Debug\sandbox.exe --gates` must pass. If GPU code
+   changed, also run with `ENGINE_GPU_DEBUG=1` and confirm the debug layer is
+   silent.
+5. Run `/aim-ship` to close it out (updates the map/roadmap, commits, pushes).
+
+`/aim-row <category> #<row>` does all five in one unbroken run: deep research
+(codebase **and** web), one mandatory question round that ends by asking
+whether to execute directly, across subagents, or as a workflow, then build,
+gate and `/aim-ship`. The question round is its only interruption.
+
+Separately, `/aim-audit` audits the whole engine — code and non-code — and
+grades six dimensions against an absolute standard. It is expensive and
+deliberate: run it to get the real picture, not during feature work. It writes a
+phased plan to `docs/analysis/PLAN.md` that `/aim-fix` applies; only fixes that
+need no approval reach that plan, and judgement calls become decisions on the
+service instead. That one file stays local because the service has no plan
+endpoints by decision.
+
+Reports use two code systems: a dimension letter plus a number is a **finding**
+(`D3` = developer setup, third finding), and `G1`–`G6` are **ceilings** that cap
+a grade. Both are tabulated in [docs/analysis/README.md](docs/analysis/README.md),
+which is also where a `(analizeMax D3)` commit tag can be looked up — the tag
+keeps that spelling because 96 commits already use it.
 
 ## Non-negotiables
 
@@ -126,10 +98,11 @@ window still holds:
 - Renderer never includes a graphics-API header (`d3d12.h` or equivalent) —
   only `rhi`. A new pass is registered with `add_pass` in
   `packages/renderer/src/standard_frame.cpp`, never from the sandbox — but the
-  pass's shader and pipeline *are* app-owned, so a working pass spans eight
-  files — four structs to plumb through, plus the shader, the pass
-  registration, the recorder, and the gate. Full checklist:
-  [.claude/rules/renderer-boundaries.md](.claude/rules/renderer-boundaries.md).
+  pass's shader and pipeline *are* app-owned, so a working pass spans two
+  packages. The checklist and its file count are owned by
+  [.claude/rules/renderer-boundaries.md](.claude/rules/renderer-boundaries.md)
+  — read it rather than trusting a number here. For scale: the last renderer
+  feature to ship, Renderer #16, touched 23 files across four commits.
 - Dependencies only point downward. No circular dependencies.
 - Engine ≠ editor. No inspector, hierarchy, or content-browser UI inside any
   engine package or the sandbox. An editor, if it ever exists, is a separate
@@ -167,44 +140,37 @@ is what sets `RemoteSigned`. Under 5.1 the command needs
 `-ExecutionPolicy Bypass`. The script itself is compatible with both, and CI
 runs it under both.
 
-Machine-checks the non-negotiables above plus doc-level drift. Eighteen checks:
-every package declaring a layer, graphics-API
-isolation, `renderer` never including `scene`, downward-only dependencies, no
-empty packages, no `add_pass` from an app, header layout, resolvable doc links,
-the ROADMAP LOC audit, spec statuses, the ENGINE_MAP dependency graph, the
-analizeMax analysis set, that a
-package added under an `if()` is never linked unconditionally (which would fail
-`cmake` at generate time wherever that condition is false), and
-**format-hygiene** — the tree obeying the `.editorconfig` it ships (no tabs, 100
-columns, no trailing whitespace, a final newline, no BOM, LF for sources and
-CRLF for shell scripts) plus the root `.clang-format` still being the
-`DisableFormat: true` no-op that keeps Visual Studio's format-as-you-type off
-this hand-tuned tree, and **gate-registry** — every gate defined under
-`packages/sandbox/src/gates/` being declared in `gates.hpp` and classified `Cpu`
-or `Gpu` in `kGates`, so a gate cannot exist and run in no sequence, and
-**rhi-vocabulary** — no `D3D12`/`DXGI`/`SRV`/`UAV`/register-space terms in the
-public `rhi` headers outside the binding contract that exists to name them, and
-**shader-target** — every default-constructed `ShaderCompileDesc` naming its
-`.target` (a copy inherits one and is exempt). `target` defaults to `Dxil`, so a
-desc that never sets it asks for the D3D backend's bytecode wherever it is used;
-a Vulkan device then rejects the blob at pipeline creation, the setup function
-returns early, and every gate after it in that function silently does not run.
-That cost fifty gates twice, with a green pass count both times — nothing fails,
-the gates are just absent, which no total can show. Set it from the device:
-`shader_target_for(device)`.
-And **skill-frontmatter** — every `.claude/skills/*/SKILL.md` opening with closed
-YAML frontmatter, whose `name` matches its directory, and whose `description` and
-`when_to_use` are quoted if they contain a ` #`. In YAML a space-then-hash starts
-a comment, so `Invoke as /aim-row renderer #16.` silently parsed as `Invoke as
-/aim-row renderer` — and those two fields are what the model reads to decide
-whether a skill applies, so the value was cut without the file looking wrong.
-That map check reads
-ENGINE_MAP.md as a graph: every `Category #N` in a **Finish first** must
-resolve, a Later row whose named blockers are all Done must be flipped to
-Ready, and no two rows may block each other — a loop means neither ever
-becomes Ready. No compiler or GPU needed — this is
-what CI runs, since `--gates` cannot run on a hosted runner (the D3D12 backend
-skips software adapters). Run it alongside the gates before shipping.
+Machine-checks the non-negotiables above plus doc-level drift, and prints one
+line per check with the count it verified. **The script is the list** — it names
+every check it ran, so do not re-enumerate them here or anywhere else; a
+hand-kept copy drifts, and this paragraph used to be one. No compiler or GPU
+needed, which is why this is what CI runs: `--gates` cannot run on a hosted
+runner, because the D3D12 backend skips software adapters. Run it alongside the
+gates before shipping.
+
+Four checks are worth knowing the reasoning behind, because each encodes a
+failure that was silent:
+
+- **shader-target** — every default-constructed `ShaderCompileDesc` must name
+  its `.target` (a copy inherits one and is exempt). `target` defaults to
+  `Dxil`, so a desc that never sets it asks for the D3D backend's bytecode
+  wherever it is used; a Vulkan device then rejects the blob at pipeline
+  creation, the setup function returns early, and every gate after it in that
+  function silently does not run. That cost fifty gates twice, with a green pass
+  count both times — nothing fails, the gates are just absent, which no total
+  can show. Set it from the device: `shader_target_for(device)`.
+- **gate-registry** — every gate under `packages/sandbox/src/gates/` must be
+  declared in `gates.hpp` and classified `Cpu` or `Gpu` in `kGates`, so a gate
+  cannot exist and run in no sequence.
+- **skill-frontmatter** — a skill's `description` and `when_to_use` must be
+  quoted if they contain a ` #`. In YAML a space-then-hash starts a comment, so
+  `Invoke as /aim-row renderer #16.` silently parsed as `Invoke as /aim-row
+  renderer` — and those two fields are what the model reads to decide whether a
+  skill applies, so the value was cut without the file looking wrong.
+- **map-dependencies** — reads ENGINE_MAP.md as a graph: every `Category #N` in
+  a **Finish first** must resolve, a Later row whose named blockers are all Done
+  must be flipped to Ready, and no two rows may block each other — a loop means
+  neither ever becomes Ready.
 
 ### What a gate is
 
@@ -214,8 +180,8 @@ There is no test framework. A gate is a plain function in
 `core`, `platform`, `rhi`, `assets`, `scene`, `physics`, `renderer` — pick the
 one the gate is *about*, not the one it happens to allocate from. Helpers only
 that file needs are `static`; anything `main.cpp` also uses goes in
-`sandbox_common.hpp`. All 72 lived in `main.cpp` until Sep 2026, which made it
-26% of the engine (analizeMax A4).
+`sandbox_common.hpp`. Every gate lived in `main.cpp` until Sep 2026 — 72 of them by then, which had
+made that one file 26% of the engine (analizeMax A4).
 
 The shape is unchanged:
 
@@ -256,6 +222,55 @@ cmake --build build --config Release --target game
 .\build\bin\Release\game.exe --gates
 ```
 
+## Docs discipline
+
+The markdown in this tree is within the same order of magnitude as the C++, and
+that is why the rules below exist: at this size docs stop being free, and a
+wrong doc costs more than a missing one because it is *acted on*.
+
+**One owner per fact.** Every fact has exactly one document that states it.
+Everything else links. When you catch yourself writing a number, a list or a
+file path that already appears somewhere else, link instead — a second copy is
+a future contradiction with a coin-flip deciding which half a reader believes.
+The known owners:
+
+| Fact | Owner |
+|------|-------|
+| Row status, blockers, what is Ready | `docs/ENGINE_MAP.md` — the only copy |
+| Why a shipped feature is the way it is | `docs/ROADMAP.md` |
+| Package list, layers, dependency graph | `docs/ARCHITECTURE.md` |
+| The render-pass checklist and its file count | `.claude/rules/renderer-boundaries.md` |
+| Which invariants exist | `tools/check-invariants.ps1` — it prints its own list |
+| Gate count, package count, option list | the tree. Do not restate them in prose |
+| Audit grades, findings, decisions | the management service |
+
+**Prefer deleting to appending.** A doc that has grown a section per incident
+is a doc nobody reads to the end. If a paragraph explains something the script
+or the code now enforces, the enforcement is the documentation — cut the
+paragraph to a sentence pointing at it.
+
+**Two checks enforce the machine-checkable half**, and they are the only reason
+the rest is credible:
+
+- **doc-claims** — every package directory is a row in ARCHITECTURE.md's
+  package table, every `option(ENGINE_*)` appears in both CMake-option tables,
+  and every implementation package is named on its interface's row. Each of
+  those three was wrong simultaneously when `rhi-vulkan` shipped.
+- **doc-skill-refs** — every backticked `` `/<name>` `` in a live doc resolves
+  to a real skill. Prose naming a past run is history and stays; a backticked
+  command is a present-tense claim that you can run it. `docs/superpowers/` is
+  excluded, because specs and plans are dated archives allowed to age.
+
+What they do **not** check is prose: a count inside a sentence, or a claim about
+what the engine can do. That is deliberate — verifying every copy of a fact is
+the wrong fix, and having one owner is the right one. So when a check cannot
+catch it, the answer is to move the fact, not to add a check.
+
+**Dated documents are frozen.** Anything under `docs/superpowers/specs/`,
+`docs/superpowers/plans/` or `docs/analysis/*-full.md` is a snapshot of what was
+true when it was written. Do not update them to match the present; they are
+evidence, and a rewritten spec is a lost record of what was actually decided.
+
 ## Git workflow
 
 - Trunk-based: commit directly to `main`. No branches, no PRs.
@@ -280,8 +295,8 @@ use. The mapping, so it does not have to be re-derived every session:
 | Installed skill | Here |
 |-----------------|------|
 | `test-driven-development` | Use it, but the test *is* a gate. There is no test framework — see "What a gate is" above. Write the gate first and watch it fail; that is this project's red-green. |
-| `finishing-a-development-branch`, `using-git-worktrees` | Skip. Trunk-based: commit to `main`, push. There is no branch to finish and no PR to open. `/ship-feature` is the closeout. |
-| `requesting-code-review`, `code-review:code-review` | Skip the PR-shaped parts. `--gates` plus `tools/check-invariants.ps1` is the review gate; `/analizeMax` is the audit. |
+| `finishing-a-development-branch`, `using-git-worktrees` | Skip. Trunk-based: commit to `main`, push. There is no branch to finish and no PR to open. `/aim-ship` is the closeout. |
+| `requesting-code-review`, `code-review:code-review` | Skip the PR-shaped parts. `--gates` plus `tools/check-invariants.ps1` is the review gate; `/aim-audit` is the audit. |
 | `brainstorming`, `writing-plans`, `executing-plans` | Use as written — steps 2 and 3 of the loop above call for them by name. |
 | `systematic-debugging`, `verification-before-completion` | Use as written. Nothing here conflicts. |
 
@@ -310,6 +325,7 @@ left out of the vendored copy and how to update it:
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Canonical phase sequence + decision log |
 | [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) | Canonical backlog (Done/Ready/Later/Far) |
 | [docs/PICKING.md](docs/PICKING.md) | How to choose the next row from the map |
+| [docs/analysis/README.md](docs/analysis/README.md) | The audit: codes, ceilings, what lives where |
 | [docs/GPU_BASELINE.md](docs/GPU_BASELINE.md) | Player GPU/OS/DLL requirements |
 | [reasarch/GRAPICS-RESEARCH.md](reasarch/GRAPICS-RESEARCH.md) | Personal paraphrased learning notes — **unverified, not a technical reference**. Do independent research before implementing a graphics technique from it. |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Design specs, one per shipped/in-progress feature |
