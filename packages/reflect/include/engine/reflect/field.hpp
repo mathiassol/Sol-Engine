@@ -105,8 +105,11 @@ struct TypeDesc {
     std::span<const FieldDesc> fields{};
 };
 
-// What is wrong with a descriptor set. Ordered so the cheapest structural
-// checks come first; validate returns the first failure it finds.
+// What is wrong with a descriptor set. validate returns the first failure it
+// finds, per field, in the order the checks appear in its body - which is not
+// quite this declaration order (FieldPastEnd is declared before GapTooLarge and
+// evaluated after it). Nothing depends on the enum's order; do not read it as
+// the evaluation sequence.
 enum class TypeError : u8 {
     Ok,
     NoFields,
@@ -131,16 +134,54 @@ enum class TypeError : u8 {
     TrailingGapTooLarge,
 };
 
-// Checks a descriptor set against the struct it claims to describe. constexpr
-// so a type can static_assert its own completeness, which is the generalisation
-// of frame_pipelines.hpp's
+// Checks a descriptor set against the struct it claims to describe.
+//
+// **This must stay in the header.** It is constexpr so a type can
+// static_assert its own completeness beside the struct it describes, and a
+// constexpr body that lives in a .cpp cannot be evaluated in a static_assert
+// from another translation unit. Moving it to src/ would not be a tidy-up; it
+// would silently remove the only reason the function exists. It is the largest
+// non-template body in any public header here, and that is the trade.
+//
+// It generalises frame_pipelines.hpp's
 // static_assert(sizeof(FramePipelines) == count * sizeof(void*)) to fields that
 // do not all have the same width.
 //
-// The gap rules are what catch a *missing* field, and they are heuristics with
-// a precise bound: padding between two fields can never be as wide as the
-// following field's alignment, so a gap that wide means something is not
-// described. Same reasoning after the last field, using the struct's alignment.
+// The gap rules are what catch a *missing* field. Padding before any member can
+// never be as wide as that member's own alignment - the compiler would have
+// placed it earlier - so a gap that wide means something is undescribed. That
+// holds before the first field, between two, and (against the struct's own
+// alignment) after the last.
+//
+// **What it does not catch.** Read this before trusting it as a correctness
+// check; it verifies completeness and widths, not identity, and the limits
+// below are inherent to that rather than gaps to be fixed later:
+//
+//  - **A missing field narrower than the tolerance it hides in.** The rule
+//    permits a gap of up to align-1 bytes, so any contiguous run of missing
+//    bytes narrower than that is invisible - and it is the run's total width
+//    that matters, not how many fields it was. Two trailing `bool`s where only
+//    the first is described leaves a 3-byte tail under a 4-byte threshold and
+//    passes. Worse, a *whole* 4-byte field vanishes from
+//    `struct { f64 d; u32 x; f32 tail; }` when `tail` is omitted, because the
+//    f64 raises the struct's alignment to 8 and the 4-byte tail stays under it.
+//  - **A field described with the wrong type but the right width.** `U32` on an
+//    actual `f32` member passes every check, because reflect stores no type
+//    identity - only widths. It cannot name `engine::math::Vec3` to compare
+//    against, by design: this package depends on `core` alone.
+//  - **A member aligned more strictly than its FieldType.** `alignas(16)` on a
+//    member makes the real gap exceed align_of(FieldType), so a *complete and
+//    correct* descriptor set is rejected with GapTooLarge. This is the one
+//    failure that is loud rather than silent, and the gap rules assume it does
+//    not happen: no reflected member may be aligned more strictly, in the real
+//    struct, than its FieldType's nominal alignment. True for every type
+//    reflect supports today, and unchecked.
+//  - **Packed structs.** Under `#pragma pack` there is no natural slack, yet
+//    the rule still tolerates align-1 bytes, so a missing field hides more
+//    easily than in an ordinary struct.
+//  - **Bitfields.** Not a validate() gap but a model one: `offsetof` on a
+//    bit-field member is not allowed, and FieldDesc has no bit-level
+//    representation, so such a struct cannot be described field-by-field at all.
 constexpr TypeError validate(const TypeDesc& type) {
     if (type.fields.empty()) {
         return TypeError::NoFields;
