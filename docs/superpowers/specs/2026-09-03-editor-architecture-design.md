@@ -18,6 +18,10 @@ the target.
 
 ## The goal, and what it is not
 
+The product goal is owned by [VISION.md](../../../VISION.md), which summarises
+D1-D7 below and is the file to read first. Repeated here only far enough to
+make this spec readable on its own.
+
 A general-purpose engine in the Unity / Godot / Unreal category, targeting a
 **full open world at high fidelity** — big world, good graphics, advanced
 systems. Streaming is assumed, not deferred.

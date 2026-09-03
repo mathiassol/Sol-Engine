@@ -1,5 +1,7 @@
 # Engine Development Philosophy
 
+*How to build. What we are building toward is [VISION.md](VISION.md).*
+
 ## General
 
 -   Build architecture before features.

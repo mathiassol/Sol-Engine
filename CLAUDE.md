@@ -12,6 +12,10 @@ file doesn't cover.
 
 ## Start here
 
+- **What this is being built toward**: [VISION.md](VISION.md) — the finished
+  product, what it is *not*, and the seven decisions that carry it. Read it
+  before an architectural call. It is the single owner of the goal; nothing
+  else restates it.
 - **What to work on**: [docs/ENGINE_MAP.md](docs/ENGINE_MAP.md) — pick one
   **Ready** row. Picking rules: [docs/PICKING.md](docs/PICKING.md).
   Not sure what to pick? `/aim-next` reads git state, the gates and invariants,
@@ -236,6 +240,7 @@ The known owners:
 
 | Fact | Owner |
 |------|-------|
+| What the finished product is, and is not | `VISION.md` — the only copy |
 | Row status, blockers, what is Ready | `docs/ENGINE_MAP.md` — the only copy |
 | Why a shipped feature is the way it is | `docs/ROADMAP.md` |
 | Package list, layers, dependency graph | `docs/ARCHITECTURE.md` |
@@ -316,6 +321,7 @@ left out of the vendored copy and how to update it:
 | File | Purpose |
 |------|---------|
 | [README.md](README.md) | Setup, build, controls |
+| [VISION.md](VISION.md) | **The finished product.** The goal, the non-goals, D1-D7 |
 | [Philosophy.md](Philosophy.md) | Design principles |
 | [Scaffold.md](Scaffold.md) | Original project scaffold statement |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Package graph, conventions |

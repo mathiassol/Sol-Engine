@@ -6,7 +6,8 @@ General-purpose C++ game engine (Unity / Godot / Unreal category) — interface
 and implementation packages, dependencies only downward, stability as the
 method so systems stay swappable.
 
-The sandbox is the proving ground, not the product.
+The sandbox is the proving ground, not the product. What it is being built
+toward: [VISION.md](VISION.md).
 
 ## New machine setup
 

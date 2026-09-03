@@ -12,38 +12,17 @@ Last updated: 3 Sep 2026.
 
 ## What this engine is
 
-A **general-purpose game engine** — the same product category as Unity, Godot,
-and Unreal — written in C++20, owned by you. The long-term shape is a runtime
-you can ship games on: window and input, content from disk, a scene you can
-edit, a renderer you can extend, tools, and more than one platform/GPU backend
-— two GPU backends now exist, and the remaining gap is a non-Windows platform
-package.
+[VISION.md](../VISION.md) — it is the single owner of that question, and a
+second copy here is how this section drifted before.
 
-The sandbox is the **proving ground**, not the product. A lit scene with
-`--gates` is how we prove a layer. It is not a reason to stop adding engine
-systems.
+What belongs to *this* file instead: the sandbox is the **proving ground**, not
+the product. A lit scene with `--gates` is how we prove a layer. It is not a
+reason to stop adding engine systems.
 
-**How we avoid the last two failures:**
-
-1. **Stability.** RAII, explicit ownership, a heartbeat loop, D3D12 debug
-   layer, and a gate you can run. Unpredictable lifetime and “it works on my
-   machine” are how previous engines died.
-2. **Architecture you can rip.** Interface packages vs implementations,
-   dependencies only downward, renderer never includes a graphics API.
-   Replacing the renderer approach, adding a pass, or adding a GPU backend
-   should be a package-sized job, not a whole-tree rewrite. That was designed
-   before it was needed and then tested by `rhi-vulkan`, which arrived as a
-   package and not a fork.
-
-Stability is the *method*. A full engine is the *goal*. Those are not opposites.
-
-Copy Unity/Godot/Unreal’s **shape** (modules, a loop, a scene, a renderer
-behind an RHI, tools). Do not copy their **org chart** onto an empty tree
-(ECS + fibers + deferred+SSAO+editor on day one). That is how small engines
-become untestable — not because those systems are forbidden forever.
-
-Written philosophy already matches this: [Philosophy.md](../Philosophy.md),
-[Scaffold.md](../Scaffold.md), [packageRules.md](packageRules.md).
+Stability is the *method*. A full engine is the *goal*. Those are not opposites
+— see [STABILITY_NORTH_STAR.md](STABILITY_NORTH_STAR.md) for why, and
+[Philosophy.md](../Philosophy.md) and [packageRules.md](packageRules.md) for
+how.
 
 ---
 
@@ -1393,6 +1372,40 @@ real graph used — the shadow gate runs against its own probe. Verified across
 the render-graph transient rebuild. Do not persist them: `config.cfg` is read and
 never written, and the cvar writer is Foundation #17. Do not add a preset knob
 for something the renderer does not actually expose.
+
+---
+
+## Docs — the product goal gets a single owner, and a check (done)
+
+**Why:** five files stated some version of "what this engine is" —
+`Scaffold.md`, `Philosophy.md`, this file, `README.md` and
+`STABILITY_NORTH_STAR.md`. None agreed exactly, three were written before two
+GPU backends existed, and none of them said what the product is *not*, which is
+the half that prevents drift. The goal itself had never been written down at
+all: open world at Crimson Desert scale, Lua scripting, an editor that is never
+the only way in, and an engine an agent can drive as well as a human can.
+
+**Choice:** [VISION.md](../VISION.md) at the root is now the single owner. The
+other five keep only what belongs to them and point at it — this file's "What
+this engine is" section is four lines instead of thirty-four. Reasoning for the
+seven decisions lives in the design spec; VISION.md carries them as one-liners,
+because the summary is what gets read and the reasoning is what gets skipped.
+
+**Gate:** a new `vision-gap` invariant, watched to fail first. VISION.md carries
+a table of the six decisions already made *against* the goal — the 512-instance
+cap, index-keyed motion history, and four more — each naming its file and
+symbol. The check fails when a symbol is **gone**, because a resolved
+contradiction leaves a row claiming the tree is worse than it is. So the table
+shrinks as the gap closes, and it cannot silently go stale. 20/20 invariants
+pass.
+
+**Do not:** do not restate the goal anywhere else, including in a commit
+message that tries to be helpful — five copies is how this started. Do not add
+a contradiction row without a greppable symbol; the two that have none (no
+despawn, monolithic scene file) are listed separately and deliberately
+unchecked, because an absence cannot be grepped for without a pattern that goes
+green for the wrong reason. Do not edit VISION.md because the tree went
+somewhere else — that is the drift it exists to catch.
 
 ---
 

@@ -29,6 +29,9 @@ stability and modularity**, not a “never build Unreal” essay.
 
 ## 1. What “amazing” means here
 
+*Excellence as a property of the code. The product goal it serves is
+[VISION.md](../VISION.md).*
+
 For this project, excellence is a **general-purpose engine that you can still
 debug and replace**:
 

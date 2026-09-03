@@ -1090,6 +1090,60 @@ Add-Result 'doc-skill-refs' `
     $refViolations
 
 
+# ── 20. VISION.md's contradiction table matches the tree ─────────────────────
+# VISION.md carries a table of decisions already made *against* the stated goal
+# - the 512-instance cap, index-keyed motion history, and so on. That table is
+# the measured gap between what this is and what it is meant to become, and it
+# is only useful while it is true.
+#
+# Two ways it rots, and this catches both. A contradiction that gets fixed
+# leaves a stale row claiming the tree is worse than it is - so a row whose
+# symbol no longer exists **fails**, and the fix is to delete the row and
+# celebrate. A row that names the wrong file fails the same way, which keeps the
+# table's references usable rather than decorative.
+#
+# It deliberately does not check the two contradictions VISION.md lists as
+# having no symbol (no despawn, monolithic scene file): an absence cannot be
+# grepped for without inventing a pattern that would go green for the wrong
+# reason.
+$visionViolations = @()
+$visionPath = 'VISION.md'
+$visionRows = 0
+if (Test-Path $visionPath) {
+    $visionText = Get-Content -LiteralPath $visionPath -Raw
+    # | description | `path` | `symbol` |
+    $rowPattern = '(?m)^\|\s*[^|]+\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*$'
+    foreach ($m in [regex]::Matches($visionText, $rowPattern)) {
+        $file = $m.Groups[1].Value.Trim()
+        $symbol = $m.Groups[2].Value.Trim()
+        # Skip the decisions table, whose second column is prose not a path.
+        if ($file -notmatch '^packages/') { continue }
+        $visionRows++
+        if (-not (Test-Path $file)) {
+            $visionViolations += ("$visionPath : row names '$file', which does not exist - " +
+                'update the path or delete the row')
+            continue
+        }
+        $body = Get-Content -LiteralPath $file -Raw
+        if ($body -notmatch ('(?m)^\s*(?:inline\s+)?constexpr\s+\w+\s+' +
+                [regex]::Escape($symbol) + '\s*=')) {
+            $visionViolations += ("$visionPath : '$symbol' is gone from $file - the " +
+                'contradiction is resolved, so delete the row')
+        }
+    }
+    if ($visionRows -eq 0) {
+        $visionViolations += "$visionPath : no contradiction rows parsed - has the table moved?"
+    }
+}
+else {
+    $visionViolations += 'VISION.md is missing - it is the single owner of the product goal'
+}
+
+Add-Result 'vision-gap' `
+    "$visionRows named contradictions in VISION.md, all still present in the tree" `
+    $visionViolations
+
+
 # ── report ───────────────────────────────────────────────────────────────────
 Pop-Location
 
