@@ -122,8 +122,10 @@ enum class TypeError : u8 {
     FieldOverlapsPrevious,
     FieldPastEnd,
     // A gap wide enough to hold another field of the following field's
-    // alignment - the signature of a field left out of the table.
-    InteriorGapTooLarge,
+    // alignment - the signature of a field left out of the table. Applies
+    // before the first field as well as between two, since `cursor` starts at
+    // zero.
+    GapTooLarge,
     // Room after the last field for one more - the signature of a field
     // appended to the struct and forgotten here. The common case.
     TrailingGapTooLarge,
@@ -167,12 +169,13 @@ constexpr TypeError validate(const TypeDesc& type) {
             if (f.offset < prev.offset + prev.size) {
                 return TypeError::FieldOverlapsPrevious;
             }
-            const u32 gap = f.offset - cursor;
-            // align_of never returns 0 since Task 2b's table - Name and any
-            // out-of-range value both report 1 - so no guard is needed here.
-            if (gap >= align_of(f.type)) {
-                return TypeError::InteriorGapTooLarge;
-            }
+        }
+        // Outside the `i > 0` block on purpose: `cursor` starts at zero, so for
+        // the first field this is the gap before it, and a field missing from
+        // the front is exactly as easy to make as one missing from the middle.
+        // align_of never returns 0 since Task 2b's table, so no guard is needed.
+        if (f.offset - cursor >= align_of(f.type)) {
+            return TypeError::GapTooLarge;
         }
         if (f.offset + f.size > type.size) {
             return TypeError::FieldPastEnd;

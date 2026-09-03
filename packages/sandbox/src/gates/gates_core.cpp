@@ -710,6 +710,13 @@ static constexpr engine::reflect::FieldDesc kMissingInteriorFields[] = {
     ENGINE_REFLECT_FIELD(ReflectProbe, visible, engine::reflect::FieldType::Bool),
 };
 
+// `pos` absent, leaving a twelve-byte hole before the first described field.
+static constexpr engine::reflect::FieldDesc kMissingLeadingFields[] = {
+    ENGINE_REFLECT_FIELD(ReflectProbe, radius, engine::reflect::FieldType::F32),
+    ENGINE_REFLECT_FIELD(ReflectProbe, flags, engine::reflect::FieldType::U32),
+    ENGINE_REFLECT_FIELD(ReflectProbe, visible, engine::reflect::FieldType::Bool),
+};
+
 bool run_reflect_gate() {
     using engine::reflect::FieldType;
     using engine::reflect::size_of;
@@ -802,10 +809,13 @@ bool run_reflect_gate() {
         {"a", 0, 4, FieldType::U32},
         {"b", 2, 4, FieldType::U32},
     };
-    // Descending offsets.
+    // Descending offsets. Three fields, not two: the first two must be
+    // contiguous from offset 0 so that the leading-gap rule does not fire
+    // first and mask what this case is for.
     static constexpr engine::reflect::FieldDesc kUnorderedFields[] = {
-        {"a", 8, 4, FieldType::U32},
-        {"b", 0, 4, FieldType::U32},
+        {"a", 0, 4, FieldType::U32},
+        {"b", 4, 4, FieldType::U32},
+        {"c", 0, 4, FieldType::U32},
     };
     // A field running past the end of the struct.
     static constexpr engine::reflect::FieldDesc kPastEndFields[] = {
@@ -825,6 +835,10 @@ bool run_reflect_gate() {
     };
     const Case cases[] = {
         {"good", kProbeType, TypeError::Ok},
+        {"missing_leading",
+            TypeDesc{"P", sizeof(ReflectProbe), alignof(ReflectProbe),
+                kMissingLeadingFields},
+            TypeError::GapTooLarge},
         {"missing_trailing",
             TypeDesc{"P", sizeof(ReflectProbe), alignof(ReflectProbe),
                 kMissingTrailingFields},
@@ -832,7 +846,7 @@ bool run_reflect_gate() {
         {"missing_interior",
             TypeDesc{"P", sizeof(ReflectProbe), alignof(ReflectProbe),
                 kMissingInteriorFields},
-            TypeError::InteriorGapTooLarge},
+            TypeError::GapTooLarge},
         {"wrong_type", TypeDesc{"P", 12, 4, kWrongTypeFields},
             TypeError::SizeDisagreesWithType},
         {"overlap", TypeDesc{"P", 8, 4, kOverlapFields},

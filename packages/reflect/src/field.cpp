@@ -16,7 +16,7 @@ const char* to_string(TypeError error) {
     case TypeError::OffsetsNotAscending:   return "offsets not ascending";
     case TypeError::FieldOverlapsPrevious: return "field overlaps previous";
     case TypeError::FieldPastEnd:          return "field past end of struct";
-    case TypeError::InteriorGapTooLarge:   return "interior gap - a field is missing";
+    case TypeError::GapTooLarge:           return "gap - a field is missing";
     case TypeError::TrailingGapTooLarge:   return "trailing gap - a field is missing";
     }
     return "?";
