@@ -271,6 +271,14 @@ what the engine can do. That is deliberate — verifying every copy of a fact is
 the wrong fix, and having one owner is the right one. So when a check cannot
 catch it, the answer is to move the fact, not to add a check.
 
+**A doc describes the commit it lands in, not the plan.** When a multi-step plan
+adds a package, the first commit's doc row says what exists *then* — later steps
+extend it as they land. Writing the finished description up front means every
+commit in between documents capability the tree does not have, which is the same
+drift as a stale doc with the sign flipped, and no check catches it because the
+row is present and well-formed. `reflect`'s first commit did exactly this and it
+was caught in review, not by a script.
+
 **Dated documents are frozen.** Anything under `docs/superpowers/specs/`,
 `docs/superpowers/plans/` or `docs/analysis/*-full.md` is a snapshot of what was
 true when it was written. Do not update them to match the present; they are

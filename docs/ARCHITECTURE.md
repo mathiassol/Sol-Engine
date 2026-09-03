@@ -57,7 +57,7 @@ Two facts the shape is load-bearing on:
 |---------|-------|------|----------------|
 | `core` | 0 | lib | Clock, frame timer, log, arena, profile scopes, cvars |
 | `math` | 0 | lib | Vec3, Mat4, AABB, Frustum, ortho, column-major RH Y-up |
-| `reflect` | 0 | lib | Field descriptors for POD structs: name, byte offset, size, `FieldType`. `validate()` is `constexpr`, so a type can `static_assert` that its descriptors match the struct. Knows nothing about `math` — the reflect gate cross-checks the vector byte counts |
+| `reflect` | 0 | lib | Describes a POD struct's fields, so text serialisation, the command layer and an editor inspector are one mechanism rather than three. Today: `FieldType`, and the byte width and alignment of each type it names. Depends on `core` only — deliberately **not** `math`, so the vector widths are stated here rather than derived |
 | `platform` | 1 | interface | `IPlatform`, `IWindow`, `IInput` (keys, mouse, four `GamepadState` slots), `IFileSystem` |
 | `rhi` | 1 | interface | `IRHI`, `IDevice`, buffers, graphics + compute pipelines, commands, `SamplerDesc`, **instanced `draw_indexed`** + `set_structured_buffer` |
 | `assets` | 1 | lib | `IAssetLoader`, mesh/image types, `SOLC` cooker, `SOLP` pak |
