@@ -15,12 +15,12 @@ namespace engine::renderer {
 // read null as "feature off".
 //
 // `forward` is here even though the renderer consumes it per-batch rather than
-// per-frame (world_extract.cpp assigns DrawItem::pipeline). Uniformity is the
+// per-frame (scene-render assigns DrawItem::pipeline). Uniformity is the
 // point: the completeness gate covers it and it reads like its twelve siblings.
 struct FramePipelines {
     rhi::IGraphicsPipeline* forward = nullptr;
     // The same shader with BlendMode::Alpha and no depth write. Consumed
-    // per-batch like `forward`, and chosen in world_extract.cpp from the
+    // per-batch like `forward`, and chosen in scene-render from the
     // material's opacity.
     rhi::IGraphicsPipeline* forward_transparent = nullptr;
     rhi::IGraphicsPipeline* shadow = nullptr;

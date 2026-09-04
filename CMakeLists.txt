@@ -114,6 +114,7 @@ add_subdirectory(packages/gameplay)
 
 # ── Layer 4: Engine runtime ─────────────────────────────────────────────────
 add_subdirectory(packages/engine)
+add_subdirectory(packages/scene-render)
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 if(WIN32)

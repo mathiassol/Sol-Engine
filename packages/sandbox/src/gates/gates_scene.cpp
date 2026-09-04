@@ -412,7 +412,7 @@ bool run_scene_prefab_gate() {
 
 bool run_light_gate(const engine::scene::World& world) {
     engine::renderer::Lighting lighting{};
-    sandbox::extract_lighting(world, {0.f, 0.35f, -2.2f}, lighting);
+    engine::scene_render::extract_lighting(world, {0.f, 0.35f, -2.2f}, lighting);
     const engine::f32 sun_len = lighting.sun_direction.length();
     const bool sun_ok = sun_len > 0.99f && sun_len < 1.01f && lighting.sun_color.x > 0.2f;
     const bool ambient_ok = lighting.ambient.x > 0.05f;

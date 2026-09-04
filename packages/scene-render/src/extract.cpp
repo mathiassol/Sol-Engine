@@ -1,11 +1,11 @@
-#include "world_extract.hpp"
+#include <engine/scene_render/extract.hpp>
 
 #include <engine/assets/mesh.hpp>
 #include <engine/math/aabb.hpp>
 #include <engine/math/vec3.hpp>
 #include <engine/renderer/motion.hpp>
 
-namespace sandbox {
+namespace engine::scene_render {
 
 void extract_lighting(const engine::scene::World& world, engine::math::Vec3 camera_pos,
     engine::renderer::Lighting& out) {
@@ -157,4 +157,4 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
     return engine::renderer::extract_visible(desc, arena, snapshot, sink_ptr);
 }
 
-} // namespace sandbox
+} // namespace engine::scene_render

@@ -11,7 +11,7 @@
 #include <engine/rhi/resources.hpp>
 #include <engine/scene/world.hpp>
 
-namespace sandbox {
+namespace engine::scene_render {
 
 constexpr engine::u32 kHuskyVariantCount = 4;
 constexpr engine::u32 kFloorAlbedoIndex = 4;
@@ -46,4 +46,4 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
     engine::renderer::RenderSnapshot& snapshot,
     engine::renderer::motion::MotionHistory* history = nullptr);
 
-} // namespace sandbox
+} // namespace engine::scene_render

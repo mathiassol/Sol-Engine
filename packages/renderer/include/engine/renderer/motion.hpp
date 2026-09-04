@@ -25,7 +25,7 @@ inline constexpr rhi::Format kFormat = rhi::Format::RGBA16_FLOAT;
 // Must be >= the scene's instance capacity. Extract indexes this array by the
 // scene instance id, and an id past the end silently gets prev_model == model -
 // which reads as "this object did not move", so TAA reprojects it wrongly and
-// motion blur vanishes. No crash, no warning. world_extract.cpp static_asserts
+// motion blur vanishes. No crash, no warning. scene-render static_asserts
 // the coupling; run_instance_capacity_gate proves it at runtime.
 inline constexpr u32 kHistorySlots = 512;
 inline constexpr f32 kUvScaleX = 0.5f;

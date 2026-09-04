@@ -53,7 +53,7 @@ $Layers = @{
     # Layer 3 - systems
     'renderer' = 4; 'debug-draw' = 4; 'scene' = 4; 'gameplay' = 4
     # Layer 4 - runtime
-    'engine' = 5
+    'engine' = 5; 'scene-render' = 5
     # Tools and apps
     'cook' = 6; 'sandbox' = 6; 'game' = 6
 }

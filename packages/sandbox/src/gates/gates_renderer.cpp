@@ -155,7 +155,7 @@ bool run_shadow_gate(const engine::scene::World& world,
     const engine::assets::gpu::GpuMeshStore& meshes,
     const engine::rhi::IGraphicsPipeline* shadow_pipeline) {
     const engine::math::Mat4 sun = engine::renderer::make_sun_view_proj(
-        world.sun.direction, sandbox::scene_world_bounds(world, meshes));
+        world.sun.direction, engine::scene_render::scene_world_bounds(world, meshes));
     const engine::math::Mat4 identity = engine::math::Mat4::identity();
     const bool matrix_ok = std::memcmp(&sun, &identity, sizeof(engine::math::Mat4)) != 0
         && std::isfinite(sun.cols[0].x) && std::abs(sun.cols[0].x) > 0.01f;
@@ -279,7 +279,7 @@ bool run_hdr_gate(const engine::scene::World& world,
 }
 
 bool run_frustum_gate(const engine::scene::World& world, const FlyCamera& camera,
-    const sandbox::WorldExtractAssets& assets) {
+    const engine::scene_render::WorldExtractAssets& assets) {
     engine::scene::World copy = world;
     copy.camera.view = camera.view();
     copy.camera.projection = camera.projection(16.f / 9.f);
@@ -287,8 +287,8 @@ bool run_frustum_gate(const engine::scene::World& world, const FlyCamera& camera
     engine::renderer::RenderSnapshot snapshot{};
     snapshot.width = 1280;
     snapshot.height = 720;
-    const auto stats = sandbox::extract_world(copy, camera.position, assets, false, nullptr, arena,
-        snapshot);
+    const auto stats = engine::scene_render::extract_world(copy, camera.position, assets,
+        false, nullptr, arena, snapshot);
     const engine::u32 skipped = stats.considered - stats.visible;
     // Batches must collapse the drawn set, never exceed it. Reported here
     // because this is the one gate that runs the real demo world, so the
@@ -307,7 +307,7 @@ bool run_frustum_gate(const engine::scene::World& world, const FlyCamera& camera
 }
 
 bool run_material_gate(const engine::scene::World& world, const FlyCamera& camera,
-    const sandbox::WorldExtractAssets& assets, engine::f32 gltf_metallic,
+    const engine::scene_render::WorldExtractAssets& assets, engine::f32 gltf_metallic,
     engine::f32 gltf_roughness) {
     const bool table_ok = world.material_count >= 2;
     bool handles_ok = world.instance_count > 0;
@@ -324,7 +324,8 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     engine::renderer::RenderSnapshot before{};
     before.width = 1280;
     before.height = 720;
-    sandbox::extract_world(copy, camera.position, assets, false, nullptr, arena, before);
+    engine::scene_render::extract_world(copy, camera.position, assets, false, nullptr, arena,
+        before);
 
     constexpr engine::f32 kProbeRoughness = 0.03125f;
     engine::scene::World mutated = copy;
@@ -335,7 +336,8 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     engine::renderer::RenderSnapshot after{};
     after.width = 1280;
     after.height = 720;
-    sandbox::extract_world(mutated, camera.position, assets, false, nullptr, arena_mutated, after);
+    engine::scene_render::extract_world(mutated, camera.position, assets, false, nullptr,
+        arena_mutated, after);
 
     bool draws_ok = !after.draws.empty();
     for (const engine::renderer::DrawItem& draw : after.draws) {
@@ -365,7 +367,7 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     engine::renderer::RenderSnapshot translucent_snapshot{};
     translucent_snapshot.width = 1280;
     translucent_snapshot.height = 720;
-    sandbox::extract_world(translucent, camera.position, assets, false, nullptr,
+    engine::scene_render::extract_world(translucent, camera.position, assets, false, nullptr,
         arena_translucent, translucent_snapshot);
 
     // Exactly the probe material's draws changed, and nothing else moved.

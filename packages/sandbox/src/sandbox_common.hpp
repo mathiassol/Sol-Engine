@@ -75,7 +75,7 @@
 #include <engine/debug/frame_stats.hpp>
 #include <engine/debug/stats_overlay.hpp>
 #include <engine/shaders/shader_hot_reload.hpp>
-#include "world_extract.hpp"
+#include <engine/scene_render/extract.hpp>
 #include <algorithm>
 #include <chrono>
 #include <exception>
@@ -242,7 +242,7 @@ struct ForwardDemo {
     engine::assets::gpu::GpuMeshStore meshes;
     engine::assets::MeshHandle husky{};
     engine::assets::MeshHandle ground{};
-    std::unique_ptr<engine::rhi::ITexture> albedos[sandbox::kHuskyVariantCount];
+    std::unique_ptr<engine::rhi::ITexture> albedos[engine::scene_render::kHuskyVariantCount];
     std::unique_ptr<engine::rhi::ITexture> floor_albedo;
     std::unique_ptr<engine::rhi::ITexture> default_mr;
     std::unique_ptr<engine::rhi::ITexture> default_normal;
@@ -330,7 +330,7 @@ QualitySettings resolve_quality_from_cvars(bool warn);
 
 void toggle_walk_mode(SandboxState& state);
 
-sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo);
+engine::scene_render::WorldExtractAssets make_extract_assets(ForwardDemo& demo);
 
 bool ensure_taa_history(engine::rhi::IDevice& device, engine::renderer::RenderGraph& graph,
     ForwardDemo& demo, engine::u32 width, engine::u32 height);

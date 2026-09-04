@@ -30,10 +30,11 @@ Layer 3  renderer        → rhi, core, math
          gameplay        → core, math, physics
 
 Layer 4  engine          → core, platform, rhi, renderer, assets, audio, physics
+         scene-render    → scene, renderer, debug-draw, assets-gpu, math
 
 Tool     cook            → core, math, assets, assets-obj, assets-gltf, assets-png-wic
 
-Apps     sandbox / game  → engine, scene, gameplay, debug-draw, math,
+Apps     sandbox / game  → engine, scene, scene-render, gameplay, debug-draw, math,
                            assets-*, and the Layer 2 backends (guarded by
                            ENGINE_* options). Same sources; game adds the
                            install layout and identity resources.
@@ -46,8 +47,9 @@ Two facts the shape is load-bearing on:
 
 - `engine` does **not** depend on `scene`, `gameplay`, or `debug-draw` — the
   **apps** link those. That is *why* the renderer never sees the scene: the
-  `scene → RenderSnapshot` bridge lives in the app
-  (`packages/sandbox/src/world_extract.cpp`).
+  `scene → RenderSnapshot` bridge is its own Layer 4 package, `scene-render`
+  (`packages/scene-render/src/extract.cpp`), sitting above all three so it can
+  see them and linked by the apps rather than by `engine`.
 - `rhi` depends on `core` only — **not** `math`. `rhi-d3d12` links `rhi` and
   `math` — the latter only for `build_rgba8_mip_chain`.
 
@@ -78,6 +80,7 @@ Two facts the shape is load-bearing on:
 | `renderer` | 3 | lib | Render graph, **standard frame** (shadow → forward → motion → sky → bloom → TAA → tonemap → AA → debug → overlay), per-pass GPU debug events, frustum extract, **GGX PBR** (albedo + packed MR + derivative TBN normals), **16-tap Vogel PCF**, **split-sum IBL**, **Karis bloom**, **Karis TAA**, **SMAA 1x / FXAA**, **instanced draws** (extract batches by material/mesh key; one `draw_indexed` and one constant upload per batch) |
 | `debug-draw` | 3 | lib | Frame stats, F3 overlay, F4 world AABBs, F5 AA mode |
 | `scene` | 3 | lib | Flat instance list (**512**) with interned names, parent indices, `solscene` files (`load_world` reads one from a mounted virtual path through `IAssetLoader`), and prefab extract/instantiate (prefix + root transform); world = parent * local; materials (16), camera, sun + point lights (`World`); no ECS |
+| `scene-render` | 4 | lib | The `scene → RenderSnapshot` bridge: copies `scene::World` into `ExtractInstance`, extracts lighting into `renderer::Lighting`, computes the world's mesh bounds, and picks a material's pipeline from its opacity. Rank 4 rather than 3 because a bridge has to sit *above* the packages it bridges — `dependency-direction` rejects a dependency on a package at the same rank |
 | `gameplay` | 3 | lib | Kinematic `CharacterController` (walk, jump, step, slope; analog wish) and `GameCamera` (follow / orbit / FPS, stick look) on `IPhysics` + math; no input map |
 | `engine` | 4 | lib | Phased loop, module injection, repo vs install content layout, `config.cfg` load |
 | `sandbox` | app | exe | Dev harness (`--gates`, repo mounts, Debug + `ENGINE_GPU_DEBUG`) |
@@ -112,9 +115,13 @@ not a loader either; it uploads CPU meshes to GPU buffers.
 **New engine pass = `add_pass` in `packages/renderer/src/standard_frame.cpp`**
 (`setup_standard_frame`). The sandbox must not register shadow/forward/tonemap/debug/overlay.
 
-Frustum cull and sun bounds live in `renderer::extract_visible`. The sandbox only
-copies `scene::World` into `ExtractInstance` (`packages/sandbox/src/world_extract.cpp`),
-including metal/rough from `scene::Material`. The renderer does not include `scene`.
+Frustum cull and sun bounds live in `renderer::extract_visible`. The copy of
+`scene::World` into `ExtractInstance` — including metal/rough from
+`scene::Material` — is **no longer app code**: it is `scene-render`
+(`packages/scene-render/src/extract.cpp`), an engine package the apps link.
+A bridge every app would otherwise reimplement is engine capability, and so are
+the two `static_assert`s in it that couple `scene`'s instance and light caps to
+the renderer's. The renderer still does not include `scene`.
 
 Extract also *batches* the survivors, grouping by pipeline + buffers + textures +
 index count. One batch list serves shadow, forward and motion: building it per

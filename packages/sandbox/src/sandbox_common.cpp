@@ -139,8 +139,8 @@ void toggle_walk_mode(SandboxState& state) {
     state.walk_mode = !state.walk_mode;
 }
 
-sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo) {
-    sandbox::WorldExtractAssets assets{};
+engine::scene_render::WorldExtractAssets make_extract_assets(ForwardDemo& demo) {
+    engine::scene_render::WorldExtractAssets assets{};
     assets.pipelines = demo.pipelines;
     assets.taa_history = nullptr;
     assets.taa_sample = demo.taa_frames;
@@ -148,7 +148,7 @@ sandbox::WorldExtractAssets make_extract_assets(ForwardDemo& demo) {
     assets.aa_mode = demo.aa_mode;
     assets.exposure = demo.exposure;
     assets.meshes = &demo.meshes;
-    for (engine::u32 i = 0; i < sandbox::kHuskyVariantCount; ++i) {
+    for (engine::u32 i = 0; i < engine::scene_render::kHuskyVariantCount; ++i) {
         assets.husky_albedos[i] = demo.albedos[i].get();
     }
     assets.floor_albedo = demo.floor_albedo.get();

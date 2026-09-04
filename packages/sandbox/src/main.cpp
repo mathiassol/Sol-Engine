@@ -53,8 +53,8 @@
 #include <engine/debug/frame_stats.hpp>
 #include <engine/debug/stats_overlay.hpp>
 #include <engine/shaders/shader_hot_reload.hpp>
+#include <engine/scene_render/extract.hpp>
 
-#include "world_extract.hpp"
 #include "sandbox_common.hpp"
 #include "gates/gates.hpp"
 #include "gates/gate_registry.hpp"
@@ -902,7 +902,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
-    for (engine::usize i = 0; i < sandbox::kHuskyVariantCount; ++i) {
+    for (engine::usize i = 0; i < engine::scene_render::kHuskyVariantCount; ++i) {
         engine::assets::ImageData image;
         if (!load_albedo_texture(loader, *device, kHuskyAlbedos[i], demo->albedos[i], image)) {
             return false;
@@ -918,8 +918,8 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     const engine::f32 foot_y = husky_data.bounds.min.y;
     state.husky_foot_y = foot_y;
     constexpr engine::u32 kHuskyCount = 63;
-    engine::scene::MaterialHandle husky_mats[sandbox::kHuskyVariantCount]{};
-    for (engine::u32 i = 0; i < sandbox::kHuskyVariantCount; ++i) {
+    engine::scene::MaterialHandle husky_mats[engine::scene_render::kHuskyVariantCount]{};
+    for (engine::u32 i = 0; i < engine::scene_render::kHuskyVariantCount; ++i) {
         engine::scene::Material mat{};
         mat.albedo = i;
         mat.metallic = husky_metallic;
@@ -932,7 +932,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         // It also shows the documented limitation honestly: where two of them
         // overlap each other, the blend order is scene order until
         // Renderer #34 sorts. Better seen here than discovered in a game.
-        if (i == sandbox::kHuskyVariantCount - 1) {
+        if (i == engine::scene_render::kHuskyVariantCount - 1) {
             mat.opacity = 0.45f;
         }
         husky_mats[i] = engine::scene::add_material(demo->world, mat);
@@ -940,7 +940,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     for (engine::u32 i = 0; i < kHuskyCount; ++i) {
         engine::scene::Instance instance{};
         instance.mesh = demo->husky;
-        instance.material = husky_mats[i % sandbox::kHuskyVariantCount];
+        instance.material = husky_mats[i % engine::scene_render::kHuskyVariantCount];
         engine::math::Vec3 pos{};
         if (i < 4) {
             pos = {(static_cast<engine::f32>(i) - 1.5f) * 0.5f, -foot_y, 0.f};
@@ -1040,7 +1040,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     engine::scene::Instance floor{};
     floor.mesh = demo->ground;
     engine::scene::Material floor_mat{};
-    floor_mat.albedo = sandbox::kFloorAlbedoIndex;
+    floor_mat.albedo = engine::scene_render::kFloorAlbedoIndex;
     floor_mat.metallic = 0.f;
     floor_mat.roughness = 0.9f;
     floor.material = engine::scene::add_material(demo->world, floor_mat);
@@ -1495,7 +1495,7 @@ int run_app(int argc, char** argv) {
         const engine::math::Vec3 eye = use_game
             ? state.game_camera.position()
             : state.forward->camera.position;
-        sandbox::extract_world(world, eye, assets,
+        engine::scene_render::extract_world(world, eye, assets,
             state.overlay.visible(),
             state.debug_lines.visible() ? &state.debug_lines : nullptr, arena, snapshot,
             &state.forward->motion_history);

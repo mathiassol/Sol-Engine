@@ -113,10 +113,10 @@ bool run_hdr_gate(const engine::scene::World& world,
 bool run_async_compile_gate(engine::shaders::IShaderHotReloader& watcher);
 
 bool run_frustum_gate(const engine::scene::World& world, const FlyCamera& camera,
-    const sandbox::WorldExtractAssets& assets);
+    const engine::scene_render::WorldExtractAssets& assets);
 
 bool run_material_gate(const engine::scene::World& world, const FlyCamera& camera,
-    const sandbox::WorldExtractAssets& assets, engine::f32 gltf_metallic,
+    const engine::scene_render::WorldExtractAssets& assets, engine::f32 gltf_metallic,
     engine::f32 gltf_roughness);
 
 bool run_pbr_gate();
