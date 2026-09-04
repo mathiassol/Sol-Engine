@@ -611,7 +611,7 @@ Add after the opacity block, in that gate's established style:
     engine::renderer::RenderSnapshot textured_snap{};
     textured_snap.width = 1280;
     textured_snap.height = 720;
-    sandbox::extract_world(textured, camera.position, assets, false, nullptr,
+    engine::scene_render::extract_world(textured, camera.position, assets, false, nullptr,
         arena_textured, textured_snap);
 
     bool normal_travels = probe != nullptr && !textured_snap.draws.empty();
@@ -629,6 +629,14 @@ Add after the opacity block, in that gate's established style:
 
 Add `normal_travels && normal_was_default` to `passed`, and
 `normal_travels=%s normal_was_default=%s` to the message.
+
+**Grow the message buffer.** It is `char message[288]` and the existing format
+already reaches ~268 bytes at its widest (two `%zu` counts and a `%zu/%zu`
+pair, all `usize`). The two new fields add ~42, so 288 truncates — and
+`snprintf` truncates *silently*, taking the trailing `(FAIL)` off the end
+first. Take it to `char message[384]`. This is the failure mode "every term in
+`passed` must also appear in the message" exists to prevent, arriving by
+truncation rather than by editing.
 
 - [ ] **Step 2: Build and watch it fail to compile**
 
@@ -707,25 +715,38 @@ and replace it, along with the two pinned defaults, with store lookups:
         item.metallic_roughness = mr ? mr : assets.default_mr;
 ```
 
-`get()` returns `const rhi::ITexture*` while `DrawItem` holds a non-const
-pointer. Add a **non-const `get()` overload** to `GpuTextureStore` rather than
-`const_cast`ing at three call sites:
+`DrawItem` holds a non-const `rhi::ITexture*`, so the store needs a non-const
+`get()`. **That overload already exists** — Task 1's review fix shipped it
+early, because the strengthened store gate's readback needed it too
+(`cmd.transition`, `read_texture` and `set_shader_resource` all take
+`ITexture&`). Do not add it again; just check it is there.
 
-```cpp
-    rhi::ITexture* get(TextureHandle handle);
-    const rhi::ITexture* get(TextureHandle handle) const;
-```
+What this step does still have to change is the member: `textures` is a
+**non-const** `GpuTextureStore*`, as written in the struct above. A
+`const` pointer would only reach the `const` overload and put a `const_cast`
+back at all three call sites — which is a claim the reader has to verify three
+times, where the overload states once that the store hands out mutable
+textures because the RHI's binding calls take them that way.
 
-and make `WorldExtractAssets::textures` a non-const pointer. A `const_cast` at
-a call site is a claim the reader has to verify three times; an overload states
-once that the store hands out mutable textures because the RHI's binding calls
-take them that way.
+`run_material_gate` takes `const WorldExtractAssets&`, which makes
+`assets.textures` a `GpuTextureStore* const` — a const *pointer* to a
+non-const store, so the non-const `get()` is still reachable from the gate.
+That is why the member's constness and not the parameter's is what matters
+here.
+
+Deleting that branch also makes `kHuskyVariantCount` and `kFloorAlbedoIndex`
+unused in `scene-render`. They moved there with the bridge in Task 2 only
+because the branch read them; **move them back to the sandbox now** (they
+belong beside the demo content that defines them) and qualify or unqualify the
+four sandbox users accordingly. An engine package holding two constants about a
+demo husky is the leftover Task 2 was allowed to create and this task is
+obliged to clean up.
 
 In `WorldExtractAssets`, replace `husky_albedos`, `floor_albedo`,
 `default_mr` and `default_normal` with:
 
 ```cpp
-    const engine::assets::gpu::GpuTextureStore* textures = nullptr;
+    engine::assets::gpu::GpuTextureStore* textures = nullptr;
     engine::rhi::ITexture* default_albedo = nullptr;
     engine::rhi::ITexture* default_normal = nullptr;
     engine::rhi::ITexture* default_mr = nullptr;
@@ -750,9 +771,14 @@ Run:
 cmake --build build --config Debug
 .\build\bin\Debug\sandbox.exe --gates
 ```
-Expected: `carries_maps=yes` and `(pass)`, exit `0`, and **the husky still
-renders with its textures** — run without `--gates` and look at it. A green
-gate here does not prove the demo scene survived the material change.
+Expected, from `run_material_gate`: `normal_travels=yes
+normal_was_default=yes` and `(pass)`, exit `0`. (An earlier draft of this step
+expected a field called `carries_maps`, which Step 1 never defines.)
+
+Also: **the husky still renders with its textures** — run without `--gates` and
+look at it. A green gate here does not prove the demo scene survived the
+material change, because the gate probes the material table it is handed and
+Step 5 rewrites how that table is filled.
 
 - [ ] **Step 7: Update `VISION.md` — the `vision-gap` check demands it**
 
