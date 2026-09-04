@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #define CGLTF_IMPLEMENTATION
@@ -128,6 +129,20 @@ NodeTransform make_node_transform(const cgltf_float world[16]) {
     return t;
 }
 
+// cgltf hands back 16 floats in column-major order, which is Mat4's own layout,
+// so this is a copy and not a transpose. make_node_transform reads the same
+// array into the baked path's NodeTransform.
+math::Mat4 mat4_from_cgltf(const cgltf_float world[16]) {
+    math::Mat4 m{};
+    for (int c = 0; c < 4; ++c) {
+        m.cols[c].x = static_cast<f32>(world[c * 4 + 0]);
+        m.cols[c].y = static_cast<f32>(world[c * 4 + 1]);
+        m.cols[c].z = static_cast<f32>(world[c * 4 + 2]);
+        m.cols[c].w = static_cast<f32>(world[c * 4 + 3]);
+    }
+    return m;
+}
+
 void transform_point(const NodeTransform& t, f32& x, f32& y, f32& z) {
     const f32 px = x, py = y, pz = z;
     x = t.m[0] * px + t.m[4] * py + t.m[8] * pz + t.m[12];
@@ -238,41 +253,55 @@ bool append_primitive(const cgltf_primitive& prim, MeshData& mesh, const NodeTra
     return true;
 }
 
+// Parse the file, load its buffers and validate it. Shared by both load
+// paths on purpose: the cgltf_validate call below is the only place accessor
+// ranges, buffer-view bounds and sparse indices are checked against the real
+// buffer sizes, so a second copy would be a second thing to forget to update.
+bool parse_validated(std::string_view path, cgltf_data** out_data, std::string& out_file) {
+    *out_data = nullptr;
+    out_file.assign(path);
+    cgltf_options options{};
+    cgltf_data* data = nullptr;
+    cgltf_result result = cgltf_parse_file(&options, out_file.c_str(), &data);
+    if (result != cgltf_result_success || !data) {
+        engine::log(LogLevel::Error, LogChannel::Assets, "Failed to parse glTF");
+        return false;
+    }
+    result = cgltf_load_buffers(&options, data, out_file.c_str());
+    if (result != cgltf_result_success) {
+        engine::log(LogLevel::Error, LogChannel::Assets, "Failed to load glTF buffers");
+        cgltf_free(data);
+        return false;
+    }
+
+    // Not optional. cgltf's accessor unpack functions assume validated data
+    // — this is the only place accessor ranges, buffer-view bounds and
+    // sparse indices are checked against the actual buffer sizes. Without
+    // it, a file whose accessor count exceeds its buffer view reads past
+    // the allocation, and a sparse index writes past it.
+    result = cgltf_validate(data);
+    if (result != cgltf_result_success) {
+        char message[96];
+        std::snprintf(message, sizeof(message),
+            "glTF failed validation (cgltf_result %d) — refusing to load",
+            static_cast<int>(result));
+        engine::log(LogLevel::Error, LogChannel::Assets, message);
+        cgltf_free(data);
+        return false;
+    }
+    *out_data = data;
+    return true;
+}
+
 class GltfMeshLoader final : public IGltfLoader {
 public:
     bool load(std::string_view path, GltfLoadResult& out) override {
         out = {};
-        const std::string file{path};
-        cgltf_options options{};
         cgltf_data* data = nullptr;
-        cgltf_result result = cgltf_parse_file(&options, file.c_str(), &data);
-        if (result != cgltf_result_success || !data) {
-            engine::log(LogLevel::Error, LogChannel::Assets, "Failed to parse glTF");
+        std::string file;
+        if (!parse_validated(path, &data, file)) {
             return false;
         }
-        result = cgltf_load_buffers(&options, data, file.c_str());
-        if (result != cgltf_result_success) {
-            engine::log(LogLevel::Error, LogChannel::Assets, "Failed to load glTF buffers");
-            cgltf_free(data);
-            return false;
-        }
-
-        // Not optional. cgltf's accessor unpack functions assume validated data
-        // — this is the only place accessor ranges, buffer-view bounds and
-        // sparse indices are checked against the actual buffer sizes. Without
-        // it, a file whose accessor count exceeds its buffer view reads past
-        // the allocation, and a sparse index writes past it.
-        result = cgltf_validate(data);
-        if (result != cgltf_result_success) {
-            char message[96];
-            std::snprintf(message, sizeof(message),
-                "glTF failed validation (cgltf_result %d) — refusing to load",
-                static_cast<int>(result));
-            engine::log(LogLevel::Error, LogChannel::Assets, message);
-            cgltf_free(data);
-            return false;
-        }
-
         const std::filesystem::path gltf_dir = std::filesystem::path(file).parent_path();
 
         auto emit_mesh = [&](const cgltf_mesh& mesh, const NodeTransform& xform) -> bool {
@@ -339,6 +368,99 @@ public:
         out.metallic = out.primitives[0].metallic;
         out.roughness = out.primitives[0].roughness;
         compute_mesh_bounds(out.mesh);
+        return true;
+    }
+
+    bool load_scene(std::string_view path, GltfSceneResult& out) override {
+        out = {};
+        cgltf_data* data = nullptr;
+        std::string file;
+        if (!parse_validated(path, &data, file)) {
+            return false;
+        }
+        const std::filesystem::path gltf_dir = std::filesystem::path(file).parent_path();
+
+        // Unpack each glTF mesh once. The alley has 1,254 meshes behind 2,806
+        // nodes, so unpacking per node would triple the work and the memory.
+        std::unordered_map<const cgltf_mesh*, u32> mesh_index;
+        // nullptr is a valid key: a mesh with no glTF material maps to one
+        // shared default entry rather than to one entry per node.
+        std::unordered_map<const cgltf_material*, u32> material_index;
+
+        for (cgltf_size n = 0; n < data->nodes_count; ++n) {
+            const cgltf_node& node = data->nodes[n];
+            if (!node.mesh) {
+                continue; // a transform-only node: real in glTF, not drawable
+            }
+            auto found = mesh_index.find(node.mesh);
+            if (found == mesh_index.end()) {
+                MeshData mesh{};
+                // append_primitive is the baked path's unpack, and it takes the
+                // transform it should apply. Passing identity is exactly what
+                // makes this the node path: the vertices come back in their
+                // authored space and the transform is stored on the node.
+                const NodeTransform identity = identity_transform();
+                for (cgltf_size prim = 0; prim < node.mesh->primitives_count; ++prim) {
+                    const cgltf_primitive& p = node.mesh->primitives[prim];
+                    if (p.type != cgltf_primitive_type_triangles) {
+                        continue;
+                    }
+                    if (!append_primitive(p, mesh, identity)) {
+                        cgltf_free(data);
+                        return false;
+                    }
+                }
+                if (mesh.vertices.empty()) {
+                    continue; // nothing triangular on this mesh
+                }
+                compute_mesh_bounds(mesh);
+                found = mesh_index.emplace(node.mesh, static_cast<u32>(out.meshes.size())).first;
+                out.meshes.push_back(std::move(mesh));
+            }
+
+            // The mesh's first primitive owns the material, so a multi-material
+            // mesh imports under one. A known simplification: the alley has
+            // 1,377 primitives across 1,254 meshes, so a handful of meshes lose
+            // a second material.
+            const cgltf_material* mat = node.mesh->primitives_count > 0
+                ? node.mesh->primitives[0].material : nullptr;
+            auto mat_found = material_index.find(mat);
+            if (mat_found == material_index.end()) {
+                // fill_primitive_material fills a GltfPrimitive, so read into
+                // one and keep the five fields a material has. Storing the
+                // GltfPrimitive itself would carry first_index/index_count,
+                // which mean nothing here.
+                GltfPrimitive probe{};
+                if (node.mesh->primitives_count > 0) {
+                    fill_primitive_material(node.mesh->primitives[0], gltf_dir, probe);
+                }
+                GltfMaterial entry{};
+                entry.albedo_uri = std::move(probe.albedo_uri);
+                entry.metallic_roughness_uri = std::move(probe.metallic_roughness_uri);
+                entry.normal_uri = std::move(probe.normal_uri);
+                entry.metallic = probe.metallic;
+                entry.roughness = probe.roughness;
+                mat_found = material_index.emplace(
+                    mat, static_cast<u32>(out.materials.size())).first;
+                out.materials.push_back(std::move(entry));
+            }
+
+            GltfNode entry{};
+            // The whole parent chain, through the same cgltf call the baked path
+            // uses - stored rather than applied to the vertices. That is the
+            // only difference between the two paths.
+            cgltf_float world[16];
+            cgltf_node_transform_world(&node, world);
+            entry.transform = mat4_from_cgltf(world);
+            entry.mesh = found->second;
+            entry.material = mat_found->second;
+            out.nodes.push_back(entry);
+        }
+
+        // No flat-mesh fallback, unlike load(). A node list of placements is
+        // meaningless for a mesh that has no placement, and the baked path still
+        // handles those files.
+        cgltf_free(data);
         return true;
     }
 };

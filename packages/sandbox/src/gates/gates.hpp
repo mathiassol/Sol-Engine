@@ -43,6 +43,8 @@ bool run_gltf_validate_gate();
 
 bool run_gltf_node_transform_gate();
 
+bool run_gltf_node_gate();
+
 bool run_husky_mesh_gate(const engine::assets::MeshData& mesh);
 
 bool run_aabb_gate(const engine::assets::MeshData& mesh);

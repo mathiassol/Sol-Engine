@@ -31,6 +31,8 @@ const GateEntry kGates[] = {
         [](const CpuGateContext&) { return run_gltf_validate_gate(); }},
     {"run_gltf_node_transform_gate", GateKind::Cpu,
         [](const CpuGateContext&) { return run_gltf_node_transform_gate(); }},
+    {"run_gltf_node_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_gltf_node_gate(); }},
     {"run_husky_mesh_gate", GateKind::Gpu, nullptr},
     {"run_aabb_gate", GateKind::Gpu, nullptr},
     {"run_aabb_transform_gate", GateKind::Gpu, nullptr},

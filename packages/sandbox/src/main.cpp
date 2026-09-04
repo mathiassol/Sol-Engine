@@ -476,6 +476,9 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     if (!run_gltf_node_transform_gate() && fail_on_gate) {
         return false;
     }
+    if (!run_gltf_node_gate() && fail_on_gate) {
+        return false;
+    }
     const engine::f32 husky_metallic = husky_gltf.metallic;
     const engine::f32 husky_roughness = husky_gltf.roughness;
     engine::assets::MeshData husky_data = std::move(husky_gltf.mesh);

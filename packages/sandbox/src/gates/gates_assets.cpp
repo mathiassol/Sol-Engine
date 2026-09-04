@@ -1070,6 +1070,17 @@ static bool load_node_probe(const char* name, const std::string& json,
     return loader && loader->load((dir / "probe.gltf").string(), out);
 }
 
+static bool load_scene_probe(const char* name, const std::string& json,
+    engine::assets::gltf::GltfSceneResult& out) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "sol-engine-gltf-nodes" / name;
+    if (!write_gltf_probe_with_json(dir, json.c_str())) {
+        return false;
+    }
+    auto loader = engine::assets::gltf::create_mesh_loader();
+    return loader && loader->load_scene((dir / "probe.gltf").string(), out);
+}
+
 static bool near_eq(engine::f32 a, engine::f32 b) {
     return std::abs(a - b) < 1.e-4f;
 }
@@ -1147,6 +1158,65 @@ bool run_gltf_node_transform_gate() {
         "mirror_winding=%s rotate_normals=%s (%s)",
         translate_ok ? "yes" : "no", instance_ok ? "yes" : "no", nested_ok ? "yes" : "no",
         mirror_ok ? "yes" : "no", rotate_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
+    return passed;
+}
+
+bool run_gltf_node_gate() {
+    using engine::assets::gltf::GltfSceneResult;
+
+    // Two nodes referencing one mesh, the second translated. This is the case
+    // the two paths disagree about: the baked path welds both placements into
+    // one MeshData of six vertices, and the node path must return one mesh of
+    // three with two transforms.
+    GltfSceneResult scene{};
+    const bool loaded = load_scene_probe("nodes",
+        gltf_with_nodes("[ { \"mesh\": 0 }, { \"mesh\": 0, \"translation\": [5, 0, 0] } ]",
+            "0, 1"), scene);
+
+    const engine::u32 nodes = static_cast<engine::u32>(scene.nodes.size());
+    const engine::u32 meshes = static_cast<engine::u32>(scene.meshes.size());
+    // Two drawable nodes over one unpacked mesh. The second half is the dedupe
+    // the alley needs - 1,254 meshes behind 2,806 nodes - and unpacking per
+    // node instead would pass the node count while tripling the memory.
+    const bool counts_ok = nodes == 2 && meshes == 1;
+
+    // Every node names a mesh and a material that exist. Vacuously true on an
+    // empty result, which is why counts_ok is separate and comes first.
+    bool refs_ok = true;
+    for (const auto& node : scene.nodes) {
+        refs_ok = refs_ok && node.mesh < meshes && node.material < scene.materials.size();
+    }
+
+    // One placement at the origin and one at x=5, in either order.
+    engine::f32 x0 = 0.f;
+    engine::f32 x1 = 0.f;
+    if (nodes == 2) {
+        x0 = scene.nodes[0].transform.cols[3].x;
+        x1 = scene.nodes[1].transform.cols[3].x;
+    }
+    const bool placed_ok = nodes == 2
+        && ((near_eq(x0, 0.f) && near_eq(x1, 5.f)) || (near_eq(x0, 5.f) && near_eq(x1, 0.f)));
+
+    // And the shared mesh's vertices are NOT transformed. This is the clause
+    // that separates the two paths: the probe authors its first two vertices at
+    // px 0 and 1, so if load_scene baked the node transform in the way load()
+    // does, one of them would read 5 or 6 - and `placed_ok` above would still
+    // hold, because the transform would be correct *and* also applied.
+    const bool unbaked_ok = meshes == 1 && scene.meshes[0].vertices.size() == 3
+        && near_eq(scene.meshes[0].vertices[0].px, 0.f)
+        && near_eq(scene.meshes[0].vertices[1].px, 1.f);
+
+    const bool passed = loaded && counts_ok && refs_ok && placed_ok && unbaked_ok;
+    char message[256];
+    std::snprintf(message, sizeof(message),
+        "glTF node gate: loaded=%s nodes=%u meshes=%u materials=%u refs_ok=%s "
+        "x0=%.2f x1=%.2f unbaked=%s (%s)",
+        loaded ? "yes" : "no", nodes, meshes,
+        static_cast<engine::u32>(scene.materials.size()), refs_ok ? "yes" : "no",
+        static_cast<double>(x0), static_cast<double>(x1), unbaked_ok ? "yes" : "no",
+        passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
     return passed;
