@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/assets/gpu/mesh_store.hpp>
+#include <engine/assets/gpu/texture_store.hpp>
 #include <engine/core/arena.hpp>
 #include <engine/debug/debug_lines.hpp>
 #include <engine/math/vec3.hpp>
@@ -13,9 +14,6 @@
 
 namespace engine::scene_render {
 
-constexpr engine::u32 kHuskyVariantCount = 4;
-constexpr engine::u32 kFloorAlbedoIndex = 4;
-
 struct WorldExtractAssets {
     engine::renderer::FramePipelines pipelines;
     engine::rhi::ITexture* taa_history = nullptr;
@@ -25,10 +23,17 @@ struct WorldExtractAssets {
     engine::f32 exposure = 1.f;
     engine::rhi::ITexture* sky_cubemap = nullptr;
     const engine::assets::gpu::GpuMeshStore* meshes = nullptr;
-    engine::rhi::ITexture* husky_albedos[kHuskyVariantCount]{};
-    engine::rhi::ITexture* floor_albedo = nullptr;
-    engine::rhi::ITexture* default_mr = nullptr;
+    // Non-const on purpose: DrawItem holds a non-const rhi::ITexture*, because
+    // everything that binds one - set_shader_resource, cmd.transition,
+    // read_texture - takes it by non-const reference. A const store pointer
+    // would reach only the const get() and put a const_cast at all three call
+    // sites in extract_world.
+    engine::assets::gpu::GpuTextureStore* textures = nullptr;
+    // Substituted when a material names no map of that kind, so a material
+    // with no normal renders flat rather than binding null.
+    engine::rhi::ITexture* default_albedo = nullptr;
     engine::rhi::ITexture* default_normal = nullptr;
+    engine::rhi::ITexture* default_mr = nullptr;
     engine::rhi::ITexture* ibl_irradiance = nullptr;
     engine::rhi::ITexture* ibl_prefilter = nullptr;
     engine::rhi::ITexture* ibl_brdf_lut = nullptr;

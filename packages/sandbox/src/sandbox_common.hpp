@@ -38,6 +38,7 @@
 #include <engine/renderer/standard_frame.hpp>
 #include <engine/assets/filesystem/asset_loader_filesystem.hpp>
 #include <engine/assets/gpu/mesh_store.hpp>
+#include <engine/assets/gpu/texture_store.hpp>
 #include <engine/assets/gpu/mesh_upload.hpp>
 #include <engine/assets/obj/mesh_loader_obj.hpp>
 #include <engine/assets/gltf/mesh_loader_gltf.hpp>
@@ -122,6 +123,11 @@ constexpr const char* kParityDepthGateShader = "/shaders/parity_depth_gate.hlsl"
 constexpr engine::u32 kComputeGateMagic = 0xC0DE0001u;
 constexpr const char* kCubeMesh = "/content/meshes/cube.obj";
 constexpr const char* kHuskyMesh = "/content/meshes/cartoon_husky.gltf";
+// Demo content, not an engine concept. This lived in `engine::scene_render`
+// for one commit, because the bridge's hardcoded albedo branch indexed an
+// array of husky textures with it; that branch is gone, so it belongs back
+// here beside the four paths it counts.
+constexpr engine::u32 kHuskyVariantCount = 4;
 constexpr const char* kHuskyAlbedos[] = {
     "/content/textures/husky/Cartoon_Husky_Albedo1.png",
     "/content/textures/husky/Cartoon_Husky_Albedo2.png",
@@ -242,10 +248,17 @@ struct ForwardDemo {
     engine::assets::gpu::GpuMeshStore meshes;
     engine::assets::MeshHandle husky{};
     engine::assets::MeshHandle ground{};
-    std::unique_ptr<engine::rhi::ITexture> albedos[engine::scene_render::kHuskyVariantCount];
-    std::unique_ptr<engine::rhi::ITexture> floor_albedo;
-    std::unique_ptr<engine::rhi::ITexture> default_mr;
-    std::unique_ptr<engine::rhi::ITexture> default_normal;
+    // Every material texture the demo owns, including the three built-in
+    // defaults, so the store is the one thing that decides what a handle
+    // resolves to. Declared after `meshes` and before nothing that outlives
+    // the device: entries own their rhi::ITexture, so the store has to die
+    // first (see texture_store.hpp).
+    engine::assets::gpu::GpuTextureStore textures;
+    engine::assets::TextureHandle husky_albedos[kHuskyVariantCount]{};
+    engine::assets::TextureHandle floor_albedo{};
+    engine::assets::TextureHandle default_albedo{};
+    engine::assets::TextureHandle default_normal{};
+    engine::assets::TextureHandle default_mr{};
     std::unique_ptr<engine::rhi::ITexture> ibl_irradiance;
     std::unique_ptr<engine::rhi::ITexture> ibl_prefilter;
     std::unique_ptr<engine::rhi::ITexture> ibl_brdf_lut;

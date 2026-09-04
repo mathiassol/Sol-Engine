@@ -248,7 +248,9 @@ bool run_scene_file_gate() {
     world.points[0].radius = 1.8f;
     world.points[0].intensity = 2.2f;
     engine::scene::Material mat{};
-    mat.albedo = 2;
+    // A *valid* handle going in, so the round-trip assertion below is about
+    // the writer discarding it rather than about a default that was never set.
+    mat.albedo = engine::assets::make_texture_handle("/probe/albedo.png#srgb");
     mat.metallic = 0.1f;
     mat.roughness = 0.4f;
     const engine::u32 mat_id = engine::scene::add_material(world, mat);
@@ -297,8 +299,20 @@ bool run_scene_file_gate() {
         && near3(loaded.sun.color, world.sun.color)
         && near3(loaded.points[0].position, world.points[0].position)
         && std::abs(loaded.points[0].intensity - 2.2f) < 1.e-3f
-        && loaded.material_count == 1
-        && loaded.materials[0].albedo == 2;
+        && loaded.material_count == 1;
+
+    // The material's scalars round-trip; its albedo handle deliberately does
+    // not. `albedo == 2` used to stand here, asserting that an index survived
+    // the file - which stopped meaning anything the moment the field became a
+    // TextureHandle (decision S5: the token is written as 0, parsed, and
+    // discarded, because a hash is not an editable path). Replaced rather than
+    // deleted, and inverted into something falsifiable: a future change that
+    // reinterprets the token as a handle id makes this go red. The two scalar
+    // clauses are new - the gate never checked those round-tripped at all.
+    const bool material_ok = named_ok
+        && !loaded.materials[0].albedo.valid()
+        && std::abs(loaded.materials[0].metallic - 0.1f) < 1.e-3f
+        && std::abs(loaded.materials[0].roughness - 0.4f) < 1.e-3f;
 
     const bool mesh_ok = named_ok
         && loaded.instances[loaded_parent].mesh == parent.mesh
@@ -308,10 +322,15 @@ bool run_scene_file_gate() {
     const bool reject_ok = !engine::scene::read_world("nope", rejected)
         && !engine::scene::read_world("solscene 99\nambient 0 0 0", rejected);
 
-    const bool passed = named_ok && unnamed_ok && hierarchy_ok && lights_ok && mesh_ok && reject_ok;
-    char message[224];
+    const bool passed = named_ok && unnamed_ok && hierarchy_ok && lights_ok && material_ok
+        && mesh_ok && reject_ok;
+    char message[256];
     std::snprintf(message, sizeof(message),
-        "Scene file gate: named=yes unnamed=drop hierarchy=yes lights=yes mesh=yes reject=yes (%s)",
+        "Scene file gate: named=yes unnamed=drop hierarchy=yes lights=yes mesh=yes reject=yes "
+        "albedo_valid=%s metallic=%.2f roughness=%.2f (%s)",
+        loaded.materials[0].albedo.valid() ? "yes" : "no",
+        static_cast<double>(loaded.materials[0].metallic),
+        static_cast<double>(loaded.materials[0].roughness),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
@@ -332,7 +351,11 @@ bool run_scene_prefab_gate() {
 
     engine::scene::World source{};
     engine::scene::Material mat{};
-    mat.albedo = 3;
+    // A prefab is a World-to-World copy, not file I/O, so the handle really
+    // must survive - unlike the scene-file gate above, where S5 discards it.
+    const engine::assets::TextureHandle prefab_albedo
+        = engine::assets::make_texture_handle("/probe/prefab.png#srgb");
+    mat.albedo = prefab_albedo;
     mat.roughness = 0.35f;
     const engine::u32 mat_id = engine::scene::add_material(source, mat);
     engine::scene::Instance body{};
@@ -386,7 +409,7 @@ bool run_scene_prefab_gate() {
         && near3(origin_of(engine::scene::instance_world_model(dest, b_body)), {1.f, 0.f, 5.f});
 
     const bool prefix_ok = spawn_ok
-        && dest.materials[0].albedo == 3
+        && dest.materials[0].albedo == prefab_albedo
         && dest.material_count == 2
         && dest.instances[a_body].mesh == body.mesh;
 

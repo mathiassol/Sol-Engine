@@ -192,7 +192,17 @@ bool write_world(const World& world, std::string& out) {
     for (u32 i = 0; i < world.material_count; ++i) {
         const Material& material = world.materials[i];
         out += "material ";
-        out += std::to_string(material.albedo);
+        // A literal 0 where the albedo token used to be an index.
+        //
+        // The token stays so every existing .solscene still parses, but a
+        // TextureHandle is fnv1a64(path + colour space): writing it would put
+        // an opaque 20-digit number where a path belongs, in a file VISION.md
+        // says a human and an agent must both be able to edit. The readable
+        // path-based form needs the texture store at load time, which is
+        // `document`'s job - the design spec's D5, recorded as decision S5.
+        // Until then a material's maps are assigned by whatever built the
+        // world, not by the file.
+        out += '0';
         append_f32(out, material.metallic);
         append_f32(out, material.roughness);
         out += '\n';
@@ -302,7 +312,13 @@ bool read_world(std::string_view text, World& out) {
             out.points[index] = light;
         } else if (keyword == "material") {
             Material material{};
-            if (!take_u32(text, i, material.albedo) || !take_f32(text, i, material.metallic)
+            // Parsed and discarded, deliberately - see the writer above and
+            // decision S5. The token's shape is kept so old files still load;
+            // its value cannot become a TextureHandle without the store, so
+            // the material's albedo stays invalid and the bridge falls back to
+            // its built-in default.
+            u32 albedo_unused = 0;
+            if (!take_u32(text, i, albedo_unused) || !take_f32(text, i, material.metallic)
                 || !take_f32(text, i, material.roughness)) {
                 return reject(text, i, "material wants albedo, metallic, roughness");
             }

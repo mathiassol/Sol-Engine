@@ -148,12 +148,10 @@ engine::scene_render::WorldExtractAssets make_extract_assets(ForwardDemo& demo) 
     assets.aa_mode = demo.aa_mode;
     assets.exposure = demo.exposure;
     assets.meshes = &demo.meshes;
-    for (engine::u32 i = 0; i < engine::scene_render::kHuskyVariantCount; ++i) {
-        assets.husky_albedos[i] = demo.albedos[i].get();
-    }
-    assets.floor_albedo = demo.floor_albedo.get();
-    assets.default_mr = demo.default_mr.get();
-    assets.default_normal = demo.default_normal.get();
+    assets.textures = &demo.textures;
+    assets.default_albedo = demo.textures.get(demo.default_albedo);
+    assets.default_normal = demo.textures.get(demo.default_normal);
+    assets.default_mr = demo.textures.get(demo.default_mr);
     assets.ibl_irradiance = demo.ibl_irradiance.get();
     assets.ibl_prefilter = demo.ibl_prefilter.get();
     assets.ibl_brdf_lut = demo.ibl_brdf_lut.get();

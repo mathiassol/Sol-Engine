@@ -131,7 +131,7 @@ which `document` owns.
 
 `scene::Material::albedo` was a `u32` index into a hardcoded husky/floor branch
 in the bridge, and it is serialized — `scene_file.cpp:195` writes it,
-`scene_file.cpp:305` parses it, and `run_scene_load_gate` asserted it survives a
+`scene_file.cpp:305` parses it, and `run_scene_file_gate` asserted it survives a
 round trip. Task 3 replaces it with three `TextureHandle`s, so the token has to
 mean something else or nothing.
 
@@ -148,7 +148,7 @@ changes".
 `0`.** Old files still load, `demo.solscene` is untouched, and the only thing
 lost is the ability to persist an index into a branch this task deletes.
 
-`run_scene_load_gate`'s `albedo == 2` clause is **replaced, not deleted**: the
+`run_scene_file_gate`'s `albedo == 2` clause is **replaced, not deleted**: the
 loader must produce an *invalid* handle, so a future change that reinterprets
 the token as an id goes red. That gate never asserted `metallic`/`roughness`
 round-trip at all, so those clauses were added at the same time — one

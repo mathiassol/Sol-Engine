@@ -296,8 +296,10 @@ engine::assets::ImageData make_checker_albedo(engine::u32 size, engine::u32 tile
     return image;
 }
 
-bool load_albedo_texture(engine::assets::IAssetLoader& loader, engine::rhi::IDevice& device,
-    std::string_view virtual_path, std::unique_ptr<engine::rhi::ITexture>& out,
+// Decodes only. The upload, the format choice and the debug name all belong to
+// GpuTextureStore::store now, so a material's albedo and an arbitrary scene's
+// albedo travel exactly the same path.
+bool load_albedo_image(engine::assets::IAssetLoader& loader, std::string_view virtual_path,
     engine::assets::ImageData& image) {
     std::vector<engine::u8> png_bytes;
     if (!loader.load_bytes(virtual_path, png_bytes) || png_bytes.empty()) {
@@ -306,9 +308,7 @@ bool load_albedo_texture(engine::assets::IAssetLoader& loader, engine::rhi::IDev
         return false;
     }
 #ifdef ENGINE_HAS_PNG
-    if (!engine::assets::png::load_png_bytes(png_bytes, image)) {
-        return false;
-    }
+    return engine::assets::png::load_png_bytes(png_bytes, image);
 #else
     // No PNG decoder compiled in. Refuse rather than upload an empty texture:
     // a black albedo looks like a lighting bug and costs an afternoon to trace.
@@ -316,23 +316,6 @@ bool load_albedo_texture(engine::assets::IAssetLoader& loader, engine::rhi::IDev
         "No PNG decoder compiled in - cannot load albedo textures");
     return false;
 #endif
-    engine::rhi::TextureDesc albedo_desc{};
-    albedo_desc.width = image.width;
-    albedo_desc.height = image.height;
-    // Albedo is colour, so it is sRGB-encoded on disk and the hardware must
-    // decode it before the forward pass does any lighting maths with it. Data
-    // maps — metallic-roughness, normals — stay plain RGBA8_UNORM.
-    albedo_desc.format = engine::rhi::Format::RGBA8_UNORM_SRGB;
-    albedo_desc.usage = engine::rhi::TextureUsage::ShaderResource;
-    albedo_desc.mip_levels = 0;
-    out = device.create_texture(albedo_desc, image.rgba.data());
-    if (!out) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Albedo texture creation failed");
-        return false;
-    }
-    device.set_debug_name(*out, virtual_path);
-    return true;
 }
 
 void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
@@ -902,15 +885,25 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         return false;
     }
 
-    for (engine::usize i = 0; i < engine::scene_render::kHuskyVariantCount; ++i) {
+    for (engine::usize i = 0; i < kHuskyVariantCount; ++i) {
         engine::assets::ImageData image;
-        if (!load_albedo_texture(loader, *device, kHuskyAlbedos[i], demo->albedos[i], image)) {
+        if (!load_albedo_image(loader, kHuskyAlbedos[i], image)) {
             return false;
         }
-        if (i == 0 && !run_albedo_gate(image, *demo->albedos[i]) && fail_on_gate) {
+        // Srgb: these are authored colour, so the hardware has to decode them
+        // before the forward pass does any lighting maths with the values.
+        demo->husky_albedos[i] = demo->textures.store(*device, kHuskyAlbedos[i], image,
+            engine::assets::gpu::ColorSpace::Srgb);
+        engine::rhi::ITexture* stored = demo->textures.get(demo->husky_albedos[i]);
+        if (!stored) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
+                std::string("Husky albedo store failed: ") + kHuskyAlbedos[i]);
             return false;
         }
-        if (i == 0 && !run_mip_gate(*demo->albedos[i], image.width) && fail_on_gate) {
+        if (i == 0 && !run_albedo_gate(image, *stored) && fail_on_gate) {
+            return false;
+        }
+        if (i == 0 && !run_mip_gate(*stored, image.width) && fail_on_gate) {
             return false;
         }
     }
@@ -918,10 +911,10 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     const engine::f32 foot_y = husky_data.bounds.min.y;
     state.husky_foot_y = foot_y;
     constexpr engine::u32 kHuskyCount = 63;
-    engine::scene::MaterialHandle husky_mats[engine::scene_render::kHuskyVariantCount]{};
-    for (engine::u32 i = 0; i < engine::scene_render::kHuskyVariantCount; ++i) {
+    engine::scene::MaterialHandle husky_mats[kHuskyVariantCount]{};
+    for (engine::u32 i = 0; i < kHuskyVariantCount; ++i) {
         engine::scene::Material mat{};
-        mat.albedo = i;
+        mat.albedo = demo->husky_albedos[i];
         mat.metallic = husky_metallic;
         mat.roughness = (i == 0) ? husky_roughness : (0.12f + static_cast<engine::f32>(i) * 0.22f);
         // One variant translucent, so the blended path is exercised in a real
@@ -932,7 +925,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         // It also shows the documented limitation honestly: where two of them
         // overlap each other, the blend order is scene order until
         // Renderer #34 sorts. Better seen here than discovered in a game.
-        if (i == engine::scene_render::kHuskyVariantCount - 1) {
+        if (i == kHuskyVariantCount - 1) {
             mat.opacity = 0.45f;
         }
         husky_mats[i] = engine::scene::add_material(demo->world, mat);
@@ -940,7 +933,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     for (engine::u32 i = 0; i < kHuskyCount; ++i) {
         engine::scene::Instance instance{};
         instance.mesh = demo->husky;
-        instance.material = husky_mats[i % engine::scene_render::kHuskyVariantCount];
+        instance.material = husky_mats[i % kHuskyVariantCount];
         engine::math::Vec3 pos{};
         if (i < 4) {
             pos = {(static_cast<engine::f32>(i) - 1.5f) * 0.5f, -foot_y, 0.f};
@@ -996,40 +989,43 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     device->set_debug_name(*gpu_ground->index_buffer, "sandbox/ground_ib");
 
     const engine::assets::ImageData checker = make_checker_albedo(64, 8);
-    engine::rhi::TextureDesc floor_desc{};
-    floor_desc.width = checker.width;
-    floor_desc.height = checker.height;
-    floor_desc.format = engine::rhi::Format::RGBA8_UNORM;
-    floor_desc.usage = engine::rhi::TextureUsage::ShaderResource;
-    floor_desc.mip_levels = 0;
-    demo->floor_albedo = device->create_texture(floor_desc, checker.rgba.data());
-    if (!demo->floor_albedo) {
-        engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Floor albedo creation failed");
-        return false;
-    }
-    device->set_debug_name(*demo->floor_albedo, "sandbox/floor_albedo");
+    // Linear, and this is the one deliberate exception to "albedo is sRGB".
+    //
+    // The checker is generated, not authored: its texel values were picked by
+    // eye against an RGBA8_UNORM texture, which is what it has always been.
+    // Labelling it Srgb would make the hardware gamma-decode values that were
+    // never encoded, darkening the demo floor's midtones - a visible change to
+    // the demo that fixes nothing. The sRGB rule (rhi/resources.hpp) is about
+    // authored colour.
+    demo->floor_albedo = demo->textures.store(*device, "/sandbox/floor_checker", checker,
+        engine::assets::gpu::ColorSpace::Linear);
 
     auto make_solid = [&](engine::u8 r, engine::u8 g, engine::u8 b, engine::u8 a,
-        const char* name, std::unique_ptr<engine::rhi::ITexture>& out) {
-        engine::u8 px[4] = {r, g, b, a};
-        engine::rhi::TextureDesc desc{};
-        desc.width = 1;
-        desc.height = 1;
-        desc.format = engine::rhi::Format::RGBA8_UNORM;
-        desc.usage = engine::rhi::TextureUsage::ShaderResource;
-        desc.mip_levels = 1;
-        out = device->create_texture(desc, px);
-        if (!out) {
-            return false;
-        }
-        device->set_debug_name(*out, name);
-        return true;
+        const char* key, engine::assets::gpu::ColorSpace space) {
+        engine::assets::ImageData px{};
+        px.width = 1;
+        px.height = 1;
+        px.rgba = {r, g, b, a};
+        return demo->textures.store(*device, key, px, space);
     };
-    if (!make_solid(255, 255, 255, 255, "sandbox/default_mr", demo->default_mr)
-        || !make_solid(128, 128, 255, 255, "sandbox/default_normal", demo->default_normal)) {
+    // What a material gets when it names no map of that kind. White albedo so
+    // the vertex/material colour survives unmultiplied; (128,128,255) is the
+    // flat tangent-space normal; white metal-rough leaves the material's own
+    // scalars in charge. The two data maps are Linear - a gamma-decoded normal
+    // map is wrong on every TBN and nothing fails.
+    demo->default_albedo
+        = make_solid(255, 255, 255, 255, "/sandbox/default_albedo",
+            engine::assets::gpu::ColorSpace::Srgb);
+    demo->default_normal
+        = make_solid(128, 128, 255, 255, "/sandbox/default_normal",
+            engine::assets::gpu::ColorSpace::Linear);
+    demo->default_mr
+        = make_solid(255, 255, 255, 255, "/sandbox/default_mr",
+            engine::assets::gpu::ColorSpace::Linear);
+    if (!demo->floor_albedo.valid() || !demo->default_albedo.valid()
+        || !demo->default_normal.valid() || !demo->default_mr.valid()) {
         engine::log(engine::LogLevel::Error, engine::LogChannel::Render,
-            "Default MR/normal texture creation failed");
+            "Floor or default material texture store failed");
         return false;
     }
 
@@ -1040,7 +1036,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     engine::scene::Instance floor{};
     floor.mesh = demo->ground;
     engine::scene::Material floor_mat{};
-    floor_mat.albedo = engine::scene_render::kFloorAlbedoIndex;
+    floor_mat.albedo = demo->floor_albedo;
     floor_mat.metallic = 0.f;
     floor_mat.roughness = 0.9f;
     floor.material = engine::scene::add_material(demo->world, floor_mat);

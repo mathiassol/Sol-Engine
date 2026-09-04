@@ -427,23 +427,63 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     const bool pipeline_split = transparent_batches > 0
         && transparent_batches < translucent_snapshot.batches.size();
 
+    // Textures travel the same road as roughness and opacity. Before this task
+    // the bridge pinned normal_map to a built-in default, so a material naming
+    // its own normal was silently ignored - which reads as a flat-looking
+    // surface rather than as a bug, and is exactly the failure this gate's
+    // road-checking shape exists to catch.
+    //
+    // The probe is material 0's albedo: a real, live texture that is
+    // definitely not the default normal, and one the gate can name without a
+    // device to create anything.
+    const engine::assets::TextureHandle probe_handle = copy.materials[0].albedo;
+    const engine::rhi::ITexture* probe = assets.textures->get(probe_handle);
+
+    engine::scene::World textured = copy;
+    for (engine::u32 i = 0; i < textured.material_count; ++i) {
+        textured.materials[i].normal = probe_handle;
+    }
+    engine::Arena arena_textured(256 * 1024);
+    engine::renderer::RenderSnapshot textured_snap{};
+    textured_snap.width = 1280;
+    textured_snap.height = 720;
+    engine::scene_render::extract_world(textured, camera.position, assets, false, nullptr,
+        arena_textured, textured_snap);
+
+    bool normal_travels = probe != nullptr && !textured_snap.draws.empty();
+    for (const engine::renderer::DrawItem& draw : textured_snap.draws) {
+        if (draw.normal_map != probe) {
+            normal_travels = false;
+        }
+    }
+    // And the unmutated extract must NOT already produce it, or the assertion
+    // above would hold even with the old hardcoded pin still in place. This is
+    // the clause that makes the check non-vacuous.
+    const bool normal_was_default = !before.draws.empty()
+        && before.draws[0].normal_map != probe;
+
     const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 336;
     const bool gltf_ok = gltf_metallic >= 0.f && gltf_metallic <= 1.f
         && gltf_roughness >= 0.f && gltf_roughness <= 1.f;
     const bool passed = table_ok && handles_ok && draws_ok && changed && layout_ok && gltf_ok
-        && opacity_reaches_draw && opacity_reaches_instance && pipeline_split;
-    char message[288];
+        && opacity_reaches_draw && opacity_reaches_instance && pipeline_split
+        && normal_travels && normal_was_default;
+    // 384, not 288: the format below already reached ~268 bytes at its widest
+    // and the two new fields add ~42. snprintf truncates silently from the
+    // right, so the first thing 288 would have cut is the trailing "(FAIL)".
+    char message[384];
     // layout printed the literal "400" until now - stale since the instancing
     // refactor took FrameConstants to 336, which is what it asserts.
     std::snprintf(message, sizeof(message),
         "Material gate: materials=%u handles=%s roughness_is_data=%s opacity_is_data=%s "
         "probe_material=%u changed_draws=%zu probe_instances=%zu "
-        "transparent_batches=%zu/%zu layout=%s (%s)",
+        "transparent_batches=%zu/%zu layout=%s normal_travels=%s normal_was_default=%s (%s)",
         world.material_count, handles_ok ? "yes" : "no",
         (draws_ok && changed) ? "yes" : "no",
         (opacity_reaches_draw && opacity_reaches_instance) ? "yes" : "no",
         probe_material, changed_draws, probe_instances, transparent_batches,
         translucent_snapshot.batches.size(), layout_ok ? "336" : "bad",
+        normal_travels ? "yes" : "no", normal_was_default ? "yes" : "no",
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);

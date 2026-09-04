@@ -88,12 +88,17 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
             continue;
         }
 
-        engine::rhi::ITexture* texture = nullptr;
-        if (material.albedo < kHuskyVariantCount) {
-            texture = assets.husky_albedos[material.albedo];
-        } else if (material.albedo == kFloorAlbedoIndex) {
-            texture = assets.floor_albedo;
-        }
+        // Each map comes from the store the material's handle names, and falls
+        // back to a built-in when the material names none. This used to be a
+        // two-branch lookup into an array of demo husky textures indexed by
+        // `material.albedo` - which is why a scene the engine did not ship
+        // with could not have textures at all.
+        engine::rhi::ITexture* albedo
+            = assets.textures ? assets.textures->get(material.albedo) : nullptr;
+        engine::rhi::ITexture* normal
+            = assets.textures ? assets.textures->get(material.normal) : nullptr;
+        engine::rhi::ITexture* mr
+            = assets.textures ? assets.textures->get(material.metallic_roughness) : nullptr;
 
         auto& item = storage[count];
         // The one line that routes a material to a pipeline. Falls back to
@@ -107,9 +112,9 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
                                     : assets.pipelines.forward;
         item.vertex_buffer = mesh->vertex_buffer.get();
         item.index_buffer = mesh->index_buffer.get();
-        item.texture = texture;
-        item.metallic_roughness = assets.default_mr;
-        item.normal_map = assets.default_normal;
+        item.texture = albedo ? albedo : assets.default_albedo;
+        item.metallic_roughness = mr ? mr : assets.default_mr;
+        item.normal_map = normal ? normal : assets.default_normal;
         item.model = engine::scene::instance_world_model(world, i);
         item.local_bounds = mesh->bounds;
         item.debug_color = kBoxColors[i % 5];

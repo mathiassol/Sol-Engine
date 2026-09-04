@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/assets/mesh.hpp>
+#include <engine/assets/texture.hpp>
 #include <engine/core/types.hpp>
 #include <engine/math/mat4.hpp>
 #include <engine/math/vec3.hpp>
@@ -37,7 +38,13 @@ struct PointLight {
 };
 
 struct Material {
-    u32 albedo = 0;
+    // Handles into a GpuTextureStore, not indices into anything the engine
+    // owns. An invalid handle means "this material names no such map", and the
+    // scene-to-renderer bridge substitutes a built-in default - so a material
+    // with no normal renders flat instead of binding null.
+    assets::TextureHandle albedo{};
+    assets::TextureHandle normal{};
+    assets::TextureHandle metallic_roughness{};
     f32 metallic = 0.f;
     f32 roughness = 0.5f;
     // 1 means opaque and takes the opaque pipeline; anything less takes the
