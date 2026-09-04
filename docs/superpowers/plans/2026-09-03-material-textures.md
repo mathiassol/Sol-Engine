@@ -1247,9 +1247,26 @@ caps still exist and the vision wants them gone entirely.
 
 - [ ] **Step 1: Write the downscale script**
 
-`tools/downscale-textures.ps1` — resamples every PNG and JPG in a directory to
-a maximum edge, writing PNGs to an output directory. Uses `System.Drawing`,
-which ships with Windows:
+Measured against the real export at `C:\Users\mathi\Downloads\alley`
+(2,808 nodes / 2,806 drawable, 1,254 meshes, 1,377 primitives, 122 materials,
+286 images, and a **239 MB** `ph_hidden_alley.bin`):
+
+**Every image URI is a bare filename.** No subdirectories — the glTF resolves
+them relative to its own directory. So the downscaled images go **beside the
+copied `.gltf`**, not into a `textures/` subdirectory as an earlier draft of
+this step said. That draft would have failed to resolve all 286.
+
+**41 of the 286 URIs end in `.jpg`.** An earlier draft wrote every output as
+`$f.BaseName + '.png'`, which renames `Barrel_02_diff_1k.jpg` to `…_1k.png`
+while the glTF still asks for the `.jpg` — 41 textures silently missing, 14% of
+the scene, visible only as `missing_textures=41` in the import stats. So
+**preserve the original extension and encode to match**: `.png` in, PNG out;
+`.jpg` in, JPEG out.
+
+That works because `load_png_file` is **format-agnostic despite its name**:
+`packages/assets-png-wic` calls `CreateDecoderFromStream` with a null vendor
+GUID, so WIC sniffs the container and picks the decoder. Do not add a JPEG
+decoder; nothing is missing.
 
 ```powershell
 [CmdletBinding()]
@@ -1262,7 +1279,15 @@ param(
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force $Out | Out-Null
 
-$files = Get-ChildItem -Path $In -File | Where-Object { $_.Extension -match '\.(png|jpg|jpeg)$' }
+# Encode to the format the extension already claims. The glTF's URIs are
+# fixed, so an output that changes a file's extension is an output the scene
+# cannot find - and a .jpg holding PNG bytes would decode here (WIC sniffs the
+# container) while lying to every other tool.
+$png  = [System.Drawing.Imaging.ImageFormat]::Png
+$jpeg = [System.Drawing.Imaging.ImageFormat]::Jpeg
+
+$files = Get-ChildItem -Path $In -File |
+    Where-Object { $_.Extension -match '^\.(png|jpg|jpeg)$' }
 $done = 0
 foreach ($f in $files) {
     $src = [System.Drawing.Image]::FromFile($f.FullName)
@@ -1274,24 +1299,36 @@ foreach ($f in $files) {
     $g.InterpolationMode = 'HighQualityBicubic'
     $g.DrawImage($src, 0, 0, $w, $h)
     $g.Dispose()
-    $dst.Save((Join-Path $Out ($f.BaseName + '.png')), [System.Drawing.Imaging.ImageFormat]::Png)
+    $fmt = if ($f.Extension -eq '.png') { $png } else { $jpeg }
+    $dst.Save((Join-Path $Out $f.Name), $fmt)
     $dst.Dispose(); $src.Dispose()
     $done++
 }
 Write-Host "resampled $done file(s) to max edge $MaxEdge"
 ```
 
-Run it:
-```powershell
-pwsh -NoProfile -File tools/downscale-textures.ps1 `
-  -In "C:\Users\mathi\Downloads\alley" `
-  -Out "packages\sandbox\content\scenes\alley\textures" -MaxEdge 512
-```
-Expected: `resampled 286 file(s) to max edge 512`. The output directory should
-be roughly 30–60 MB against the source's 1.3 GB.
+Then lay the scene out as one flat directory, images beside the glTF:
 
-**This directory must not be committed.** Add it to `.gitignore` — the repo is
-public and a scene's textures are not engine source.
+```powershell
+$dest = "packages\sandbox\content\scenes\alley"
+pwsh -NoProfile -File tools/downscale-textures.ps1 `
+  -In "C:\Users\mathi\Downloads\alley" -Out $dest -MaxEdge 512
+Copy-Item "C:\Users\mathi\Downloads\alley\ph_hidden_alley.gltf" $dest
+Copy-Item "C:\Users\mathi\Downloads\alley\ph_hidden_alley.bin"  $dest
+```
+
+Expected: `resampled 286 file(s) to max edge 512`, and the image bytes roughly
+30-60 MB against the source's 1.3 GB.
+
+**Ignore the whole scene directory, not just the textures.** The `.bin` alone
+is 239 MB and this repository is public. Add to `.gitignore`:
+
+```
+packages/sandbox/content/scenes/alley/
+```
+
+A downloaded third-party scene is not engine source, and `r.scene` defaults
+empty so nothing in the build or the gates depends on it being present.
 
 - [ ] **Step 2: Write the importer**
 
@@ -1336,11 +1373,12 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
         return textures.store(device, resolved, image, space);
     };
 
+    // add_material / add_instance, not a hand-rolled cap check. An earlier
+    // draft called a `log_capacity` helper that does not exist and wrote the
+    // arrays directly - which bypasses scene::warn_full's per-kind warn-once
+    // latch, the thing that stops a full scene logging at 60 Hz. These two
+    // already do the bound, the latch and the invalid-handle return.
     for (const auto& m : src.materials) {
-        if (out.material_count >= engine::scene::kMaxMaterials) {
-            log_capacity("materials", src.materials.size(), engine::scene::kMaxMaterials);
-            break;
-        }
         engine::scene::Material dst{};
         dst.albedo = load_texture(m.albedo_uri, engine::assets::gpu::ColorSpace::Srgb);
         dst.normal = load_texture(m.normal_uri, engine::assets::gpu::ColorSpace::Linear);
@@ -1348,7 +1386,9 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
             load_texture(m.metallic_roughness_uri, engine::assets::gpu::ColorSpace::Linear);
         dst.metallic = m.metallic;
         dst.roughness = m.roughness;
-        out.materials[out.material_count++] = dst;
+        if (engine::scene::add_material(out, dst) == engine::scene::kInvalidMaterial) {
+            break; // capacity reached; it logged once and said which knob
+        }
     }
 
     std::vector<engine::assets::MeshHandle> mesh_handles;
@@ -1360,19 +1400,18 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
     }
 
     for (const auto& node : src.nodes) {
-        if (out.instance_count >= engine::scene::kMaxInstances) {
-            log_capacity("instances", src.nodes.size(), engine::scene::kMaxInstances);
-            break;
-        }
         if (node.material >= out.material_count || node.mesh >= mesh_handles.size()) {
             ++stats.skipped_nodes;
             continue;
         }
-        auto& inst = out.instances[out.instance_count++];
+        engine::scene::Instance inst{};
         inst.mesh = mesh_handles[node.mesh];
         inst.model = node.transform;
         inst.material = static_cast<engine::scene::MaterialHandle>(node.material);
         inst.parent = engine::scene::kInvalidInstance;   // transforms are already world
+        if (engine::scene::add_instance(out, inst) == engine::scene::kInvalidInstance) {
+            break; // capacity reached; logged once
+        }
     }
 
     stats.materials = out.material_count;
@@ -1387,9 +1426,15 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
 scene that half-loaded because textures were missing otherwise looks like a
 scene that rendered badly.
 
-**Capacity is logged, not asserted.** `world.hpp`'s own rule is that how many
-instances a scene has is a content outcome, not a programmer error — so
-exceeding a cap stops the loop and says so, rather than aborting.
+**Capacity is logged, not asserted.** How many instances a scene has is a
+content outcome, not a programmer error — so exceeding a cap stops the loop and
+says so, rather than aborting. `scene::warn_full` already prints which cap and
+which knob to raise, once per process per kind.
+
+**The alley fits, but not by much.** 2,806 drawable nodes against
+`kMaxInstances = 3072`, and 122 materials against `kMaxMaterials = 128`. Both
+caps in Step 0 were chosen for these numbers, so if the import logs a capacity
+message, something upstream changed — treat it as a finding, not as expected.
 
 **`parent` is the invalid sentinel** because `cgltf_node_transform_world` already
 composed the parent chain. Setting a parent here would apply it twice.
