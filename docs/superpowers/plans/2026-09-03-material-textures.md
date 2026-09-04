@@ -64,6 +64,7 @@ tabs, 100 columns, final newline, no BOM.
 | Decision | Why |
 |---|---|
 | The texture store keys on the **resolved content path** | 286 images sit behind 329 references. Keying on the material or the raw URI re-uploads shared textures and the scene still renders correctly — the failure is invisible without the gate's inequality |
+| Colour space is a **required parameter** of `store()` *and* part of its key | The three maps disagree — albedo is colour, normal and metal-rough are data ([`resources.hpp`](../../../packages/rhi/include/engine/rhi/resources.hpp) owns the rule) — so a default silently gamma-decodes a normal map and every TBN normal is wrong with nothing failing. And the same file legitimately serves as an sRGB albedo in one material and a linear mask in another, so a path-only key hands the second caller the first one's format while the dedupe count still reads as correct |
 | The bridge moves to a new package, **not into `engine`** | `engine` deliberately does not depend on `scene`; that is why the renderer never sees the scene. ARCHITECTURE.md names it as load-bearing |
 | The glTF node path is **additive** | The husky and `run_gltf_gate`, `run_gltf_node_transform_gate`, `run_gltf_extras_gate` all use the baked path. It stays |
 | The importer stays in the **sandbox** | `document` (step 3) replaces it. A package we know we will delete is the scaffolding `packageRules.md` forbids |
@@ -738,6 +739,10 @@ members and assigns `material.albedo = <index>`. Move those five into a
 materials. Create the three built-in defaults — a 1×1 white, a flat normal
 `(128,128,255,255)`, and a 1×1 metal-rough — through the same store.
 
+`store()` takes a `ColorSpace` and has no default, so every one of those calls
+names it: the five albedos and the 1×1 white are `ColorSpace::Srgb`; the flat
+normal and the metal-rough are `ColorSpace::Linear`.
+
 - [ ] **Step 6: Build and watch it pass**
 
 Run:
@@ -1050,7 +1055,13 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
     // directory, decode, and store keyed on the RESOLVED PATH. Keying on the
     // URI as written would re-upload a texture two materials reference by
     // different relative paths, and the scene would render identically.
-    auto load_texture = [&](std::string_view uri) -> engine::assets::TextureHandle {
+    //
+    // `space` is a parameter and not a default, because the three maps do not
+    // agree: albedo is colour, normal and metal-rough are data. It is also
+    // part of the store's key, so one file used both ways is two textures.
+    auto load_texture = [&](std::string_view uri,
+                            engine::assets::gpu::ColorSpace space)
+        -> engine::assets::TextureHandle {
         if (uri.empty()) {
             return {};   // the bridge falls back to a built-in default
         }
@@ -1064,7 +1075,7 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
             ++stats.missing_textures;
             return {};
         }
-        return textures.store(device, resolved, image);
+        return textures.store(device, resolved, image, space);
     };
 
     for (const auto& m : src.materials) {
@@ -1073,9 +1084,10 @@ bool import_gltf_scene(const engine::assets::gltf::GltfSceneResult& src,
             break;
         }
         engine::scene::Material dst{};
-        dst.albedo = load_texture(m.albedo_uri);
-        dst.normal = load_texture(m.normal_uri);
-        dst.metallic_roughness = load_texture(m.metallic_roughness_uri);
+        dst.albedo = load_texture(m.albedo_uri, engine::assets::gpu::ColorSpace::Srgb);
+        dst.normal = load_texture(m.normal_uri, engine::assets::gpu::ColorSpace::Linear);
+        dst.metallic_roughness =
+            load_texture(m.metallic_roughness_uri, engine::assets::gpu::ColorSpace::Linear);
         dst.metallic = m.metallic;
         dst.roughness = m.roughness;
         out.materials[out.material_count++] = dst;

@@ -1195,9 +1195,13 @@ bool run_aabb_transform_gate(const engine::assets::MeshData& mesh) {
 }
 
 bool run_texture_store_gate(engine::rhi::IDevice& device) {
+    using engine::assets::gpu::ColorSpace;
     using engine::assets::gpu::GpuTextureStore;
+    using State = engine::rhi::ResourceState;
 
-    // Two 2x2 images, distinguishable so a wrong handle is visible.
+    // Two 2x2 images, distinguishable *in a readback* and not merely to the
+    // eye - this gate copies texels back, so a store that returned the wrong
+    // texture for the right handle fails here instead of passing.
     engine::assets::ImageData red{};
     red.width = 2;
     red.height = 2;
@@ -1213,23 +1217,70 @@ bool run_texture_store_gate(engine::rhi::IDevice& device) {
     }
 
     GpuTextureStore store;
-    // Six references over three distinct paths - the sharing a real scene has.
-    const char* refs[] = {"/a.png", "/b.png", "/a.png", "/c.png", "/b.png", "/a.png"};
-    engine::assets::TextureHandle handles[6]{};
-    for (engine::u32 i = 0; i < 6; ++i) {
-        handles[i] = store.store(device, refs[i], (i % 2) == 0 ? red : blue);
+    // Eight references over four distinct entries - the sharing a real scene
+    // has, plus the case the composed key exists for: /a.png appears as both
+    // an sRGB albedo and a linear mask, which must be two textures.
+    struct Ref {
+        const char* path;
+        ColorSpace space;
+        bool blue;
+    };
+    const Ref refs[] = {
+        {"/a.png", ColorSpace::Srgb, false},
+        {"/b.png", ColorSpace::Linear, true},
+        {"/a.png", ColorSpace::Srgb, false},
+        {"/c.png", ColorSpace::Srgb, true},
+        {"/b.png", ColorSpace::Linear, true},
+        {"/a.png", ColorSpace::Srgb, false},
+        {"/a.png", ColorSpace::Linear, true},
+        {"/a.png", ColorSpace::Linear, true},
+    };
+    constexpr engine::usize kRefCount = std::size(refs);
+    engine::assets::TextureHandle handles[kRefCount]{};
+    for (engine::usize i = 0; i < kRefCount; ++i) {
+        handles[i] = store.store(device, refs[i].path, refs[i].blue ? blue : red, refs[i].space);
     }
-    const engine::u32 references = 6;
-    const engine::u32 distinct = 3;
-    const engine::u32 uploaded = static_cast<engine::u32>(store.size());
 
-    // The assertion the store exists for. A store without dedupe uploads six
-    // and renders identically, so only this count can tell the difference.
-    const bool deduped = uploaded == distinct;
+    const engine::u32 references = static_cast<engine::u32>(kRefCount);
+    // Counted from the reference list rather than written down, so editing the
+    // list above cannot leave behind a stale literal that the gate then agrees
+    // with. Distinctness here is the gate's own notion - path *and* space -
+    // which is what makes the comparison against the store's count independent.
+    engine::u32 distinct = 0;
+    for (engine::usize i = 0; i < kRefCount; ++i) {
+        bool seen = false;
+        for (engine::usize j = 0; j < i; ++j) {
+            seen = seen
+                || (std::string_view(refs[j].path) == refs[i].path
+                    && refs[j].space == refs[i].space);
+        }
+        if (!seen) {
+            ++distinct;
+        }
+    }
+    // Uploads, not residency. size() cannot fail this: a store that re-uploaded
+    // over a live entry would make eight create_texture calls and still report
+    // four live entries.
+    const engine::u32 uploaded = static_cast<engine::u32>(store.upload_count());
+    const engine::u32 resident = static_cast<engine::u32>(store.size());
 
-    // The same path must hand back the same handle, or callers cannot share.
+    // The assertion the store exists for. A store without dedupe uploads eight
+    // and renders identically, so only this count can tell the difference - and
+    // `uploaded < references` is the half that says sharing actually happened,
+    // rather than the reference list having had no repeats to begin with.
+    const bool deduped = uploaded == distinct && uploaded < references;
+    const bool resident_ok = resident == distinct;
+
+    // The same path and space must hand back the same handle, or callers
+    // cannot share.
     const bool stable = handles[0] == handles[2] && handles[0] == handles[5]
-        && handles[1] == handles[4];
+        && handles[1] == handles[4] && handles[6] == handles[7];
+
+    // The same path in two colour spaces must not collapse into one entry.
+    // Regression test for a path-only key, which handed the linear caller the
+    // sRGB texture with the dedupe count still reading as correct.
+    const bool space_split =
+        handles[0].id != handles[6].id && store.get(handles[0]) != store.get(handles[6]);
 
     // Every live handle resolves.
     bool resolves = true;
@@ -1237,17 +1288,66 @@ bool run_texture_store_gate(engine::rhi::IDevice& device) {
         resolves = resolves && store.get(h) != nullptr;
     }
 
+    // Read a texel out of each /a.png entry. Nothing else here can tell "the
+    // right handle" from "the right texture": a store that returned the sRGB
+    // entry for the linear handle satisfies every count above.
+    engine::rhi::ITexture* srgb_texture = store.get(handles[0]);
+    engine::rhi::ITexture* linear_texture = store.get(handles[6]);
+    std::vector<engine::u8> srgb_pixels(2 * 2 * 4, 0);
+    std::vector<engine::u8> linear_pixels(2 * 2 * 4, 0);
+    bool read_ok = false;
+    if (srgb_texture != nullptr && linear_texture != nullptr) {
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        // ShaderRead, not Common: a sampled texture created with initial data
+        // is left ready to sample by both backends (resources.hpp says a fresh
+        // texture is not always Common), and read_texture requires CopySrc.
+        cmd.transition(*srgb_texture, State::ShaderRead, State::CopySrc);
+        cmd.transition(*linear_texture, State::ShaderRead, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        read_ok = device.read_texture(*srgb_texture, srgb_pixels.data(), srgb_pixels.size())
+            && device.read_texture(*linear_texture, linear_pixels.data(), linear_pixels.size());
+        // Put both back where every other holder of these handles expects
+        // them, so the store is still usable after this gate borrowed it.
+        device.begin_frame();
+        auto& restore = device.command_list();
+        restore.begin();
+        restore.transition(*srgb_texture, State::CopySrc, State::ShaderRead);
+        restore.transition(*linear_texture, State::CopySrc, State::ShaderRead);
+        restore.end();
+        device.submit();
+        device.wait_idle();
+    }
+    // /a.png#srgb was stored red and /a.png#linear blue. The bytes are the
+    // same either way - the format decides what the sampler does with them,
+    // not what is stored - so these are exact comparisons.
+    const bool srgb_texels = read_ok && srgb_pixels[0] == 255 && srgb_pixels[1] == 0
+        && srgb_pixels[2] == 0 && srgb_pixels[3] == 255;
+    const bool linear_texels = read_ok && linear_pixels[0] == 0 && linear_pixels[1] == 0
+        && linear_pixels[2] == 255 && linear_pixels[3] == 255;
+
     // A handle stale after unload is detected, not silently reused.
     const bool unloaded = store.unload(handles[0]);
     const bool stale_detected = store.get(handles[0]) == nullptr;
+    // Residency has to fall, or a missing --live_count_ ships green.
+    const engine::u32 resident_after = static_cast<engine::u32>(store.size());
+    const bool residency_fell = resident_after + 1 == distinct;
 
-    const bool passed = deduped && stable && resolves && unloaded && stale_detected;
-    char message[224];
+    const bool passed = deduped && resident_ok && stable && space_split && resolves && read_ok
+        && srgb_texels && linear_texels && unloaded && stale_detected && residency_fell;
+    char message[352];
     std::snprintf(message, sizeof(message),
-        "Texture store gate: refs=%u distinct=%u uploaded=%u stable=%s resolves=%s "
-        "unloaded=%s stale_detected=%s (%s)",
-        references, distinct, uploaded, stable ? "yes" : "no", resolves ? "yes" : "no",
-        unloaded ? "yes" : "no", stale_detected ? "yes" : "no", passed ? "pass" : "FAIL");
+        "Texture store gate: refs=%u distinct=%u uploaded=%u resident=%u after_unload=%u "
+        "stable=%s space_split=%s resolves=%s read=%s srgb=%02x%02x%02x%02x "
+        "linear=%02x%02x%02x%02x unloaded=%s stale_detected=%s (%s)",
+        references, distinct, uploaded, resident, resident_after, stable ? "yes" : "no",
+        space_split ? "yes" : "no", resolves ? "yes" : "no", read_ok ? "yes" : "no",
+        srgb_pixels[0], srgb_pixels[1], srgb_pixels[2], srgb_pixels[3], linear_pixels[0],
+        linear_pixels[1], linear_pixels[2], linear_pixels[3], unloaded ? "yes" : "no",
+        stale_detected ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
     return passed;

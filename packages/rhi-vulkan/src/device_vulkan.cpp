@@ -1182,8 +1182,18 @@ std::unique_ptr<IBuffer> VulkanDevice::create_buffer(const BufferDesc& desc, con
 // The named combinations are the contract's, not this backend's - a storage
 // texture nothing ever reads has no use, so there is no bare Storage. Every
 // sampled kind also gets TRANSFER_DST because that is how initial data
-// arrives, and the render-target kinds get TRANSFER_SRC because read_texture
-// copies out of them.
+// arrives, and every colour kind gets TRANSFER_SRC because read_texture copies
+// out of them.
+//
+// TRANSFER_SRC on the plain sampled kind was added when the texture-store gate
+// read a texel back out of an uploaded texture, to prove two entries under one
+// path hold different pixels. read_texture is declared on IDevice for *any*
+// texture, so restricting the flag to the render-target kinds made a contract
+// method invalid on this backend for a whole class of texture - and it showed
+// up as a validation error and nothing else, because the copy returns the
+// right bytes on a permissive driver. The two depth kinds stay without it:
+// read_texture's copy hard-codes the colour aspect, so a depth readback was
+// never going to work through it.
 struct ImageUsagePlan {
     VkImageUsageFlags usage = 0;
     // Where the image is left once created and uploaded. A sampled texture is
@@ -1210,7 +1220,8 @@ ImageUsagePlan plan_image_usage(TextureUsage usage) {
         plan.settled = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         break;
     case TextureUsage::ShaderResource:
-        plan.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        plan.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         plan.settled = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         break;
     case TextureUsage::DepthShaderResource:
