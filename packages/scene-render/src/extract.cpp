@@ -1,11 +1,38 @@
 #include <engine/scene_render/extract.hpp>
 
 #include <engine/assets/mesh.hpp>
+#include <engine/core/log.hpp>
 #include <engine/math/aabb.hpp>
 #include <engine/math/vec3.hpp>
 #include <engine/renderer/motion.hpp>
 
+#include <cstdio>
+
 namespace engine::scene_render {
+
+namespace {
+
+// One latch per map kind, the same shape as scene::warn_full: a material that
+// names a texture the store cannot resolve names it again every frame, and an
+// unlatched message at 60 Hz is noise to scroll past rather than a diagnostic.
+void warn_unresolved_map(bool& latch, const char* what, engine::assets::TextureHandle handle) {
+    if (latch) {
+        return;
+    }
+    latch = true;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Material %s map handle id=%llu gen=%u is not in the texture store - drawing the built-in "
+        "default instead. Either it was never uploaded, or it was unloaded while referenced.",
+        what, static_cast<unsigned long long>(handle.id), handle.generation);
+    engine::log(engine::LogLevel::Warn, engine::LogChannel::Assets, message);
+}
+
+bool g_albedo_unresolved_warned = false;
+bool g_normal_unresolved_warned = false;
+bool g_mr_unresolved_warned = false;
+
+} // namespace
 
 void extract_lighting(const engine::scene::World& world, engine::math::Vec3 camera_pos,
     engine::renderer::Lighting& out) {
@@ -77,28 +104,70 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
         {0.25f, 0.85f, 1.f},
     };
 
+    // Each map comes from the store the material's handle names, and falls back
+    // to a built-in when the material names none. This used to be a two-branch
+    // lookup into an array of demo husky textures indexed by `material.albedo`
+    // - which is why a scene the engine did not ship with could not have
+    // textures at all.
+    //
+    // Resolved per material, not per instance. A store lookup is a
+    // hash-and-probe and the answer varies only per material, of which there
+    // are at most kMaxMaterials; three finds inside the instance loop below is
+    // 3 x instance_count per extract - over a thousand at the current cap,
+    // where an array index used to stand, and it grows with every cap raise
+    // while this loop does not.
+    auto resolve = [&assets](engine::assets::TextureHandle handle,
+                       engine::rhi::ITexture* fallback, bool& latch, const char* what) {
+        engine::rhi::ITexture* found = assets.textures ? assets.textures->get(handle) : nullptr;
+        if (found) {
+            return found;
+        }
+        // `valid() && !found` is exactly "named a map that is not there".
+        // GpuTextureStore::get answers null to three different questions - the
+        // material names nothing (the intended case), the handle was unloaded,
+        // or it belongs to some other store - and the fallback flattens all
+        // three, so this is the only place the difference can still be seen.
+        // It matters more than it looks: before materials carried their own
+        // handles, an unresolvable albedo left item.texture null and
+        // renderer/extract.cpp culled the draw, so a broken texture made the
+        // object vanish. White is the better default, but it removed the only
+        // signal there was, and this warning is what replaces it.
+        if (handle.valid()) {
+            warn_unresolved_map(latch, what, handle);
+        }
+        return fallback;
+    };
+
+    struct ResolvedMaps {
+        engine::rhi::ITexture* albedo = nullptr;
+        engine::rhi::ITexture* normal = nullptr;
+        engine::rhi::ITexture* mr = nullptr;
+    };
+    const engine::u32 material_count = world.material_count < engine::scene::kMaxMaterials
+                                           ? world.material_count
+                                           : engine::scene::kMaxMaterials;
+    ResolvedMaps maps[engine::scene::kMaxMaterials]{};
+    for (engine::u32 m = 0; m < material_count; ++m) {
+        const auto& material = world.materials[m];
+        maps[m].albedo = resolve(material.albedo, assets.default_albedo,
+            g_albedo_unresolved_warned, "albedo");
+        maps[m].normal = resolve(material.normal, assets.default_normal,
+            g_normal_unresolved_warned, "normal");
+        maps[m].mr = resolve(material.metallic_roughness, assets.default_mr,
+            g_mr_unresolved_warned, "metallic-roughness");
+    }
+
     for (engine::u32 i = 0; i < world.instance_count; ++i) {
         const auto& instance = world.instances[i];
-        if (instance.material >= world.material_count) {
+        if (instance.material >= material_count) {
             continue;
         }
         const auto& material = world.materials[instance.material];
+        const auto& resolved = maps[instance.material];
         const auto* mesh = assets.meshes ? assets.meshes->get(instance.mesh) : nullptr;
         if (!mesh) {
             continue;
         }
-
-        // Each map comes from the store the material's handle names, and falls
-        // back to a built-in when the material names none. This used to be a
-        // two-branch lookup into an array of demo husky textures indexed by
-        // `material.albedo` - which is why a scene the engine did not ship
-        // with could not have textures at all.
-        engine::rhi::ITexture* albedo
-            = assets.textures ? assets.textures->get(material.albedo) : nullptr;
-        engine::rhi::ITexture* normal
-            = assets.textures ? assets.textures->get(material.normal) : nullptr;
-        engine::rhi::ITexture* mr
-            = assets.textures ? assets.textures->get(material.metallic_roughness) : nullptr;
 
         auto& item = storage[count];
         // The one line that routes a material to a pipeline. Falls back to
@@ -112,9 +181,9 @@ engine::renderer::ExtractStats extract_world(const engine::scene::World& world,
                                     : assets.pipelines.forward;
         item.vertex_buffer = mesh->vertex_buffer.get();
         item.index_buffer = mesh->index_buffer.get();
-        item.texture = albedo ? albedo : assets.default_albedo;
-        item.metallic_roughness = mr ? mr : assets.default_mr;
-        item.normal_map = normal ? normal : assets.default_normal;
+        item.texture = resolved.albedo;
+        item.metallic_roughness = resolved.mr;
+        item.normal_map = resolved.normal;
         item.model = engine::scene::instance_world_model(world, i);
         item.local_bounds = mesh->bounds;
         item.debug_color = kBoxColors[i % 5];

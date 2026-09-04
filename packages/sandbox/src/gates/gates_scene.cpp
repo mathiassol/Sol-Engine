@@ -309,7 +309,13 @@ bool run_scene_file_gate() {
     // deleted, and inverted into something falsifiable: a future change that
     // reinterprets the token as a handle id makes this go red. The two scalar
     // clauses are new - the gate never checked those round-tripped at all.
+    //
+    // The first clause is the one the comment above needs and did not have:
+    // without it `!loaded...albedo.valid()` also holds when the handle going in
+    // was never valid, which makes the round-trip claim about the writer
+    // discarding it one edit away from vacuous.
     const bool material_ok = named_ok
+        && mat.albedo.valid()
         && !loaded.materials[0].albedo.valid()
         && std::abs(loaded.materials[0].metallic - 0.1f) < 1.e-3f
         && std::abs(loaded.materials[0].roughness - 0.4f) < 1.e-3f;
@@ -324,10 +330,23 @@ bool run_scene_file_gate() {
 
     const bool passed = named_ok && unnamed_ok && hierarchy_ok && lights_ok && material_ok
         && mesh_ok && reject_ok;
-    char message[256];
+    // The six clause fields used to be hard-coded to "yes" while only the three
+    // material ones were measured, so a red line would have named nothing that
+    // failed. child_x is guarded on named_ok because instance_world_model
+    // asserts on an invalid index, and a failed load is exactly when this
+    // message matters.
+    const engine::f32 child_x = named_ok
+        ? origin_of(engine::scene::instance_world_model(loaded, loaded_child)).x
+        : 0.f;
+    char message[320];
     std::snprintf(message, sizeof(message),
-        "Scene file gate: named=yes unnamed=drop hierarchy=yes lights=yes mesh=yes reject=yes "
-        "albedo_valid=%s metallic=%.2f roughness=%.2f (%s)",
+        "Scene file gate: named=%s instances=%u unnamed=%s hierarchy=%s child_x=%.2f "
+        "lights=%s mesh=%s reject=%s wrote_valid=%s albedo_valid=%s metallic=%.2f "
+        "roughness=%.2f (%s)",
+        named_ok ? "yes" : "no", loaded.instance_count, unnamed_ok ? "drop" : "kept",
+        hierarchy_ok ? "yes" : "no", static_cast<double>(child_x),
+        lights_ok ? "yes" : "no", mesh_ok ? "yes" : "no", reject_ok ? "yes" : "no",
+        mat.albedo.valid() ? "yes" : "no",
         loaded.materials[0].albedo.valid() ? "yes" : "no",
         static_cast<double>(loaded.materials[0].metallic),
         static_cast<double>(loaded.materials[0].roughness),

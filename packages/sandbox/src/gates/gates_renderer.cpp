@@ -428,20 +428,35 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
         && transparent_batches < translucent_snapshot.batches.size();
 
     // Textures travel the same road as roughness and opacity. Before this task
-    // the bridge pinned normal_map to a built-in default, so a material naming
-    // its own normal was silently ignored - which reads as a flat-looking
-    // surface rather than as a bug, and is exactly the failure this gate's
-    // road-checking shape exists to catch.
+    // the bridge pinned all three maps to built-in defaults, so a material
+    // naming its own normal was silently ignored - which reads as a flat-
+    // looking surface rather than as a bug, and is exactly the failure this
+    // gate's road-checking shape exists to catch.
     //
-    // The probe is material 0's albedo: a real, live texture that is
-    // definitely not the default normal, and one the gate can name without a
-    // device to create anything.
-    const engine::assets::TextureHandle probe_handle = copy.materials[0].albedo;
-    const engine::rhi::ITexture* probe = assets.textures->get(probe_handle);
+    // All three maps get their own clause and their own field. One
+    // maps_travel=yes covering all of them would be cheaper and useless: the
+    // whole point is that re-pinning any single one of the three assignments in
+    // scene_render's extract goes red naming which map stopped travelling.
+    // Measured, not assumed - with only the normal asserted, re-pinning
+    // item.texture rendered the whole demo with a white default albedo and this
+    // gate still exited 0 with every clause green.
+    //
+    // The probe is the probe material's albedo: a real, live texture that is
+    // definitely neither built-in default, and one the gate can name without a
+    // device to create anything. `materials[0]` stood here and repeated the
+    // mistake the opacity probe above documents - a probe on a material no
+    // instance uses mutates nothing.
+    //
+    // The store is guarded the way the bridge guards it. A gate takes this
+    // struct from whoever calls it, and a null store must not be a crash.
+    const engine::assets::TextureHandle probe_handle = copy.materials[probe_material].albedo;
+    const engine::rhi::ITexture* probe
+        = assets.textures ? assets.textures->get(probe_handle) : nullptr;
 
     engine::scene::World textured = copy;
     for (engine::u32 i = 0; i < textured.material_count; ++i) {
         textured.materials[i].normal = probe_handle;
+        textured.materials[i].metallic_roughness = probe_handle;
     }
     engine::Arena arena_textured(256 * 1024);
     engine::renderer::RenderSnapshot textured_snap{};
@@ -451,40 +466,67 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
         arena_textured, textured_snap);
 
     bool normal_travels = probe != nullptr && !textured_snap.draws.empty();
+    bool mr_travels = probe != nullptr && !textured_snap.draws.empty();
     for (const engine::renderer::DrawItem& draw : textured_snap.draws) {
         if (draw.normal_map != probe) {
             normal_travels = false;
         }
+        if (draw.metallic_roughness != probe) {
+            mr_travels = false;
+        }
     }
-    // And the unmutated extract must NOT already produce it, or the assertion
-    // above would hold even with the old hardcoded pin still in place. This is
-    // the clause that makes the check non-vacuous.
+    // Albedo is not mutated: the probe material already names a live albedo, so
+    // the assertion is that the baseline extract carries exactly what the store
+    // answers for that handle. A pin to the built-in default makes
+    // before.draws[0].texture the default and this clause red; the second term
+    // is what keeps the two distinguishable if they ever became one texture.
+    const bool albedo_travels = probe != nullptr && probe != assets.default_albedo
+        && !before.draws.empty() && before.draws[0].texture == probe;
+    // The baselines. Not "the pin is gone" - with a pin in place the travel
+    // clauses above already fail on their own. What these exclude is the
+    // degenerate case where the probe *aliases* the built-in default, which
+    // would satisfy the loop above without any material handle having
+    // travelled anywhere. So each now says what its name says: the unmutated
+    // extract carries the default, and the default is not the probe.
     const bool normal_was_default = !before.draws.empty()
-        && before.draws[0].normal_map != probe;
+        && before.draws[0].normal_map == assets.default_normal
+        && probe != assets.default_normal;
+    const bool mr_was_default = !before.draws.empty()
+        && before.draws[0].metallic_roughness == assets.default_mr
+        && probe != assets.default_mr;
 
     const bool layout_ok = sizeof(engine::renderer::FrameConstants) == 336;
     const bool gltf_ok = gltf_metallic >= 0.f && gltf_metallic <= 1.f
         && gltf_roughness >= 0.f && gltf_roughness <= 1.f;
     const bool passed = table_ok && handles_ok && draws_ok && changed && layout_ok && gltf_ok
         && opacity_reaches_draw && opacity_reaches_instance && pipeline_split
-        && normal_travels && normal_was_default;
-    // 384, not 288: the format below already reached ~268 bytes at its widest
-    // and the two new fields add ~42. snprintf truncates silently from the
-    // right, so the first thing 288 would have cut is the trailing "(FAIL)".
-    char message[384];
+        && albedo_travels && normal_travels && mr_travels && normal_was_default && mr_was_default;
+    // 512, not 384: the format below already reached ~268 bytes at its widest,
+    // the three per-map fields and their two baselines add ~90, and the glTF
+    // scalars ~30. snprintf truncates silently from the right, so what a tight
+    // buffer cuts first is the trailing "(FAIL)".
+    char message[512];
     // layout printed the literal "400" until now - stale since the instancing
     // refactor took FrameConstants to 336, which is what it asserts.
+    //
+    // The two glTF scalars are printed because gltf_ok is in `passed` and had
+    // no field at all: without them a loader that starts answering
+    // roughness=1.7 takes this gate red with every visible term green.
     std::snprintf(message, sizeof(message),
         "Material gate: materials=%u handles=%s roughness_is_data=%s opacity_is_data=%s "
         "probe_material=%u changed_draws=%zu probe_instances=%zu "
-        "transparent_batches=%zu/%zu layout=%s normal_travels=%s normal_was_default=%s (%s)",
+        "transparent_batches=%zu/%zu layout=%s gltf_metallic=%.3f gltf_roughness=%.3f "
+        "albedo_travels=%s normal_travels=%s mr_travels=%s normal_was_default=%s "
+        "mr_was_default=%s (%s)",
         world.material_count, handles_ok ? "yes" : "no",
         (draws_ok && changed) ? "yes" : "no",
         (opacity_reaches_draw && opacity_reaches_instance) ? "yes" : "no",
         probe_material, changed_draws, probe_instances, transparent_batches,
         translucent_snapshot.batches.size(), layout_ok ? "336" : "bad",
-        normal_travels ? "yes" : "no", normal_was_default ? "yes" : "no",
-        passed ? "pass" : "FAIL");
+        static_cast<double>(gltf_metallic), static_cast<double>(gltf_roughness),
+        albedo_travels ? "yes" : "no", normal_travels ? "yes" : "no",
+        mr_travels ? "yes" : "no", normal_was_default ? "yes" : "no",
+        mr_was_default ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
     return passed;
