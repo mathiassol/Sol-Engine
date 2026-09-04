@@ -6,7 +6,7 @@ status: open — not yet on the service
 
 # Open decisions
 
-Nine questions an audit raised and deliberately would not answer, because
+Ten questions an audit raised and deliberately would not answer, because
 answering one changes behaviour, an API, or what a word in the backlog means.
 Each is the decision itself, not a task: the fix is clear in every case.
 
@@ -101,6 +101,13 @@ for `packages/<name>` literals in lower layers?
 
 ## A2 — Should the scene-to-renderer extract move into an engine package?
 
+**Answered 4 Sep 2026: yes, move the extract itself.** It is now
+`packages/scene-render`, a Layer-4 package at rank 5 (`852ceee`), and both
+`static_assert`s moved with it, so a game linking `engine::scene-render`
+inherits the guards instead of having to write its own extract. The constants
+stayed where they were — moving the extract made a shared header unnecessary.
+The text below is the question as the audit raised it.
+
 **Why it is not a task:** it changes the application-facing shape of the
 renderer, and there is more than one reasonable boundary.
 
@@ -115,6 +122,41 @@ which it must, since the engine ships none — inherits no guard.
 Move the shared constants into one header both packages include (cheap, removes
 the overrun risk), move the extract itself (larger, gives a game a path it does
 not have to write), or both?
+
+## S5 — How should a material's textures be named in a `.solscene` file?
+
+**Raised 4 Sep 2026** while implementing the material/texture system, not by an
+audit. Decided the same day; recorded because it constrains the file format,
+which `document` owns.
+
+`scene::Material::albedo` was a `u32` index into a hardcoded husky/floor branch
+in the bridge, and it is serialized — `scene_file.cpp:195` writes it,
+`scene_file.cpp:305` parses it, and `run_scene_load_gate` asserted it survives a
+round trip. Task 3 replaces it with three `TextureHandle`s, so the token has to
+mean something else or nothing.
+
+Serializing the handle is the option the file's own `MeshHandle` precedent
+suggests (`scene_file.cpp:320` writes `id generation`), and it is wrong here. A
+`TextureHandle` is `fnv1a64(path + colour space)`: writing it puts an opaque
+20-digit number where a path belongs, in a file `VISION.md` says a human and an
+agent must both be able to edit. The right format names the texture by path and
+resolves it at load against a store — which needs the store at load time, which
+is `document`'s job, which is why D5 of the design spec says "no `.solscene`
+changes".
+
+**Decided: keep the on-disk token shape, parse and discard it, always write
+`0`.** Old files still load, `demo.solscene` is untouched, and the only thing
+lost is the ability to persist an index into a branch this task deletes.
+
+`run_scene_load_gate`'s `albedo == 2` clause is **replaced, not deleted**: the
+loader must produce an *invalid* handle, so a future change that reinterprets
+the token as an id goes red. That gate never asserted `metallic`/`roughness`
+round-trip at all, so those clauses were added at the same time — one
+meaningless assertion out, two real ones in.
+
+**Open part:** when `document` lands, does the material line become
+`albedo=/content/x.png` with load-time resolution, and does it pick up
+`opacity`, which is *already* not serialized (`scene_file.cpp:192-198`)?
 
 ## D2 — How should a release be stopped from shipping ungated GPU code?
 

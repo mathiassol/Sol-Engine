@@ -70,6 +70,7 @@ tabs, 100 columns, final newline, no BOM.
 | The importer stays in the **sandbox** | `document` (step 3) replaces it. A package we know we will delete is the scaffolding `packageRules.md` forbids |
 | A new gate's name must be checked against the existing ones | `run_material_gate` was already taken by a renderer gate that proves roughness and opacity travel to `DrawItem`. `gate-registry` would have failed on the duplicate, and two `"Material gate:"` lines would have made `--gates` ambiguous |
 | An assertion about a field belongs where the road is already checked | The normal-map check went into the existing `run_material_gate` beside roughness and opacity rather than into the new store gate, because that gate already extracts and compares `DrawItem`s. Asserting `mat.normal.valid()` on a bare struct proves only that the field exists |
+| A material's textures are **not** serialized yet | `TextureHandle` is a hash of a path plus a colour space. Writing it into a plain-text scene puts an opaque number where a path belongs, and the path-based form needs the store at load time — `document`'s job, per the spec's D5. The token is parsed and discarded; decision **S5** |
 | `TextureHandle` mirrors `MeshHandle` exactly | Same `{u64 id, u32 generation}` shape, same `fnv1a64` keying, so a stale handle after `unload` is detectable rather than silently reused |
 | Caps rise in **Task 5**, not Task 3, and `Scene #12` is still not triggered | The original reasoning — `ForwardDemo` is `unique_ptr`-held so `World` is already on the heap — was true of the *demo* `World` and only of it. 19 more are function-scope stack locals in the gate files, and at 3072 three gate functions overflow the 1 MiB stack. Task 5 Step 0 heap-holds those locals first. Heap-*holding* a local is not `Scene #12`, which heap-backs the *type* |
 | The demo floor checker stays `ColorSpace::Linear` | It is created `RGBA8_UNORM` today (`main.cpp:1003`) and its texel values were chosen to look right sampled that way. Relabelling a procedural pattern as sRGB darkens the demo's midtones without fixing anything — the sRGB rule is about *authored* colour. Deliberate, documented exception |
@@ -570,6 +571,8 @@ violate the `(Category #N)` convention.
 
 **Files:**
 - Modify: `packages/scene/include/engine/scene/world.hpp`
+- Modify: `packages/scene/src/scene_file.cpp` (albedo is serialized — see Step 2a)
+- Modify: `packages/sandbox/src/gates/gates_scene.cpp` (two gates read `albedo`)
 - Modify: `packages/scene-render/src/extract.cpp`
 - Modify: `packages/sandbox/src/main.cpp`, `sandbox_common.hpp`
 - Modify: `packages/sandbox/src/gates/gates_renderer.cpp` (the existing `run_material_gate`)
@@ -654,7 +657,57 @@ in place while the rest of Step 4 lands, build, and confirm
 was written against — without it, the check passes from the first build and
 nothing shows it ever would have failed.
 
-- [ ] **Step 3: Change `Material` and the caps**
+- [ ] **Step 2a: `Material::albedo` is serialized — deal with that first**
+
+`Material::albedo` is not only read by the bridge. It is written to and parsed
+from the text scene format, and an existing gate asserts it round-trips:
+
+| Where | What |
+|---|---|
+| `packages/scene/src/scene_file.cpp:195` | `out += std::to_string(material.albedo);` |
+| `packages/scene/src/scene_file.cpp:305` | `take_u32(text, i, material.albedo)` |
+| `packages/sandbox/src/gates/gates_scene.cpp:251,301` | sets `mat.albedo = 2`, asserts `loaded.materials[0].albedo == 2` |
+| `packages/sandbox/content/scenes/demo.solscene:13-14` | `material 0 0 1` — three tokens |
+| `packages/sandbox/src/gates/gates_scene.cpp:335,389` | `run_scene_prefab_gate` reads `albedo == 3` (prefab copy, not file I/O) |
+
+Neither `scene_file.cpp` nor `demo.solscene` was in this task's file list. That
+was the defect; this is the resolution, recorded as **S5** in
+`docs/analysis/DECISIONS.md`.
+
+**Keep the on-disk token shape. Parse it and discard it. Always write `0`.**
+
+Do *not* serialize the handle, even though `MeshHandle` does
+(`scene_file.cpp:320` writes `id generation`). A `TextureHandle` is
+`fnv1a64(path + colour space)` — writing it puts an opaque 20-digit number
+where a path belongs, in a file `VISION.md` says a human and an agent must both
+be able to edit. The path-based form needs the store at load time, which is
+`document`'s job, which is why the design spec's **D5** says no `.solscene`
+changes. Put that reasoning in a comment on both sides, because a discarded
+parse looks like a bug otherwise.
+
+`demo.solscene` stays **byte-identical**. Nothing real is lost: today's
+`albedo` is an index into the hardcoded husky/floor branch that Step 4 deletes.
+
+**Replace the gate's assertion; do not delete it.** In
+`run_scene_load_gate`, `albedo == 2` becomes: the loader must produce an
+**invalid** handle —
+
+```cpp
+        && !loaded.materials[0].albedo.valid()
+        && std::abs(loaded.materials[0].metallic - 0.1f) < 1.e-3f
+        && std::abs(loaded.materials[0].roughness - 0.4f) < 1.e-3f;
+```
+
+That is positive and falsifiable: a future change that reinterprets the token
+as an id goes red. And note the gate never asserted `metallic`/`roughness`
+round-trip at all, so those two clauses are new — one meaningless assertion
+out, two real ones in. Add the new terms to that gate's message too.
+
+`run_scene_prefab_gate`'s `albedo == 3` is a prefab *copy*, not file I/O, so it
+stays a valid assertion — swap the probe value for a handle
+(`make_texture_handle("probe")` will do) and keep the check.
+
+- [ ] **Step 3: Change `Material`**
 
 In `packages/scene/include/engine/scene/world.hpp`, add
 `#include <engine/assets/texture.hpp>` and replace `Material`:
