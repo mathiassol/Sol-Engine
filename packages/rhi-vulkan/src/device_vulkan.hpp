@@ -559,10 +559,10 @@ private:
     // descriptor set or command buffer reset while the GPU is still reading it
     // is the failure this exists to prevent.
     static constexpr u32 kFrameCount = 3;
-    // 1 MiB per slot and 256-byte alignment, both the same as the other
+    // 8 MiB per slot and 256-byte alignment, both the same as the other
     // backend - a ring that differed in size would make the frame-ring budget
     // gate's headroom figure mean two different things.
-    static constexpr usize kFrameRingBytes = 1024 * 1024;
+    static constexpr usize kFrameRingBytes = 8 * 1024 * 1024;
     static constexpr usize kBufferAlign = 256;
 
     VkDevice device_ = VK_NULL_HANDLE;

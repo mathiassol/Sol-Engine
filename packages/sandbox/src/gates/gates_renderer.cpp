@@ -280,14 +280,14 @@ bool run_hdr_gate(const engine::scene::World& world,
 
 bool run_frustum_gate(const engine::scene::World& world, const FlyCamera& camera,
     const engine::scene_render::WorldExtractAssets& assets) {
-    engine::scene::World copy = world;
-    copy.camera.view = camera.view();
-    copy.camera.projection = camera.projection(16.f / 9.f);
+    auto copy = std::make_unique<engine::scene::World>(world);
+    copy->camera.view = camera.view();
+    copy->camera.projection = camera.projection(16.f / 9.f);
     engine::Arena arena(256 * 1024);
     engine::renderer::RenderSnapshot snapshot{};
     snapshot.width = 1280;
     snapshot.height = 720;
-    const auto stats = engine::scene_render::extract_world(copy, camera.position, assets,
+    const auto stats = engine::scene_render::extract_world(*copy, camera.position, assets,
         false, nullptr, arena, snapshot);
     const engine::u32 skipped = stats.considered - stats.visible;
     // Batches must collapse the drawn set, never exceed it. Reported here
@@ -317,26 +317,26 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
         }
     }
 
-    engine::scene::World copy = world;
-    copy.camera.view = camera.view();
-    copy.camera.projection = camera.projection(16.f / 9.f);
+    auto copy = std::make_unique<engine::scene::World>(world);
+    copy->camera.view = camera.view();
+    copy->camera.projection = camera.projection(16.f / 9.f);
     engine::Arena arena(256 * 1024);
     engine::renderer::RenderSnapshot before{};
     before.width = 1280;
     before.height = 720;
-    engine::scene_render::extract_world(copy, camera.position, assets, false, nullptr, arena,
+    engine::scene_render::extract_world(*copy, camera.position, assets, false, nullptr, arena,
         before);
 
     constexpr engine::f32 kProbeRoughness = 0.03125f;
-    engine::scene::World mutated = copy;
-    for (engine::u32 i = 0; i < mutated.material_count; ++i) {
-        mutated.materials[i].roughness = kProbeRoughness;
+    auto mutated = std::make_unique<engine::scene::World>(*copy);
+    for (engine::u32 i = 0; i < mutated->material_count; ++i) {
+        mutated->materials[i].roughness = kProbeRoughness;
     }
     engine::Arena arena_mutated(256 * 1024);
     engine::renderer::RenderSnapshot after{};
     after.width = 1280;
     after.height = 720;
-    engine::scene_render::extract_world(mutated, camera.position, assets, false, nullptr,
+    engine::scene_render::extract_world(*mutated, camera.position, assets, false, nullptr,
         arena_mutated, after);
 
     bool draws_ok = !after.draws.empty();
@@ -356,18 +356,18 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     // Material 0 only, not every material: the pipeline-split assertion below
     // needs opaque batches left to split away from.
     constexpr engine::f32 kProbeOpacity = 0.375f;
-    engine::scene::World translucent = copy;
+    auto translucent = std::make_unique<engine::scene::World>(*copy);
     // The material instance 0 actually uses, not material 0. A probe on an
     // unused material mutates nothing and the assertions below would be
     // vacuously satisfiable.
     const engine::u32 probe_material
         = world.instance_count > 0 ? world.instances[0].material : 0;
-    translucent.materials[probe_material].opacity = kProbeOpacity;
+    translucent->materials[probe_material].opacity = kProbeOpacity;
     engine::Arena arena_translucent(256 * 1024);
     engine::renderer::RenderSnapshot translucent_snapshot{};
     translucent_snapshot.width = 1280;
     translucent_snapshot.height = 720;
-    engine::scene_render::extract_world(translucent, camera.position, assets, false, nullptr,
+    engine::scene_render::extract_world(*translucent, camera.position, assets, false, nullptr,
         arena_translucent, translucent_snapshot);
 
     // Exactly the probe material's draws changed, and nothing else moved.
@@ -449,20 +449,20 @@ bool run_material_gate(const engine::scene::World& world, const FlyCamera& camer
     //
     // The store is guarded the way the bridge guards it. A gate takes this
     // struct from whoever calls it, and a null store must not be a crash.
-    const engine::assets::TextureHandle probe_handle = copy.materials[probe_material].albedo;
+    const engine::assets::TextureHandle probe_handle = copy->materials[probe_material].albedo;
     const engine::rhi::ITexture* probe
         = assets.textures ? assets.textures->get(probe_handle) : nullptr;
 
-    engine::scene::World textured = copy;
-    for (engine::u32 i = 0; i < textured.material_count; ++i) {
-        textured.materials[i].normal = probe_handle;
-        textured.materials[i].metallic_roughness = probe_handle;
+    auto textured = std::make_unique<engine::scene::World>(*copy);
+    for (engine::u32 i = 0; i < textured->material_count; ++i) {
+        textured->materials[i].normal = probe_handle;
+        textured->materials[i].metallic_roughness = probe_handle;
     }
     engine::Arena arena_textured(256 * 1024);
     engine::renderer::RenderSnapshot textured_snap{};
     textured_snap.width = 1280;
     textured_snap.height = 720;
-    engine::scene_render::extract_world(textured, camera.position, assets, false, nullptr,
+    engine::scene_render::extract_world(*textured, camera.position, assets, false, nullptr,
         arena_textured, textured_snap);
 
     bool normal_travels = probe != nullptr && !textured_snap.draws.empty();

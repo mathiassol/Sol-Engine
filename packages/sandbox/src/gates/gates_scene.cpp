@@ -16,11 +16,11 @@ bool run_scene_world_gate(const engine::scene::World& world) {
     if (count_ok) {
         models_differ = std::memcmp(&world.instances[0].model, &world.instances[1].model,
             sizeof(engine::math::Mat4)) != 0;
-        engine::scene::World nudged = world;
-        const engine::math::Mat4 before = nudged.instances[0].model;
-        engine::scene::set_instance_model(nudged, 0,
+        auto nudged = std::make_unique<engine::scene::World>(world);
+        const engine::math::Mat4 before = nudged->instances[0].model;
+        engine::scene::set_instance_model(*nudged, 0,
             engine::math::Mat4::translate({0.1f, 0.f, 0.f}) * before);
-        moved = std::memcmp(&nudged.instances[0].model, &before, sizeof(engine::math::Mat4)) != 0;
+        moved = std::memcmp(&nudged->instances[0].model, &before, sizeof(engine::math::Mat4)) != 0;
     }
     const bool passed = count_ok && models_differ && moved;
     char message[160];
@@ -42,30 +42,30 @@ bool run_scene_world_gate(const engine::scene::World& world) {
 // rather than trusted, so a change to the hash or the mesh key fails here
 // instead of silently producing a scene of invalid handles.
 bool run_scene_load_gate(engine::assets::IAssetLoader& loader) {
-    engine::scene::World world;
-    const bool loaded = engine::scene::load_world(loader, kDemoScene, world);
+    auto world = std::make_unique<engine::scene::World>();
+    const bool loaded = engine::scene::load_world(loader, kDemoScene, *world);
 
     const engine::assets::MeshHandle husky = engine::assets::make_mesh_handle(kHuskyMesh);
     const engine::assets::MeshHandle ground = engine::assets::make_mesh_handle(kGroundMesh);
 
-    const bool counts_ok = loaded && world.instance_count == 3 && world.material_count == 2;
+    const bool counts_ok = loaded && world->instance_count == 3 && world->material_count == 2;
     bool names_ok = false;
     bool meshes_ok = false;
     bool parent_ok = false;
     bool child_moved = false;
     if (counts_ok) {
-        const engine::u32 a = engine::scene::find_instance(world, "husky_a");
-        const engine::u32 b = engine::scene::find_instance(world, "husky_b");
-        const engine::u32 g = engine::scene::find_instance(world, "ground");
+        const engine::u32 a = engine::scene::find_instance(*world, "husky_a");
+        const engine::u32 b = engine::scene::find_instance(*world, "husky_b");
+        const engine::u32 g = engine::scene::find_instance(*world, "ground");
         names_ok = a != engine::scene::kInvalidInstance && b != engine::scene::kInvalidInstance
             && g != engine::scene::kInvalidInstance;
         if (names_ok) {
-            meshes_ok = world.instances[a].mesh == husky && world.instances[b].mesh == husky
-                && world.instances[g].mesh == ground;
-            parent_ok = world.instances[b].parent == a
-                && world.instances[a].parent == engine::scene::kInvalidInstance;
+            meshes_ok = world->instances[a].mesh == husky && world->instances[b].mesh == husky
+                && world->instances[g].mesh == ground;
+            parent_ok = world->instances[b].parent == a
+                && world->instances[a].parent == engine::scene::kInvalidInstance;
             // world = parent * local, so the child sits at 0.5 + 0.8.
-            const engine::math::Mat4 world_b = engine::scene::instance_world_model(world, b);
+            const engine::math::Mat4 world_b = engine::scene::instance_world_model(*world, b);
             child_moved = std::fabs(world_b.cols[3].y - 1.3f) < 1.e-4f;
         }
     }
@@ -75,11 +75,11 @@ bool run_scene_load_gate(engine::assets::IAssetLoader& loader) {
     std::snprintf(message, sizeof(message),
         "Scene load gate: file=%s instances=%u materials=%u names=%s meshes=%s parent=%s "
         "child_y=%.3f (%s)",
-        loaded ? "read" : "MISSING", world.instance_count, world.material_count,
+        loaded ? "read" : "MISSING", world->instance_count, world->material_count,
         names_ok ? "yes" : "no", meshes_ok ? "yes" : "no", parent_ok ? "yes" : "no",
         static_cast<double>(counts_ok && names_ok
-                ? engine::scene::instance_world_model(world,
-                      engine::scene::find_instance(world, "husky_b")).cols[3].y
+                ? engine::scene::instance_world_model(*world,
+                      engine::scene::find_instance(*world, "husky_b")).cols[3].y
                 : 0.f),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
@@ -91,30 +91,30 @@ bool run_scene_load_gate(engine::assets::IAssetLoader& loader) {
 // no gate can exercise a path that calls std::abort(). It returns a sentinel and
 // logs now, so the degradation can be asserted like anything else.
 bool run_scene_capacity_gate() {
-    engine::scene::World world;
+    auto world = std::make_unique<engine::scene::World>();
 
     engine::u32 last_instance = 0;
     bool all_instances_ok = true;
     for (engine::u32 i = 0; i < engine::scene::kMaxInstances; ++i) {
-        last_instance = engine::scene::add_instance(world, {});
+        last_instance = engine::scene::add_instance(*world, {});
         if (last_instance != i) {
             all_instances_ok = false;
         }
     }
-    const bool inst_full = world.instance_count == engine::scene::kMaxInstances;
-    const engine::u32 over_instance = engine::scene::add_instance(world, {});
+    const bool inst_full = world->instance_count == engine::scene::kMaxInstances;
+    const engine::u32 over_instance = engine::scene::add_instance(*world, {});
     const bool inst_rejected = over_instance == engine::scene::kInvalidInstance;
-    const bool inst_no_growth = world.instance_count == engine::scene::kMaxInstances;
+    const bool inst_no_growth = world->instance_count == engine::scene::kMaxInstances;
 
     bool all_materials_ok = true;
     for (engine::u32 i = 0; i < engine::scene::kMaxMaterials; ++i) {
-        if (engine::scene::add_material(world, {}) != i) {
+        if (engine::scene::add_material(*world, {}) != i) {
             all_materials_ok = false;
         }
     }
-    const engine::u32 over_material = engine::scene::add_material(world, {});
+    const engine::u32 over_material = engine::scene::add_material(*world, {});
     const bool mat_rejected = over_material == engine::scene::kInvalidMaterial;
-    const bool mat_no_growth = world.material_count == engine::scene::kMaxMaterials;
+    const bool mat_no_growth = world->material_count == engine::scene::kMaxMaterials;
 
     const bool passed = all_instances_ok && inst_full && inst_rejected && inst_no_growth
         && all_materials_ok && mat_rejected && mat_no_growth;
@@ -122,10 +122,10 @@ bool run_scene_capacity_gate() {
     std::snprintf(message, sizeof(message),
         "Scene capacity gate: instances=%u/%u last=%u over=%s count_held=%s "
         "materials=%u/%u over=%s count_held=%s (%s)",
-        world.instance_count, engine::scene::kMaxInstances, last_instance,
+        world->instance_count, engine::scene::kMaxInstances, last_instance,
         inst_rejected ? "invalid" : "GREW",
         inst_no_growth ? "yes" : "no",
-        world.material_count, engine::scene::kMaxMaterials,
+        world->material_count, engine::scene::kMaxMaterials,
         mat_rejected ? "invalid" : "GREW",
         mat_no_growth ? "yes" : "no",
         passed ? "pass" : "FAIL");
@@ -135,35 +135,35 @@ bool run_scene_capacity_gate() {
 }
 
 bool run_scene_name_gate() {
-    engine::scene::World world{};
-    const engine::u32 alpha = engine::scene::add_instance(world, {});
-    const engine::u32 beta = engine::scene::add_instance(world, {});
-    const engine::u32 unnamed = engine::scene::add_instance(world, {});
-    engine::scene::set_instance_name(world, alpha, "alpha");
-    engine::scene::set_instance_name(world, beta, "beta");
+    auto world = std::make_unique<engine::scene::World>();
+    const engine::u32 alpha = engine::scene::add_instance(*world, {});
+    const engine::u32 beta = engine::scene::add_instance(*world, {});
+    const engine::u32 unnamed = engine::scene::add_instance(*world, {});
+    engine::scene::set_instance_name(*world, alpha, "alpha");
+    engine::scene::set_instance_name(*world, beta, "beta");
 
-    const engine::scene::NameId intern_a = engine::scene::intern_name(world, "alpha");
-    const engine::scene::NameId intern_b = engine::scene::intern_name(world, "alpha");
+    const engine::scene::NameId intern_a = engine::scene::intern_name(*world, "alpha");
+    const engine::scene::NameId intern_b = engine::scene::intern_name(*world, "alpha");
     const bool intern_ok = intern_a != 0 && intern_a == intern_b
-        && intern_a == world.instances[alpha].name;
+        && intern_a == world->instances[alpha].name;
 
-    const bool find_ok = engine::scene::find_instance(world, "alpha") == alpha
-        && engine::scene::find_instance(world, "beta") == beta
-        && engine::scene::instance_name(world, alpha) == "alpha"
-        && engine::scene::instance_name(world, beta) == "beta";
+    const bool find_ok = engine::scene::find_instance(*world, "alpha") == alpha
+        && engine::scene::find_instance(*world, "beta") == beta
+        && engine::scene::instance_name(*world, alpha) == "alpha"
+        && engine::scene::instance_name(*world, beta) == "beta";
 
-    const bool unnamed_ok = world.instances[unnamed].name == 0
-        && engine::scene::instance_name(world, unnamed).empty()
-        && engine::scene::find_instance(world, "") == engine::scene::kInvalidInstance
-        && engine::scene::intern_name(world, "") == 0;
+    const bool unnamed_ok = world->instances[unnamed].name == 0
+        && engine::scene::instance_name(*world, unnamed).empty()
+        && engine::scene::find_instance(*world, "") == engine::scene::kInvalidInstance
+        && engine::scene::intern_name(*world, "") == 0;
 
-    const engine::u32 dup = engine::scene::add_instance(world, {});
-    engine::scene::set_instance_name(world, dup, "alpha");
-    const bool dup_ok = engine::scene::find_instance(world, "alpha") == alpha
-        && world.instances[dup].name == world.instances[alpha].name;
+    const engine::u32 dup = engine::scene::add_instance(*world, {});
+    engine::scene::set_instance_name(*world, dup, "alpha");
+    const bool dup_ok = engine::scene::find_instance(*world, "alpha") == alpha
+        && world->instances[dup].name == world->instances[alpha].name;
 
     const bool miss_ok
-        = engine::scene::find_instance(world, "nope") == engine::scene::kInvalidInstance;
+        = engine::scene::find_instance(*world, "nope") == engine::scene::kInvalidInstance;
 
     const bool passed = intern_ok && find_ok && unnamed_ok && dup_ok && miss_ok;
     char message[192];
@@ -187,35 +187,35 @@ bool run_scene_hierarchy_gate() {
         return std::abs(d.x) < 1.e-4f && std::abs(d.y) < 1.e-4f && std::abs(d.z) < 1.e-4f;
     };
 
-    engine::scene::World world{};
-    const engine::u32 parent = engine::scene::add_instance(world, {});
-    const engine::u32 child = engine::scene::add_instance(world, {});
-    const engine::u32 grand = engine::scene::add_instance(world, {});
-    engine::scene::set_instance_model(world, parent, Mat4::translate({10.f, 0.f, 0.f}));
-    engine::scene::set_instance_model(world, child, Mat4::translate({1.f, 0.f, 0.f}));
-    engine::scene::set_instance_model(world, grand, Mat4::translate({0.f, 2.f, 0.f}));
+    auto world = std::make_unique<engine::scene::World>();
+    const engine::u32 parent = engine::scene::add_instance(*world, {});
+    const engine::u32 child = engine::scene::add_instance(*world, {});
+    const engine::u32 grand = engine::scene::add_instance(*world, {});
+    engine::scene::set_instance_model(*world, parent, Mat4::translate({10.f, 0.f, 0.f}));
+    engine::scene::set_instance_model(*world, child, Mat4::translate({1.f, 0.f, 0.f}));
+    engine::scene::set_instance_model(*world, grand, Mat4::translate({0.f, 2.f, 0.f}));
 
-    const bool parented = engine::scene::set_instance_parent(world, child, parent, false)
-        && engine::scene::set_instance_parent(world, grand, child, false);
-    const Vec3 child_world = origin_of(engine::scene::instance_world_model(world, child));
-    const Vec3 grand_world = origin_of(engine::scene::instance_world_model(world, grand));
+    const bool parented = engine::scene::set_instance_parent(*world, child, parent, false)
+        && engine::scene::set_instance_parent(*world, grand, child, false);
+    const Vec3 child_world = origin_of(engine::scene::instance_world_model(*world, child));
+    const Vec3 grand_world = origin_of(engine::scene::instance_world_model(*world, grand));
     const bool compose_ok = parented && near3(child_world, {11.f, 0.f, 0.f})
         && near3(grand_world, {11.f, 2.f, 0.f});
 
-    const bool cycle_ok = !engine::scene::set_instance_parent(world, parent, grand, false)
-        && !engine::scene::set_instance_parent(world, child, child, false)
-        && engine::scene::instance_parent(world, child) == parent;
+    const bool cycle_ok = !engine::scene::set_instance_parent(*world, parent, grand, false)
+        && !engine::scene::set_instance_parent(*world, child, child, false)
+        && engine::scene::instance_parent(*world, child) == parent;
 
-    const engine::u32 extra = engine::scene::add_instance(world, {});
-    engine::scene::set_instance_model(world, extra, Mat4::translate({3.f, 4.f, 5.f}));
-    const Vec3 extra_before = origin_of(engine::scene::instance_world_model(world, extra));
-    const bool keep_ok = engine::scene::set_instance_parent(world, extra, parent, true)
-        && near3(origin_of(engine::scene::instance_world_model(world, extra)), extra_before);
+    const engine::u32 extra = engine::scene::add_instance(*world, {});
+    engine::scene::set_instance_model(*world, extra, Mat4::translate({3.f, 4.f, 5.f}));
+    const Vec3 extra_before = origin_of(engine::scene::instance_world_model(*world, extra));
+    const bool keep_ok = engine::scene::set_instance_parent(*world, extra, parent, true)
+        && near3(origin_of(engine::scene::instance_world_model(*world, extra)), extra_before);
 
     const bool unparent_ok = engine::scene::set_instance_parent(
-        world, child, engine::scene::kInvalidInstance, true)
-        && engine::scene::instance_parent(world, child) == engine::scene::kInvalidInstance
-        && near3(origin_of(engine::scene::instance_world_model(world, child)), {11.f, 0.f, 0.f});
+        *world, child, engine::scene::kInvalidInstance, true)
+        && engine::scene::instance_parent(*world, child) == engine::scene::kInvalidInstance
+        && near3(origin_of(engine::scene::instance_world_model(*world, child)), {11.f, 0.f, 0.f});
 
     const bool passed = compose_ok && cycle_ok && keep_ok && unparent_ok;
     char message[192];
@@ -239,67 +239,67 @@ bool run_scene_file_gate() {
         return std::abs(d.x) < 1.e-3f && std::abs(d.y) < 1.e-3f && std::abs(d.z) < 1.e-3f;
     };
 
-    engine::scene::World world{};
-    world.ambient = {0.16f, 0.17f, 0.21f};
-    world.sun.direction = {0.12f, 0.42f, 0.90f};
-    world.sun.color = {4.8f, 4.4f, 3.8f};
-    world.points[0].position = {-0.55f, 0.38f, 0.45f};
-    world.points[0].color = {1.f, 0.45f, 0.18f};
-    world.points[0].radius = 1.8f;
-    world.points[0].intensity = 2.2f;
+    auto world = std::make_unique<engine::scene::World>();
+    world->ambient = {0.16f, 0.17f, 0.21f};
+    world->sun.direction = {0.12f, 0.42f, 0.90f};
+    world->sun.color = {4.8f, 4.4f, 3.8f};
+    world->points[0].position = {-0.55f, 0.38f, 0.45f};
+    world->points[0].color = {1.f, 0.45f, 0.18f};
+    world->points[0].radius = 1.8f;
+    world->points[0].intensity = 2.2f;
     engine::scene::Material mat{};
     // A *valid* handle going in, so the round-trip assertion below is about
     // the writer discarding it rather than about a default that was never set.
     mat.albedo = engine::assets::make_texture_handle("/probe/albedo.png#srgb");
     mat.metallic = 0.1f;
     mat.roughness = 0.4f;
-    const engine::u32 mat_id = engine::scene::add_material(world, mat);
+    const engine::u32 mat_id = engine::scene::add_material(*world, mat);
 
     engine::scene::Instance parent{};
     parent.mesh = engine::assets::make_mesh_handle("/content/meshes/cartoon_husky.gltf");
     parent.material = mat_id;
     parent.model = Mat4::translate({10.f, 0.f, 0.f});
-    const engine::u32 parent_i = engine::scene::add_instance(world, parent);
-    engine::scene::set_instance_name(world, parent_i, "parent");
+    const engine::u32 parent_i = engine::scene::add_instance(*world, parent);
+    engine::scene::set_instance_name(*world, parent_i, "parent");
 
     engine::scene::Instance child{};
     child.mesh = parent.mesh;
     child.material = mat_id;
     child.model = Mat4::translate({1.f, 0.f, 0.f});
-    const engine::u32 child_i = engine::scene::add_instance(world, child);
-    engine::scene::set_instance_name(world, child_i, "child");
-    engine::scene::set_instance_parent(world, child_i, parent_i, false);
+    const engine::u32 child_i = engine::scene::add_instance(*world, child);
+    engine::scene::set_instance_name(*world, child_i, "child");
+    engine::scene::set_instance_parent(*world, child_i, parent_i, false);
 
     engine::scene::Instance ghost{};
     ghost.mesh = parent.mesh;
     ghost.model = Mat4::translate({0.f, 9.f, 0.f});
-    engine::scene::add_instance(world, ghost);
+    engine::scene::add_instance(*world, ghost);
 
     std::string text;
-    const bool wrote = engine::scene::write_world(world, text);
-    engine::scene::World loaded{};
-    const bool named_ok = wrote && engine::scene::read_world(text, loaded)
-        && loaded.instance_count == 2
-        && engine::scene::find_instance(loaded, "parent") != engine::scene::kInvalidInstance
-        && engine::scene::find_instance(loaded, "child") != engine::scene::kInvalidInstance;
+    const bool wrote = engine::scene::write_world(*world, text);
+    auto loaded = std::make_unique<engine::scene::World>();
+    const bool named_ok = wrote && engine::scene::read_world(text, *loaded)
+        && loaded->instance_count == 2
+        && engine::scene::find_instance(*loaded, "parent") != engine::scene::kInvalidInstance
+        && engine::scene::find_instance(*loaded, "child") != engine::scene::kInvalidInstance;
 
-    const engine::u32 loaded_parent = engine::scene::find_instance(loaded, "parent");
-    const engine::u32 loaded_child = engine::scene::find_instance(loaded, "child");
+    const engine::u32 loaded_parent = engine::scene::find_instance(*loaded, "parent");
+    const engine::u32 loaded_child = engine::scene::find_instance(*loaded, "child");
     const bool unnamed_ok = named_ok
-        && engine::scene::find_instance(loaded, "") == engine::scene::kInvalidInstance
-        && loaded.instance_count == 2;
+        && engine::scene::find_instance(*loaded, "") == engine::scene::kInvalidInstance
+        && loaded->instance_count == 2;
 
     const bool hierarchy_ok = named_ok
-        && engine::scene::instance_parent(loaded, loaded_child) == loaded_parent
-        && near3(origin_of(engine::scene::instance_world_model(loaded, loaded_child)),
+        && engine::scene::instance_parent(*loaded, loaded_child) == loaded_parent
+        && near3(origin_of(engine::scene::instance_world_model(*loaded, loaded_child)),
             {11.f, 0.f, 0.f});
 
     const bool lights_ok = named_ok
-        && near3(loaded.ambient, world.ambient)
-        && near3(loaded.sun.color, world.sun.color)
-        && near3(loaded.points[0].position, world.points[0].position)
-        && std::abs(loaded.points[0].intensity - 2.2f) < 1.e-3f
-        && loaded.material_count == 1;
+        && near3(loaded->ambient, world->ambient)
+        && near3(loaded->sun.color, world->sun.color)
+        && near3(loaded->points[0].position, world->points[0].position)
+        && std::abs(loaded->points[0].intensity - 2.2f) < 1.e-3f
+        && loaded->material_count == 1;
 
     // The material's scalars round-trip; its albedo handle deliberately does
     // not. `albedo == 2` used to stand here, asserting that an index survived
@@ -316,17 +316,17 @@ bool run_scene_file_gate() {
     // discarding it one edit away from vacuous.
     const bool material_ok = named_ok
         && mat.albedo.valid()
-        && !loaded.materials[0].albedo.valid()
-        && std::abs(loaded.materials[0].metallic - 0.1f) < 1.e-3f
-        && std::abs(loaded.materials[0].roughness - 0.4f) < 1.e-3f;
+        && !loaded->materials[0].albedo.valid()
+        && std::abs(loaded->materials[0].metallic - 0.1f) < 1.e-3f
+        && std::abs(loaded->materials[0].roughness - 0.4f) < 1.e-3f;
 
     const bool mesh_ok = named_ok
-        && loaded.instances[loaded_parent].mesh == parent.mesh
-        && loaded.instances[loaded_child].mesh.generation == parent.mesh.generation;
+        && loaded->instances[loaded_parent].mesh == parent.mesh
+        && loaded->instances[loaded_child].mesh.generation == parent.mesh.generation;
 
-    engine::scene::World rejected{};
-    const bool reject_ok = !engine::scene::read_world("nope", rejected)
-        && !engine::scene::read_world("solscene 99\nambient 0 0 0", rejected);
+    auto rejected = std::make_unique<engine::scene::World>();
+    const bool reject_ok = !engine::scene::read_world("nope", *rejected)
+        && !engine::scene::read_world("solscene 99\nambient 0 0 0", *rejected);
 
     const bool passed = named_ok && unnamed_ok && hierarchy_ok && lights_ok && material_ok
         && mesh_ok && reject_ok;
@@ -336,20 +336,20 @@ bool run_scene_file_gate() {
     // asserts on an invalid index, and a failed load is exactly when this
     // message matters.
     const engine::f32 child_x = named_ok
-        ? origin_of(engine::scene::instance_world_model(loaded, loaded_child)).x
+        ? origin_of(engine::scene::instance_world_model(*loaded, loaded_child)).x
         : 0.f;
     char message[320];
     std::snprintf(message, sizeof(message),
         "Scene file gate: named=%s instances=%u unnamed=%s hierarchy=%s child_x=%.2f "
         "lights=%s mesh=%s reject=%s wrote_valid=%s albedo_valid=%s metallic=%.2f "
         "roughness=%.2f (%s)",
-        named_ok ? "yes" : "no", loaded.instance_count, unnamed_ok ? "drop" : "kept",
+        named_ok ? "yes" : "no", loaded->instance_count, unnamed_ok ? "drop" : "kept",
         hierarchy_ok ? "yes" : "no", static_cast<double>(child_x),
         lights_ok ? "yes" : "no", mesh_ok ? "yes" : "no", reject_ok ? "yes" : "no",
         mat.albedo.valid() ? "yes" : "no",
-        loaded.materials[0].albedo.valid() ? "yes" : "no",
-        static_cast<double>(loaded.materials[0].metallic),
-        static_cast<double>(loaded.materials[0].roughness),
+        loaded->materials[0].albedo.valid() ? "yes" : "no",
+        static_cast<double>(loaded->materials[0].metallic),
+        static_cast<double>(loaded->materials[0].roughness),
         passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
@@ -368,7 +368,7 @@ bool run_scene_prefab_gate() {
         return std::abs(d.x) < 1.e-3f && std::abs(d.y) < 1.e-3f && std::abs(d.z) < 1.e-3f;
     };
 
-    engine::scene::World source{};
+    auto source = std::make_unique<engine::scene::World>();
     engine::scene::Material mat{};
     // A prefab is a World-to-World copy, not file I/O, so the handle really
     // must survive - unlike the scene-file gate above, where S5 discards it.
@@ -376,71 +376,71 @@ bool run_scene_prefab_gate() {
         = engine::assets::make_texture_handle("/probe/prefab.png#srgb");
     mat.albedo = prefab_albedo;
     mat.roughness = 0.35f;
-    const engine::u32 mat_id = engine::scene::add_material(source, mat);
+    const engine::u32 mat_id = engine::scene::add_material(*source, mat);
     engine::scene::Instance body{};
     body.mesh = engine::assets::make_mesh_handle("/content/meshes/cartoon_husky.gltf");
     body.material = mat_id;
     body.model = Mat4::translate({1.f, 0.f, 0.f});
-    const engine::u32 body_i = engine::scene::add_instance(source, body);
-    engine::scene::set_instance_name(source, body_i, "body");
+    const engine::u32 body_i = engine::scene::add_instance(*source, body);
+    engine::scene::set_instance_name(*source, body_i, "body");
     engine::scene::Instance head{};
     head.mesh = body.mesh;
     head.material = mat_id;
     head.model = Mat4::translate({0.f, 2.f, 0.f});
-    const engine::u32 head_i = engine::scene::add_instance(source, head);
-    engine::scene::set_instance_name(source, head_i, "head");
-    engine::scene::set_instance_parent(source, head_i, body_i, false);
+    const engine::u32 head_i = engine::scene::add_instance(*source, head);
+    engine::scene::set_instance_name(*source, head_i, "head");
+    engine::scene::set_instance_parent(*source, head_i, body_i, false);
     engine::scene::Instance other{};
     other.model = Mat4::translate({9.f, 0.f, 0.f});
-    const engine::u32 other_i = engine::scene::add_instance(source, other);
-    engine::scene::set_instance_name(source, other_i, "other");
+    const engine::u32 other_i = engine::scene::add_instance(*source, other);
+    engine::scene::set_instance_name(*source, other_i, "other");
 
-    engine::scene::World fragment{};
-    engine::scene::World miss{};
-    const bool extract_ok = engine::scene::extract_prefab(source, "body", fragment)
-        && fragment.instance_count == 2
-        && engine::scene::find_instance(fragment, "body") != engine::scene::kInvalidInstance
-        && engine::scene::find_instance(fragment, "head") != engine::scene::kInvalidInstance
-        && engine::scene::find_instance(fragment, "other") == engine::scene::kInvalidInstance
-        && !engine::scene::extract_prefab(source, "nope", miss);
+    auto fragment = std::make_unique<engine::scene::World>();
+    auto miss = std::make_unique<engine::scene::World>();
+    const bool extract_ok = engine::scene::extract_prefab(*source, "body", *fragment)
+        && fragment->instance_count == 2
+        && engine::scene::find_instance(*fragment, "body") != engine::scene::kInvalidInstance
+        && engine::scene::find_instance(*fragment, "head") != engine::scene::kInvalidInstance
+        && engine::scene::find_instance(*fragment, "other") == engine::scene::kInvalidInstance
+        && !engine::scene::extract_prefab(*source, "nope", *miss);
 
     std::string text;
-    const bool file_ok = extract_ok && engine::scene::write_world(fragment, text);
+    const bool file_ok = extract_ok && engine::scene::write_world(*fragment, text);
 
-    engine::scene::World dest{};
-    const engine::u32 a = engine::scene::instantiate_prefab(dest, fragment,
+    auto dest = std::make_unique<engine::scene::World>();
+    const engine::u32 a = engine::scene::instantiate_prefab(*dest, *fragment,
         Mat4::translate({10.f, 0.f, 0.f}), "a_");
-    const engine::u32 b = engine::scene::instantiate_prefab(dest, text,
+    const engine::u32 b = engine::scene::instantiate_prefab(*dest, text,
         Mat4::translate({0.f, 0.f, 5.f}), "b_");
-    const engine::u32 a_body = engine::scene::find_instance(dest, "a_body");
-    const engine::u32 a_head = engine::scene::find_instance(dest, "a_head");
-    const engine::u32 b_body = engine::scene::find_instance(dest, "b_body");
+    const engine::u32 a_body = engine::scene::find_instance(*dest, "a_body");
+    const engine::u32 a_head = engine::scene::find_instance(*dest, "a_head");
+    const engine::u32 b_body = engine::scene::find_instance(*dest, "b_body");
     const bool spawn_ok = file_ok && a != engine::scene::kInvalidInstance
         && b != engine::scene::kInvalidInstance && a_body == a
-        && dest.instance_count == 4
-        && engine::scene::instance_parent(dest, a_head) == a_body
-        && engine::scene::instance_parent(dest, engine::scene::find_instance(dest, "b_head"))
+        && dest->instance_count == 4
+        && engine::scene::instance_parent(*dest, a_head) == a_body
+        && engine::scene::instance_parent(*dest, engine::scene::find_instance(*dest, "b_head"))
             == b_body;
 
     const bool compose_ok = spawn_ok
-        && near3(origin_of(engine::scene::instance_world_model(dest, a_body)), {11.f, 0.f, 0.f})
-        && near3(origin_of(engine::scene::instance_world_model(dest, a_head)), {11.f, 2.f, 0.f})
-        && near3(origin_of(engine::scene::instance_world_model(dest, b_body)), {1.f, 0.f, 5.f});
+        && near3(origin_of(engine::scene::instance_world_model(*dest, a_body)), {11.f, 0.f, 0.f})
+        && near3(origin_of(engine::scene::instance_world_model(*dest, a_head)), {11.f, 2.f, 0.f})
+        && near3(origin_of(engine::scene::instance_world_model(*dest, b_body)), {1.f, 0.f, 5.f});
 
     const bool prefix_ok = spawn_ok
-        && dest.materials[0].albedo == prefab_albedo
-        && dest.material_count == 2
-        && dest.instances[a_body].mesh == body.mesh;
+        && dest->materials[0].albedo == prefab_albedo
+        && dest->material_count == 2
+        && dest->instances[a_body].mesh == body.mesh;
 
-    engine::scene::World packed{};
+    auto packed = std::make_unique<engine::scene::World>();
     for (engine::u32 i = 0; i < engine::scene::kMaxInstances; ++i) {
-        const engine::u32 idx = engine::scene::add_instance(packed, {});
+        const engine::u32 idx = engine::scene::add_instance(*packed, {});
         char name[12];
         std::snprintf(name, sizeof(name), "n%u", i);
-        engine::scene::set_instance_name(packed, idx, name);
+        engine::scene::set_instance_name(*packed, idx, name);
     }
-    const bool full_ok = engine::scene::instantiate_prefab(packed, fragment, Mat4::identity(), "x_")
-        == engine::scene::kInvalidInstance;
+    const bool full_ok = engine::scene::instantiate_prefab(
+        *packed, *fragment, Mat4::identity(), "x_") == engine::scene::kInvalidInstance;
 
     const bool passed = extract_ok && spawn_ok && compose_ok && prefix_ok && full_ok;
     char message[224];

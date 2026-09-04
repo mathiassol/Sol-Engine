@@ -114,11 +114,16 @@ declines.
    `gates/gates.hpp` and called from the sequence in `main.cpp` (see the gate
    protocol in CLAUDE.md), then run with `ENGINE_GPU_DEBUG=1`.
 
-Budget note: pass constants come from a **1 MiB frame ring** (per
+Budget note: pass constants come from an **8 MiB frame ring** (per
 frame-in-flight slot). Since instanced draws they are per *batch* (1,024 bytes
 across shadow + forward + motion), and per drawn instance the frame spends only
 the 144-byte `InstanceData`, uploaded once for the whole frame in
-`RenderGraph::execute` — roughly 7,000 drawn instances. A new **per-draw**
+`RenderGraph::execute`. Which of the two dominates is the scene's choice, and
+the gap is two orders of magnitude: batch well and the 144 bytes rule, so a
+full `kMaxInstances` costs 442 KB and the ring is not the ceiling at all; give
+every object its own mesh or material and it is one batch each at 1,168 bytes
+— about **7,100 objects**, which is the case `run_frame_ring_budget_gate`
+budgets for, holding 15% back. A new **per-draw**
 constant buffer would put the old per-instance cost back; prefer a single
 per-pass CBV, or a field on `InstanceData`, over growing `FrameConstants`
 (336 bytes) or adding a third upload of the instance array. Exhaustion drops

@@ -571,8 +571,11 @@ bool run_parity_frames_gate(engine::rhi::IDevice& device,
     const bool last_frame_won = read_ok && probe[0] == kTints[kFrames - 1];
     const bool ring_served = ring_hits == kFrames;
     // The capacity is a backend constant and must be the same on both, because
-    // the frame-ring budget gate compares headroom against it.
-    const bool capacity_ok = after.capacity_bytes == 1024u * 1024u;
+    // the frame-ring budget gate compares headroom against it. The literal is
+    // the one hand-kept copy of kFrameRingBytes, which is private to each
+    // backend - so a ring change means device_d3d12.cpp, device_vulkan.hpp and
+    // this line, and this gate is what fails if the third is forgotten.
+    const bool capacity_ok = after.capacity_bytes == 8u * 1024u * 1024u;
     const bool peak_moved = after.peak_bytes >= before.peak_bytes && after.peak_bytes > 0;
     const bool no_exhaustion = after.exhausted_frames == before.exhausted_frames;
     const bool passed = ready && read_ok && last_frame_won && ring_served && capacity_ok

@@ -92,10 +92,17 @@ to be undone. The `vision-gap` invariant checks every row, so this table cannot
 silently go stale — when a contradiction is resolved, the check fails until the
 row is removed.
 
+A number in that table is a **limit, not a hard wall** — the arrays can be made
+bigger, and the instance and material caps have been, to import a scene the
+engine was not built for. Raising one does not resolve its row: the
+contradiction is that there is a fixed ceiling to name at all, not that the
+ceiling is low. Nor is raising one free — each cap is load-bearing somewhere
+else, and the cost has to be paid in the same commit.
+
 | Contradiction | Lives in | Symbol |
 |---|---|---|
-| 512 instances per world | `packages/scene/include/engine/scene/world.hpp` | `kMaxInstances` |
-| 16 materials per world | `packages/scene/include/engine/scene/world.hpp` | `kMaxMaterials` |
+| 3,072 instances per world | `packages/scene/include/engine/scene/world.hpp` | `kMaxInstances` |
+| 128 materials per world | `packages/scene/include/engine/scene/world.hpp` | `kMaxMaterials` |
 | 4 point lights | `packages/scene/include/engine/scene/world.hpp` | `kMaxPointLights` |
 | 31-character entity names | `packages/scene/include/engine/scene/world.hpp` | `kMaxNameChars` |
 | 256 rigid bodies | `packages/physics/include/engine/physics/physics.hpp` | `kMaxBodies` |

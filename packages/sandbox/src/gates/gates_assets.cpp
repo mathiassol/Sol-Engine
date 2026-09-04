@@ -95,22 +95,22 @@ bool run_parser_fuzz_gate() {
     // sabotaged reject deep in the keyword loop the gate stayed green, which is
     // how that was discovered. Four materials and eight instances give the
     // mutations somewhere to land.
-    engine::scene::World world{};
+    auto world = std::make_unique<engine::scene::World>();
     for (engine::u32 m = 0; m < 4; ++m) {
         engine::scene::Material material{};
         material.metallic = 0.25f * static_cast<engine::f32>(m);
         material.roughness = 1.f - 0.2f * static_cast<engine::f32>(m);
-        engine::scene::add_material(world, material);
+        engine::scene::add_material(*world, material);
     }
     for (engine::u32 n = 0; n < 8; ++n) {
         engine::scene::Instance instance{};
         instance.material = n % 4;
         instance.model = engine::math::Mat4::translate(
             {static_cast<engine::f32>(n), 0.f, 0.f});
-        engine::scene::add_instance(world, instance);
+        engine::scene::add_instance(*world, instance);
     }
     std::string scene_text;
-    const bool seeded_scene = engine::scene::write_world(world, scene_text);
+    const bool seeded_scene = engine::scene::write_world(*world, scene_text);
 
     engine::assets::PakEntry entry{};
     entry.name = "/content/probe.bin";
@@ -179,9 +179,10 @@ bool run_parser_fuzz_gate() {
         } else if (which == 2) {
             std::vector<engine::u8> bytes(scene_text.begin(), scene_text.end());
             mutate(bytes);
-            engine::scene::World out{};
+            auto out = std::make_unique<engine::scene::World>();
             ok = engine::scene::read_world(
-                std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), out);
+                std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()),
+                *out);
         } else {
             std::vector<engine::u8> bytes = pak_blob;
             mutate(bytes);

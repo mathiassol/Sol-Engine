@@ -35,12 +35,14 @@ constexpr usize kBufferAlign = 256;
 //                                     ---------------
 //                                      1024 bytes per batch
 // plus a fixed ~3 KB for sky, bloom (5 down + 4 up), TAA, tonemap and overlay,
-// plus 576 bytes per debug AABB when F4 is on. Batch count is bounded by
-// distinct material/mesh keys, not by scene size, so instances dominate: 1 MiB
-// covers roughly 7,000 drawn instances with every pass active - against 800
-// before batching, which was the tightest ceiling in the engine. Three slots
-// costs 3 MiB of upload heap.
-constexpr usize kFrameRingBytes = 1024 * 1024;
+// plus 576 bytes per debug AABB when F4 is on. Which term dominates is the
+// scene's choice, and the gap is two orders of magnitude: batching collapses
+// the per-batch cost and leaves only the 144 bytes, but two different meshes
+// cannot share a batch, so a scene of distinct objects pays 1,168 each. 8 MiB
+// covers about 7,100 of those, and three slots cost 24 MiB of upload heap.
+// run_frame_ring_budget_gate budgets that one-batch-per-instance case and goes
+// red before the ring can actually run dry.
+constexpr usize kFrameRingBytes = 8 * 1024 * 1024;
 constexpr usize kFrameRingBytesPerInstance = 144;
 
 // One shader-visible descriptor per SRV bind per frame.

@@ -27,7 +27,7 @@ inline constexpr rhi::Format kFormat = rhi::Format::RGBA16_FLOAT;
 // which reads as "this object did not move", so TAA reprojects it wrongly and
 // motion blur vanishes. No crash, no warning. scene-render static_asserts
 // the coupling; run_instance_capacity_gate proves it at runtime.
-inline constexpr u32 kHistorySlots = 512;
+inline constexpr u32 kHistorySlots = 3072;
 inline constexpr f32 kUvScaleX = 0.5f;
 inline constexpr f32 kUvScaleY = -0.5f;
 
