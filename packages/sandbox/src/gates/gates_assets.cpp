@@ -1,6 +1,7 @@
 #include "../sandbox_common.hpp"
 
 #include <engine/assets/cooked.hpp>
+#include <engine/assets/gpu/texture_store.hpp>
 #include <engine/assets/pak.hpp>
 #include <engine/scene/scene_file.hpp>
 
@@ -1190,6 +1191,65 @@ bool run_aabb_transform_gate(const engine::assets::MeshData& mesh) {
         engine::LogChannel::Assets,
         passed ? "AABB transform gate: +X shift (pass)"
                : "AABB transform gate: +X shift (FAIL)");
+    return passed;
+}
+
+bool run_texture_store_gate(engine::rhi::IDevice& device) {
+    using engine::assets::gpu::GpuTextureStore;
+
+    // Two 2x2 images, distinguishable so a wrong handle is visible.
+    engine::assets::ImageData red{};
+    red.width = 2;
+    red.height = 2;
+    red.rgba.assign(2 * 2 * 4, 0);
+    for (engine::usize i = 0; i < 4; ++i) {
+        red.rgba[i * 4 + 0] = 255;
+        red.rgba[i * 4 + 3] = 255;
+    }
+    engine::assets::ImageData blue = red;
+    for (engine::usize i = 0; i < 4; ++i) {
+        blue.rgba[i * 4 + 0] = 0;
+        blue.rgba[i * 4 + 2] = 255;
+    }
+
+    GpuTextureStore store;
+    // Six references over three distinct paths - the sharing a real scene has.
+    const char* refs[] = {"/a.png", "/b.png", "/a.png", "/c.png", "/b.png", "/a.png"};
+    engine::assets::TextureHandle handles[6]{};
+    for (engine::u32 i = 0; i < 6; ++i) {
+        handles[i] = store.store(device, refs[i], (i % 2) == 0 ? red : blue);
+    }
+    const engine::u32 references = 6;
+    const engine::u32 distinct = 3;
+    const engine::u32 uploaded = static_cast<engine::u32>(store.size());
+
+    // The assertion the store exists for. A store without dedupe uploads six
+    // and renders identically, so only this count can tell the difference.
+    const bool deduped = uploaded == distinct;
+
+    // The same path must hand back the same handle, or callers cannot share.
+    const bool stable = handles[0] == handles[2] && handles[0] == handles[5]
+        && handles[1] == handles[4];
+
+    // Every live handle resolves.
+    bool resolves = true;
+    for (const auto& h : handles) {
+        resolves = resolves && store.get(h) != nullptr;
+    }
+
+    // A handle stale after unload is detected, not silently reused.
+    const bool unloaded = store.unload(handles[0]);
+    const bool stale_detected = store.get(handles[0]) == nullptr;
+
+    const bool passed = deduped && stable && resolves && unloaded && stale_detected;
+    char message[224];
+    std::snprintf(message, sizeof(message),
+        "Texture store gate: refs=%u distinct=%u uploaded=%u stable=%s resolves=%s "
+        "unloaded=%s stale_detected=%s (%s)",
+        references, distinct, uploaded, stable ? "yes" : "no", resolves ? "yes" : "no",
+        unloaded ? "yes" : "no", stale_detected ? "yes" : "no", passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Assets, message);
     return passed;
 }
 

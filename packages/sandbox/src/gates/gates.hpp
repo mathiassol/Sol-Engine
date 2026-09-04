@@ -49,6 +49,8 @@ bool run_aabb_gate(const engine::assets::MeshData& mesh);
 
 bool run_aabb_transform_gate(const engine::assets::MeshData& mesh);
 
+bool run_texture_store_gate(engine::rhi::IDevice& device);
+
 // ── core ──
 bool run_gate_registry_gate();
 

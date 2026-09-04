@@ -895,6 +895,9 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     if (!run_mesh_reload_gate(*device, cube_data) && fail_on_gate) {
         return false;
     }
+    if (!run_texture_store_gate(*device) && fail_on_gate) {
+        return false;
+    }
     if (!run_two_draw_items_gate() && fail_on_gate) {
         return false;
     }
