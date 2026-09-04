@@ -1194,6 +1194,13 @@ would surface here and nowhere else.
 
 - [ ] **Step 3: Flip the rows**
 
+The two demo-scene constants `kHuskyVariantCount` and `kFloorAlbedoIndex` moved
+into `engine::scene_render` with the bridge in Task 2, because the hardcoded
+albedo branch still read them. Task 3 Step 4 deletes that branch — confirm they
+went back to the sandbox with it. An engine package holding two constants about
+a demo husky is exactly the kind of leftover a pure move is allowed to create
+and the next task is obliged to clean up.
+
 In `docs/ENGINE_MAP.md`, mark **Renderer #7** ("Materials as data") — it is
 currently **Done** describing the scalar-only material, which this work
 supersedes. Reword it to say materials carry texture references, keeping it
@@ -1213,11 +1220,30 @@ the caps rose without needing `Scene #12`, because `World` was already
 heap-held; and the measured result on the alley — the instance, material and
 texture counts it actually loaded.
 
-Do-not: do not key the texture store on anything but the resolved path; do not
+Do-not: do not key the texture store on the resolved path alone — the colour
+space is part of the key, because one image legitimately serves as an sRGB
+albedo and a linear mask and a path-only key hands the second caller the first
+one's format with the dedupe count still reading as correct; do not
 remove the baked glTF path; do not grow `scene_import.cpp`, which `document`
 replaces; do not raise `kMaxInstances` without moving `kHistorySlots`.
 
-- [ ] **Step 5: Recount last, verify, commit**
+- [ ] **Step 5: Answer decision A2 on the service**
+
+The service owns the decision list, not this repo (see CLAUDE.md's "The
+management service"). Task 2 answered **A2** — the scene→renderer bridge is no
+longer application code — so record it there rather than leaving the answer
+implicit in a commit subject:
+
+```powershell
+pwsh -NoProfile -File tools/aim.ps1 decisions answer A2 `
+    --note "..." --ref packages/scene-render
+```
+
+`docs/analysis/DECISIONS.md:108` still describes A2 in the present tense and
+names the deleted `packages/sandbox/src/world_extract.cpp`. Update that entry
+too, since it is the local rescued copy and not a dated snapshot.
+
+- [ ] **Step 6: Recount last, verify, commit**
 
 Run the invariants, update the LOC sentence from `roadmap-audit`'s recount, and
 re-run until `all 20 checks passed`.
@@ -1232,11 +1258,18 @@ git push
 
 ## Definition of done
 
-- [ ] `run_texture_store_gate` seen red at `uploaded=6`, then green at `uploaded=3`
+- [x] `run_texture_store_gate` seen red at `uploaded=8 resident=4`, then green at
+      `uploaded=4`. The strengthened gate counts *uploads*, not residency — the
+      original `uploaded=6`/`3` pair measured live entries, which a store that
+      re-uploads over a live entry satisfies while making eight upload calls
 - [ ] `run_gltf_node_gate` seen red at `nodes=0`, then green
 - [ ] The existing `run_material_gate` seen red at `normal_travels=no` before the
       bridge stopped pinning `normal_map` to the default
-- [ ] Task 2's before/after gate output diffed with **no differences**
+- [x] Task 2's before/after gate output diffed with no differences **outside the
+      minidump byte count and the async-compile timings**. Those two lines differ
+      between two consecutive runs of one unchanged binary, so establish that
+      baseline noise floor first and mask exactly those fields — a mask chosen
+      without proving it hides only noise would hide real drift too
 - [ ] The husky demo still renders correctly, checked visually, not just gated
 - [ ] The alley loads and is walkable, with its counts recorded
 - [ ] `--gates` exits `0` on Debug `sandbox`, Release `game`, and `--rhi vulkan`
