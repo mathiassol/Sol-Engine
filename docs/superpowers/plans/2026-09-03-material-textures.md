@@ -71,7 +71,8 @@ tabs, 100 columns, final newline, no BOM.
 | A new gate's name must be checked against the existing ones | `run_material_gate` was already taken by a renderer gate that proves roughness and opacity travel to `DrawItem`. `gate-registry` would have failed on the duplicate, and two `"Material gate:"` lines would have made `--gates` ambiguous |
 | An assertion about a field belongs where the road is already checked | The normal-map check went into the existing `run_material_gate` beside roughness and opacity rather than into the new store gate, because that gate already extracts and compares `DrawItem`s. Asserting `mat.normal.valid()` on a bare struct proves only that the field exists |
 | `TextureHandle` mirrors `MeshHandle` exactly | Same `{u64 id, u32 generation}` shape, same `fnv1a64` keying, so a stale handle after `unload` is detectable rather than silently reused |
-| Caps rise; `Scene #12` is **not** triggered | `ForwardDemo` is `unique_ptr`-held in `SandboxState`, so `World` is already on the heap. A 370 KB `World` is fine |
+| Caps rise in **Task 5**, not Task 3, and `Scene #12` is still not triggered | The original reasoning — `ForwardDemo` is `unique_ptr`-held so `World` is already on the heap — was true of the *demo* `World` and only of it. 19 more are function-scope stack locals in the gate files, and at 3072 three gate functions overflow the 1 MiB stack. Task 5 Step 0 heap-holds those locals first. Heap-*holding* a local is not `Scene #12`, which heap-backs the *type* |
+| The demo floor checker stays `ColorSpace::Linear` | It is created `RGBA8_UNORM` today (`main.cpp:1003`) and its texel values were chosen to look right sampled that way. Relabelling a procedural pattern as sRGB darkens the demo's midtones without fixing anything — the sRGB rule is about *authored* colour. Deliberate, documented exception |
 
 ---
 
@@ -569,7 +570,6 @@ violate the `(Category #N)` convention.
 
 **Files:**
 - Modify: `packages/scene/include/engine/scene/world.hpp`
-- Modify: `packages/renderer/include/engine/renderer/motion.hpp`
 - Modify: `packages/scene-render/src/extract.cpp`
 - Modify: `packages/sandbox/src/main.cpp`, `sandbox_common.hpp`
 - Modify: `packages/sandbox/src/gates/gates_renderer.cpp` (the existing `run_material_gate`)
@@ -672,22 +672,19 @@ struct Material {
 };
 ```
 
-and raise two caps:
+**Leave the caps alone.** An earlier draft of this task also raised
+`kMaxInstances` to 3072 and `kMaxMaterials` to 128. That belongs to Task 5,
+which is the only place the plan actually reads them (the importer's clamps),
+and putting it here would have overflowed the stack — see Task 5 Step 0.
 
-```cpp
-constexpr u32 kMaxInstances = 3072;
-constexpr u32 kMaxMaterials = 128;
-```
+Nothing in Task 3 or Task 4 needs a bigger cap: the demo scene has five
+materials and a few dozen instances. What Task 3 *does* grow is `Material`
+itself, 16 → 64 bytes, which at the current 16-material cap adds 768 bytes to
+`World`. That is free.
 
-In `packages/renderer/include/engine/renderer/motion.hpp`:
-
-```cpp
-inline constexpr u32 kHistorySlots = 3072;
-```
-
-`kHistorySlots` must move with `kMaxInstances` — the `static_assert` in the
-bridge enforces it, and without it instances past the slot count silently get
-`prev_model == model` and TAA reprojects them wrongly.
+`packages/renderer/include/engine/renderer/motion.hpp` is therefore **not**
+touched by this task either — `kHistorySlots` moves with `kMaxInstances`, and
+`kMaxInstances` is not moving yet.
 
 - [ ] **Step 4: Make the bridge read the store**
 
@@ -761,8 +758,17 @@ materials. Create the three built-in defaults — a 1×1 white, a flat normal
 `(128,128,255,255)`, and a 1×1 metal-rough — through the same store.
 
 `store()` takes a `ColorSpace` and has no default, so every one of those calls
-names it: the five albedos and the 1×1 white are `ColorSpace::Srgb`; the flat
-normal and the metal-rough are `ColorSpace::Linear`.
+names it: the four husky albedos and the 1×1 white are `ColorSpace::Srgb`; the
+flat normal and the metal-rough are `ColorSpace::Linear`.
+
+**The floor checker is the exception: `ColorSpace::Linear`.** It is created
+`RGBA8_UNORM` today (`main.cpp:1003`) and its texels were picked to look right
+sampled that way, so calling it sRGB would darken the demo floor's midtones —
+a visible change to the demo that fixes nothing. The sRGB rule
+(`rhi/resources.hpp:12-15`) is about authored colour, not procedurally
+generated patterns. Put that reason in a comment at the call, because
+`ColorSpace::Linear` on something named `albedo` will otherwise read as the
+bug Task 1's review caught.
 
 - [ ] **Step 6: Build and watch it pass**
 
@@ -780,22 +786,22 @@ look at it. A green gate here does not prove the demo scene survived the
 material change, because the gate probes the material table it is handed and
 Step 5 rewrites how that table is filled.
 
-- [ ] **Step 7: Update `VISION.md` — the `vision-gap` check demands it**
+- [ ] **Step 7: `VISION.md` needs nothing from this task**
 
-Two of the six contradictions shrink. `vision-gap` fails when a named symbol is
-gone, and `kMaxInstances`/`kMaxMaterials` still exist — but their stated values
-are now wrong. Update the two rows' descriptions to the new numbers, and say in
-the surrounding text that the cap is now a limit rather than a hard wall.
+The two cap rows are still accurate, because this task no longer changes the
+caps. They are updated in Task 5, where the numbers actually move. `vision-gap`
+fails when a named symbol is *gone*, and both still exist with their stated
+values — so it stays green without an edit here.
 
-Do **not** delete the rows: the caps still exist, and the vision wants them
-gone entirely.
+Check that this is still true rather than assuming it: run the invariants and
+read `vision-gap`'s line.
 
 - [ ] **Step 8: Recount and commit**
 
 Invariants and LOC recount as in Task 1.
 
 ```bash
-git add packages/scene packages/renderer/include/engine/renderer/motion.hpp packages/scene-render packages/sandbox docs/ROADMAP.md VISION.md
+git add packages/scene packages/scene-render packages/sandbox docs/ROADMAP.md
 git commit -m "feat(scene): materials reference their own albedo, normal and metal-rough"
 git push
 ```
@@ -1007,6 +1013,70 @@ git push
 
 ## Task 5: Import the alley
 
+- [ ] **Step 0: Raise the caps, and pay for them**
+
+This step was Task 3's until it was measured. `World` is a fixed-array POD
+whose size scales with `kMaxInstances` — and **19 `scene::World` objects are
+function-scope stack locals** in the gate files, at a 1 MiB default stack with
+no `/STACK` anywhere in the tree.
+
+Measured, compiled against the real headers:
+
+| | `Material` | `NameTable` | `World` |
+|---|---|---|---|
+| 512 / 16 | 16 | 16,420 | **66,136** |
+| 512 / 16, Task 3's `Material` | 64 | 16,420 | **66,904** |
+| 3072 / 128 | 64 | 98,340 | **401,752** |
+
+`NameTable` is `chars[kMaxInstances + 1][32]`, so it scales with the instance
+cap too — a third of the growth is names.
+
+Three gate functions overflow outright at 3072:
+
+| Function | `World` locals | Stack |
+|---|---|---|
+| `run_scene_prefab_gate` (`gates_scene.cpp:321`) | 5 | **1.92 MiB** |
+| `run_material_gate` (`gates_renderer.cpp:309`) | 3, +1 from Task 3 | **1.53 MiB** |
+| `run_scene_file_gate` (`gates_scene.cpp:230`) | 3 | **1.15 MiB** |
+
+So: **heap-hold every `World` local in the gate files first**, with
+`auto w = std::make_unique<engine::scene::World>();`, then raise the caps.
+
+```cpp
+constexpr u32 kMaxInstances = 3072;
+constexpr u32 kMaxMaterials = 128;
+```
+
+and in `packages/renderer/include/engine/renderer/motion.hpp`:
+
+```cpp
+inline constexpr u32 kHistorySlots = 3072;
+```
+
+`kHistorySlots` must move with `kMaxInstances` — the `static_assert` in the
+bridge enforces it, and without it instances past the slot count silently get
+`prev_model == model` and TAA reprojects them wrongly.
+
+**This is not `Scene #12`.** That row is *"Heap-backed `World`, past the fixed
+512 array"* — changing the **type** so its arrays are heap-allocated, which
+costs the trivially-copyable property and the compile-time bound that protects
+`read_world`, and which is blocked on `Scene #11`. Heap-*holding* a local
+changes no type and loses neither property; the `World` on the heap is the same
+fixed-array POD it was on the stack. Do not touch `World`'s definition beyond
+the two constants.
+
+Order matters, and the order gives you a real red for free: raise the caps
+**before** heap-holding and `--gates` dies with a stack overflow rather than a
+`FAIL` line. Watch that once if you like — it is the failure a green pass count
+cannot show — but land the heap-holding first.
+
+Then update **`VISION.md`**: `vision-gap` fails when a named symbol is gone,
+and `kMaxInstances`/`kMaxMaterials` still exist but their stated values are now
+wrong. Update the two rows' descriptions, and say in the surrounding text that
+the cap is a limit rather than a hard wall. Do **not** delete the rows — the
+caps still exist and the vision wants them gone entirely.
+
+
 **Files:**
 - Create: `tools/downscale-textures.ps1`
 - Create: `packages/sandbox/src/scene_import.cpp`, `scene_import.hpp`
@@ -1184,7 +1254,7 @@ default cvar leaves it selected.
 - [ ] **Step 5: Recount and commit**
 
 ```bash
-git add tools/downscale-textures.ps1 packages/sandbox .gitignore docs/ROADMAP.md
+git add tools/downscale-textures.ps1 packages/scene packages/renderer packages/sandbox     .gitignore docs/ROADMAP.md VISION.md
 git commit -m "feat(sandbox): import a glTF scene into the world behind r.scene"
 git push
 ```
