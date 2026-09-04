@@ -88,8 +88,8 @@ tabs, 100 columns, final newline, no BOM.
 | `packages/scene-render/CMakeLists.txt` | New package |
 | `packages/scene-render/include/engine/scene_render/extract.hpp` | The bridge's public surface |
 | `packages/scene-render/src/extract.cpp` | The bridge, moved from the sandbox |
-| `packages/assets-gltf/include/engine/assets/gltf/gltf_loader.hpp` | `GltfNode`, `GltfSceneResult`, `load_scene` |
-| `packages/assets-gltf/src/gltf_loader.cpp` | The node walk |
+| `packages/assets-gltf/include/engine/assets/gltf/mesh_loader_gltf.hpp` | `GltfNode`, `GltfSceneResult`, `load_scene` |
+| `packages/assets-gltf/src/mesh_loader_gltf.cpp` | The node walk |
 | `packages/sandbox/src/scene_import.cpp` | glTF → `World`. Temporary, replaced by `document` |
 | `packages/sandbox/src/gates/gates_assets.cpp` | `run_texture_store_gate` |
 | `tools/downscale-textures.ps1` | Offline resample. No engine change |
@@ -864,64 +864,109 @@ git push
 ## Task 4: A glTF node list
 
 **Files:**
-- Modify: `packages/assets-gltf/include/engine/assets/gltf/gltf_loader.hpp`
-- Modify: `packages/assets-gltf/src/gltf_loader.cpp`
+- Modify: `packages/assets-gltf/include/engine/assets/gltf/mesh_loader_gltf.hpp`
+- Modify: `packages/assets-gltf/src/mesh_loader_gltf.cpp`
 - Modify: `packages/sandbox/src/gates/gates_assets.cpp`
+
+> Earlier drafts of this task called these files `gltf_loader.{hpp,cpp}` and
+> named four helper functions — `parse_and_validate`, `unpack_mesh`,
+> `read_material`, `world_transform_of` — **none of which exist**. The real
+> names are below. Read `mesh_loader_gltf.cpp` before writing anything.
 
 - [ ] **Step 1: Write the failing gate**
 
-Add a second gate to `gates_assets.cpp`. It uses the husky, which the sandbox
-already mounts, and asserts the node path returns what the baked path hides:
+Add a second gate to `gates_assets.cpp`, built on the **synthesized-probe
+helpers already in that file** — `gltf_with_nodes(nodes_json, roots)` writes a
+minimal in-memory glTF, and `load_node_probe(name, json, out)` loads it through
+a real loader. `run_gltf_node_transform_gate` is built the same way; copy its
+shape.
+
+**Not the husky.** An earlier draft loaded the husky and asserted "at least one
+transform differs from identity". Whether the husky has an off-origin node is a
+fact about its *authoring*, not about this loader — if it happens to be one
+node at the origin, that assertion can never go green and the gate is
+unshippable. A synthesized probe puts the transform where the gate needs it and
+makes every count exact instead of "greater than zero".
+
+You will need a `load_scene_probe` beside `load_node_probe`, identical except
+it calls `load_scene` and takes a `GltfSceneResult&`.
 
 ```cpp
-bool run_gltf_node_gate(engine::assets::gltf::IGltfLoader& loader,
-    std::string_view husky_path) {
-    engine::assets::gltf::GltfSceneResult scene{};
-    const bool loaded = loader.load_scene(husky_path, scene);
+bool run_gltf_node_gate() {
+    using engine::assets::gltf::GltfSceneResult;
 
-    // The baked path welds every node into one mesh. The node path must not:
-    // a scene with N drawable nodes has to come back as N entries, each with
-    // its own transform, or nothing downstream can cull or move an object.
+    // Two nodes referencing one mesh, the second translated. This is the case
+    // the two paths disagree about: the baked path welds both placements into
+    // one MeshData of six vertices, and the node path must return one mesh of
+    // three with two transforms.
+    GltfSceneResult scene{};
+    const bool loaded = load_scene_probe("nodes",
+        gltf_with_nodes("[ { \"mesh\": 0 }, { \"mesh\": 0, \"translation\": [5, 0, 0] } ]",
+            "0, 1"), scene);
+
     const engine::u32 nodes = static_cast<engine::u32>(scene.nodes.size());
-    const bool has_nodes = nodes > 0;
+    const engine::u32 meshes = static_cast<engine::u32>(scene.meshes.size());
+    // Two drawable nodes over one unpacked mesh. The second half is the dedupe
+    // the alley needs - 1,254 meshes behind 2,806 nodes - and unpacking per
+    // node instead would pass the node count while tripling the memory.
+    const bool counts_ok = nodes == 2 && meshes == 1;
 
-    // Every node must name a mesh that exists in the result.
+    // Every node names a mesh and a material that exist. Vacuously true on an
+    // empty result, which is why counts_ok is separate and comes first.
     bool refs_ok = true;
     for (const auto& node : scene.nodes) {
-        refs_ok = refs_ok && node.mesh < scene.meshes.size();
+        refs_ok = refs_ok && node.mesh < meshes && node.material < scene.materials.size();
     }
 
-    // At least one transform must differ from identity, or transforms are
-    // still being baked into the vertices and the node list is decorative.
-    //
-    // Mat4 has no operator!=, so compare the translation column directly. A
-    // node placed anywhere but the origin has a non-zero cols[3].
-    bool any_transform = false;
-    for (const auto& node : scene.nodes) {
-        const engine::math::Vec4& t = node.transform.cols[3];
-        any_transform = any_transform
-            || t.x != 0.f || t.y != 0.f || t.z != 0.f;
+    // One placement at the origin and one at x=5, in either order.
+    engine::f32 x0 = 0.f;
+    engine::f32 x1 = 0.f;
+    if (nodes == 2) {
+        x0 = scene.nodes[0].transform.cols[3].x;
+        x1 = scene.nodes[1].transform.cols[3].x;
     }
+    const bool placed_ok = nodes == 2
+        && ((near_eq(x0, 0.f) && near_eq(x1, 5.f)) || (near_eq(x0, 5.f) && near_eq(x1, 0.f)));
 
-    const bool passed = loaded && has_nodes && refs_ok && any_transform;
-    char message[224];
+    // And the shared mesh's vertices are NOT transformed. This is the clause
+    // that separates the two paths: the probe authors its first two vertices at
+    // px 0 and 1, so if load_scene baked the node transform in the way load()
+    // does, one of them would read 5 or 6 - and `placed_ok` above would still
+    // hold, because the transform would be correct *and* also applied.
+    const bool unbaked_ok = meshes == 1 && scene.meshes[0].vertices.size() == 3
+        && near_eq(scene.meshes[0].vertices[0].px, 0.f)
+        && near_eq(scene.meshes[0].vertices[1].px, 1.f);
+
+    const bool passed = loaded && counts_ok && refs_ok && placed_ok && unbaked_ok;
+    char message[256];
     std::snprintf(message, sizeof(message),
-        "glTF node gate: loaded=%s nodes=%u meshes=%u refs_ok=%s any_transform=%s (%s)",
-        loaded ? "yes" : "no", nodes, static_cast<engine::u32>(scene.meshes.size()),
-        refs_ok ? "yes" : "no", any_transform ? "yes" : "no", passed ? "pass" : "FAIL");
+        "glTF node gate: loaded=%s nodes=%u meshes=%u materials=%u refs_ok=%s "
+        "x0=%.2f x1=%.2f unbaked=%s (%s)",
+        loaded ? "yes" : "no", nodes, meshes,
+        static_cast<engine::u32>(scene.materials.size()), refs_ok ? "yes" : "no",
+        static_cast<double>(x0), static_cast<double>(x1), unbaked_ok ? "yes" : "no",
+        passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
     return passed;
 }
 ```
 
-Declare it in `gates.hpp`, classify it `Cpu` in `kGates` with a lambda that
-supplies the loader and the husky path from `CpuGateContext`, and call it from
-`main.cpp`.
+Declare it in `gates.hpp` and classify it `Cpu` in `kGates`. It takes **no
+arguments** — the probe is self-contained, exactly like
+`run_gltf_node_transform_gate`:
+
+```cpp
+    {"run_gltf_node_gate", GateKind::Cpu,
+        [](const CpuGateContext&) { return run_gltf_node_gate(); }},
+```
+
+Being `Cpu` it runs in `--gates-cpu` and therefore in CI, which is the point of
+synthesizing the probe rather than needing mounted content.
 
 - [ ] **Step 2: Add the types with a stubbed `load_scene`**
 
-In `gltf_loader.hpp`, alongside the existing types — **do not modify
+In `mesh_loader_gltf.hpp`, alongside the existing types — **do not modify
 `GltfLoadResult` or `GltfPrimitive`**, three gates and the husky depend on
 them:
 
@@ -957,11 +1002,23 @@ and on `IGltfLoader`:
     virtual bool load_scene(std::string_view path, GltfSceneResult& out) = 0;
 ```
 
-Implement it in `gltf_loader.cpp` as a stub that returns `true` and leaves
+Implement it in `mesh_loader_gltf.cpp` as a stub that returns `true` and leaves
 `out` empty — that empty result is the red.
 
-Add `#include <engine/math/mat4.hpp>` to the header, and `engine::math` to
-`assets-gltf`'s `PUBLIC_DEPS` in its `CMakeLists.txt` if not already present.
+The implementing class is an unnamed-namespace type in that file reached through
+`create_mesh_loader()`; Step 4 writes `GltfLoader::load_scene` for readability,
+but use whatever the class is actually called there.
+
+Add `#include <engine/math/mat4.hpp>` to the header. `assets-gltf`'s
+`PUBLIC_DEPS` is `engine::assets`, and `assets` already depends publicly on
+`engine::math`, so `Mat4` is reachable today — but name `engine::math`
+explicitly anyway, because this package now includes a math header directly and
+`doc-claims` reads that table.
+
+Note `Mat4::identity()` is a static member function, not a `constexpr` value,
+so `math::Mat4 transform = math::Mat4::identity();` as a default member
+initialiser is a runtime call per `GltfNode`. At 2,806 nodes that is fine, and
+every one is immediately overwritten by the node walk.
 
 - [ ] **Step 3: Build and watch it fail**
 
@@ -972,7 +1029,7 @@ cmake --build build --config Debug
 ```
 Expected:
 ```
-glTF node gate: loaded=yes nodes=0 meshes=0 refs_ok=yes any_transform=no (FAIL)
+glTF node gate: loaded=yes nodes=0 meshes=0 materials=0 refs_ok=yes x0=0.00 x1=0.00 unbaked=no (FAIL)
 ```
 and exit `1`.
 
@@ -980,7 +1037,7 @@ and exit `1`.
 
 - [ ] **Step 4: Implement the node walk**
 
-In `gltf_loader.cpp`, implement `load_scene` with this shape. The transform
+In `mesh_loader_gltf.cpp`, implement `load_scene` with this shape. The transform
 composition and the vertex unpack already exist for the baked path — **call
 them, do not write second copies**; two walks that can disagree about winding
 or the cofactor normal transform is exactly the drift this codebase keeps
@@ -989,44 +1046,83 @@ adding invariants against.
 ```cpp
 bool GltfLoader::load_scene(std::string_view path, GltfSceneResult& out) {
     cgltf_data* data = nullptr;
-    if (!parse_and_validate(path, &data)) {   // the same helper the baked path uses
+    std::string file;
+    // Extract load()'s parse-and-validate block into a helper and call it from
+    // both. Do not copy it: the cgltf_validate call is the only place accessor
+    // ranges, buffer-view bounds and sparse indices are checked against the
+    // real buffer sizes, and its comment says so. A second copy is a second
+    // thing to forget to update.
+    if (!parse_validated(path, &data, file)) {
         return false;
     }
+    const std::filesystem::path gltf_dir = std::filesystem::path(file).parent_path();
 
-    // Unpack each mesh once. The alley has 1,254 meshes behind 2,806 nodes, so
-    // unpacking per node would triple the work and the memory.
+    // Unpack each glTF mesh once. The alley has 1,254 meshes behind 2,806
+    // nodes, so unpacking per node would triple the work and the memory.
     std::unordered_map<const cgltf_mesh*, u32> mesh_index;
     std::unordered_map<const cgltf_material*, u32> material_index;
 
-    for (const cgltf_node* node = data->nodes; node != data->nodes + data->nodes_count; ++node) {
-        if (node->mesh == nullptr) {
-            continue;   // a transform-only node: real in glTF, not drawable
+    for (cgltf_size n = 0; n < data->nodes_count; ++n) {
+        const cgltf_node& node = data->nodes[n];
+        if (!node.mesh) {
+            continue; // a transform-only node: real in glTF, not drawable
         }
-        auto found = mesh_index.find(node->mesh);
+        auto found = mesh_index.find(node.mesh);
         if (found == mesh_index.end()) {
             MeshData mesh{};
-            if (!unpack_mesh(*node->mesh, mesh)) {   // shared with the baked path
-                cgltf_free(data);
-                return false;
+            // append_primitive is the baked path's unpack, and it takes the
+            // transform it should apply. Passing identity is exactly what
+            // makes this the node path: the vertices come back in their
+            // authored space and the transform is stored on the node instead.
+            const NodeTransform identity = identity_transform();
+            for (cgltf_size prim = 0; prim < node.mesh->primitives_count; ++prim) {
+                const cgltf_primitive& p = node.mesh->primitives[prim];
+                if (p.type != cgltf_primitive_type_triangles) {
+                    continue;
+                }
+                if (!append_primitive(p, mesh, identity)) {
+                    cgltf_free(data);
+                    return false;
+                }
             }
-            found = mesh_index.emplace(node->mesh, static_cast<u32>(out.meshes.size())).first;
+            if (mesh.vertices.empty()) {
+                continue; // nothing triangular on this mesh
+            }
+            compute_mesh_bounds(mesh);
+            found = mesh_index.emplace(node.mesh, static_cast<u32>(out.meshes.size())).first;
             out.meshes.push_back(std::move(mesh));
         }
 
-        const cgltf_material* mat = node->mesh->primitives_count > 0
-            ? node->mesh->primitives[0].material : nullptr;
+        const cgltf_material* mat = node.mesh->primitives_count > 0
+            ? node.mesh->primitives[0].material : nullptr;
         auto mat_found = material_index.find(mat);
         if (mat_found == material_index.end()) {
+            // fill_primitive_material fills a GltfPrimitive, so read into one
+            // and keep the four fields a material has. Reusing GltfPrimitive
+            // directly would carry first_index/index_count, which mean nothing
+            // here.
+            GltfPrimitive probe{};
+            if (node.mesh->primitives_count > 0) {
+                fill_primitive_material(node.mesh->primitives[0], gltf_dir, probe);
+            }
+            GltfMaterial entry{};
+            entry.albedo_uri = std::move(probe.albedo_uri);
+            entry.metallic_roughness_uri = std::move(probe.metallic_roughness_uri);
+            entry.normal_uri = std::move(probe.normal_uri);
+            entry.metallic = probe.metallic;
+            entry.roughness = probe.roughness;
             mat_found = material_index.emplace(
                 mat, static_cast<u32>(out.materials.size())).first;
-            out.materials.push_back(read_material(mat));   // uri + factor extraction
+            out.materials.push_back(std::move(entry));
         }
 
         GltfNode entry{};
-        // World transform through the parent chain - the same composition the
-        // baked path performs, except it is stored rather than applied to the
-        // vertices. That is the whole difference between the two paths.
-        entry.transform = world_transform_of(*node);
+        // The whole parent chain, through the same cgltf call the baked path
+        // uses - stored rather than applied to the vertices. That is the only
+        // difference between the two paths.
+        cgltf_float world[16];
+        cgltf_node_transform_world(&node, world);
+        entry.transform = mat4_from_cgltf(world);
         entry.mesh = found->second;
         entry.material = mat_found->second;
         out.nodes.push_back(entry);
@@ -1036,6 +1132,15 @@ bool GltfLoader::load_scene(std::string_view path, GltfSceneResult& out) {
     return true;
 }
 ```
+
+`mat4_from_cgltf` is new and small: cgltf hands back 16 floats in
+column-major order, which is `Mat4`'s own layout, so it is a copy. Write it
+beside `make_node_transform`, which reads the same array into the baked path's
+`NodeTransform`.
+
+**No flat-mesh fallback.** `load()` has one, for files whose meshes no node
+references. Do not add it here: a node list of placements is meaningless for a
+mesh that has no placement, and the baked path still handles those files.
 
 Three details that matter:
 
@@ -1050,9 +1155,13 @@ Three details that matter:
 
 - [ ] **Step 5: Build and watch it pass**
 
-Expected: `nodes=` a non-zero count, `refs_ok=yes`, `any_transform=yes`,
-`(pass)`, exit `0`. The husky's own gates must still pass unchanged — the baked
-path was not touched.
+Expected: `nodes=2 meshes=1 materials=1 refs_ok=yes x0=0.00 x1=5.00
+unbaked=yes (pass)`, exit `0`.
+
+The husky's own gates must still pass unchanged, and so must
+`run_gltf_node_transform_gate` — the baked path was not touched, and that gate
+is the one that would catch it if extracting the shared validation helper broke
+something.
 
 - [ ] **Step 6: Recount and commit**
 
@@ -1282,7 +1391,7 @@ scene that rendered badly.
 instances a scene has is a content outcome, not a programmer error — so
 exceeding a cap stops the loop and says so, rather than aborting.
 
-**`parent` is the invalid sentinel** because `world_transform_of` already
+**`parent` is the invalid sentinel** because `cgltf_node_transform_world` already
 composed the parent chain. Setting a parent here would apply it twice.
 
 - [ ] **Step 3: Load it behind a cvar**
@@ -1411,7 +1520,8 @@ git push
       `uploaded=4`. The strengthened gate counts *uploads*, not residency — the
       original `uploaded=6`/`3` pair measured live entries, which a store that
       re-uploads over a live entry satisfies while making eight upload calls
-- [ ] `run_gltf_node_gate` seen red at `nodes=0`, then green
+- [ ] `run_gltf_node_gate` seen red at `nodes=0 meshes=0 unbaked=no`, then green at
+      `nodes=2 meshes=1 x0=0.00 x1=5.00 unbaked=yes`
 - [ ] The existing `run_material_gate` seen red at `normal_travels=no` before the
       bridge stopped pinning `normal_map` to the default
 - [x] Task 2's before/after gate output diffed with no differences **outside the
