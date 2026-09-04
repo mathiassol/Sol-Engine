@@ -1204,6 +1204,14 @@ Three gate functions overflow outright at 3072:
 So: **heap-hold every `World` local in the gate files first**, with
 `auto w = std::make_unique<engine::scene::World>();`, then raise the caps.
 
+There are **20** of them, not 19: the count above misses `nudged` at
+`gates_scene.cpp:19`, nested inside an `if` block — a stack local all the same.
+And the first gate in the sequence, `run_parser_fuzz_gate`, holds **two**
+simultaneously (`gates_assets.cpp:98` and `:182`, the second inside the
+mutation loop), so at 3072 the process dies on gate one having logged nothing.
+Find them with `grep -rn "scene::World " packages/sandbox/src/` rather than
+from any list, including this one.
+
 ```cpp
 constexpr u32 kMaxInstances = 3072;
 constexpr u32 kMaxMaterials = 128;
@@ -1231,6 +1239,61 @@ Order matters, and the order gives you a real red for free: raise the caps
 **before** heap-holding and `--gates` dies with a stack overflow rather than a
 `FAIL` line. Watch that once if you like — it is the failure a green pass count
 cannot show — but land the heap-holding first.
+
+### Step 0b: The frame ring, which the cap raise also breaks
+
+The stack overflow is not the only cost, and this one **is** gated.
+`run_frame_ring_budget_gate` (`packages/sandbox/src/gates/gates_rhi.cpp`)
+models the worst-case frame upload from `engine::scene::kMaxInstances` and
+compares it against the RHI's per-frame ring. At 3072 it goes red at
+**−242.6% headroom**, and its own comment says that is deliberate: *"it goes
+red when any of them moves — raise kMaxInstances, grow FrameConstants, add a
+fourth geometry pass, and the arithmetic stops fitting."*
+
+The model is **accurate, not pessimistic**. `render_graph.cpp:181` allocates
+`sizeof(Constants)` *inside* the batch loop, and three geometry passes —
+shadow, forward, motion — each pay it, which is the 1,024 bytes per batch.
+
+| | worst-case upload | headroom @ 1 MiB |
+|---|---|---|
+| `kMaxInstances = 512` (today) | 601,856 | 42.6% |
+| `kMaxInstances = 3072` | 3,591,936 | **−242.6%** |
+| **the alley as it actually batches** | **1,692,160 (1.61 MiB)** | **−61.4%** |
+
+That third row is what settles it. The alley has **1,254 distinct meshes**, and
+two different meshes cannot share a batch, so it needs ~1,254 × 1,024 bytes of
+per-batch constants plus 2,806 × 144 of instance data — **1.61 MiB**. The ring
+has to grow for this scene whether or not the gate's worst case is reachable.
+
+**Decision: take the ring to 8 MiB.** 4 MiB fails the gate at 3072 by 0.64%
+(14.36% against a 15% floor), and landing on a number that barely fails is
+worse than the next step up. 8 MiB gives 57.2%, so the next cap raise does not
+immediately reopen this. Three frame-in-flight slots means 24 MiB of upload
+heap per backend, which is nothing against the GPU baseline.
+
+`kFrameRingBytes` is defined **once per backend** and both must change:
+
+- `packages/rhi-d3d12/src/device_d3d12.cpp:43`
+- `packages/rhi-vulkan/src/device_vulkan.hpp:565`
+
+Per [renderer-boundaries.md](../../../.claude/rules/renderer-boundaries.md) a
+contract-adjacent change costs two implementations and two gate runs — so run
+`--gates` and `ENGINE_GPU_DEBUG=1` on **both** backends after this.
+
+That file is also the documented owner of this budget, and its conclusion is
+wrong: it says the ring is worth *"roughly 7,000 drawn instances"*, which is
+`1 MiB / 144 B` — the instance-dominated figure that only holds when batches
+are few. The same paragraph already states the per-batch cost is 1,024 bytes,
+so with one batch per instance the real ceiling is ~900. Update the number and
+say which of the two costs dominates when.
+
+**The real fix is not a bigger ring**, and it is out of scope here: per-batch
+constants should be uploaded once as an indexed array, exactly as
+`InstanceData` already is, which would take `per_batch` from 1,024 bytes to
+about zero and make the ring's size independent of the instance cap. Recorded
+as decision **R1** in `docs/analysis/DECISIONS.md`. Do not attempt it in this
+task — it is a renderer change across two backends and deserves its own row.
+
 
 Then update **`VISION.md`**: `vision-gap` fails when a named symbol is gone,
 and `kMaxInstances`/`kMaxMaterials` still exist but their stated values are now

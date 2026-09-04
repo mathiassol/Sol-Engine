@@ -6,7 +6,7 @@ status: open — not yet on the service
 
 # Open decisions
 
-Ten questions an audit raised and deliberately would not answer, because
+Eleven questions an audit raised and deliberately would not answer, because
 answering one changes behaviour, an API, or what a word in the backlog means.
 Each is the decision itself, not a task: the fix is clear in every case.
 
@@ -157,6 +157,41 @@ meaningless assertion out, two real ones in.
 **Open part:** when `document` lands, does the material line become
 `albedo=/content/x.png` with load-time resolution, and does it pick up
 `opacity`, which is *already* not serialized (`scene_file.cpp:192-198`)?
+
+## R1 — Should per-batch constants be one indexed array instead of one upload each?
+
+**Raised 4 Sep 2026** while raising `kMaxInstances` for the alley. Not by an
+audit. Not decided — this records the question and why the immediate fix was
+something else.
+
+`render_graph.cpp:181` allocates and writes a constant buffer *inside* the
+batch loop, and three geometry passes — shadow, forward, motion — each do it.
+That is 1,024 bytes of frame-ring upload per batch, against 144 bytes per
+*instance* for `InstanceData`, which is already uploaded once for the whole
+frame as one indexed array.
+
+So the per-batch cost dominates as soon as a scene has many distinct meshes,
+because two meshes cannot share a batch. The alley: 1,254 meshes behind 2,806
+instances needs 1.61 MiB, of which 1.28 MiB is per-batch constants and only
+0.4 MiB is instance data. `run_frame_ring_budget_gate` models the same thing at
+the cap and is what made this visible.
+
+The immediate fix was to grow `kFrameRingBytes` from 1 MiB to 8 MiB in both
+backends, which is cheap (24 MiB of upload heap per backend) and buys 57%
+headroom at `kMaxInstances = 3072`.
+
+**The question this leaves open:** should per-batch constants become one
+indexed array, the way `InstanceData` already is, with the batch index reaching
+the shader the same way `instance_base` does? That would take `per_batch` from
+1,024 bytes to roughly zero and make the ring's size independent of the
+instance cap — which is the difference between an engine that scales to an open
+world and one that grows a buffer every time the cap moves.
+
+**Why it is not a task:** it changes the shader-side binding contract for
+three passes and costs two backend implementations, and
+`.claude/rules/renderer-boundaries.md` says a per-draw constant buffer is the
+thing to avoid — so the answer interacts with a rule that would need rewording.
+It deserves its own row, sized and gated on its own.
 
 ## D2 — How should a release be stopped from shipping ungated GPU code?
 
