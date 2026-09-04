@@ -6,7 +6,7 @@ status: open — not yet on the service
 
 # Open decisions
 
-Eleven questions an audit raised and deliberately would not answer, because
+Twelve questions an audit raised and deliberately would not answer, because
 answering one changes behaviour, an API, or what a word in the backlog means.
 Each is the decision itself, not a task: the fix is clear in every case.
 
@@ -157,6 +157,59 @@ meaningless assertion out, two real ones in.
 **Open part:** when `document` lands, does the material line become
 `albedo=/content/x.png` with load-time resolution, and does it pick up
 `opacity`, which is *already* not serialized (`scene_file.cpp:192-198`)?
+
+## S6 — The sky pass paints over every opaque fragment, and no gate can tell
+
+**Raised 4 Sep 2026** by importing the alley, which is the first scene with no
+translucent material in it. Not an audit finding. **This is a live bug in
+shipped code, not a design question** — it is here because the fix is a row,
+not a character, and because the gate gap it exposes matters more than the bug.
+
+The chain, each link verified:
+
+| Fact | Where |
+|---|---|
+| Reversed-Z maps near to 1 and far to 0 | `math/mat4.hpp` |
+| The sky vertex shader emits depth **1.0** | `sandbox/content/shaders/sky.hlsl:29` |
+| The sky pipeline tests `depth_closer_or_equal` → `GreaterEqual` | `rhi/resources.hpp:134`, `sandbox_common.cpp:289` |
+| The sky pass is registered **after** `forward` | `renderer/src/standard_frame.cpp:142` vs `:115` |
+| Its blend is `Opaque` and its cull is `None` | `sandbox_common.cpp:291-292` |
+
+So the sky writes at the *near* plane and passes `GreaterEqual` against every
+opaque fragment in the frame, then overwrites it. The `transparent` pass is
+registered after the sky (`:168`), which is the only reason anything has ever
+been visible.
+
+**Why it survived this long.** The husky demo makes exactly one of its four
+material variants translucent (`main.cpp:933`, `opacity = 0.45f`), and those
+~16 of 63 instances are what the window has been showing. The comment beside
+that line claims the variants "end up scattered in front of and behind opaque
+ones — which is what makes the depth test visibly do its job." The opaque ones
+were never drawn. The checker floor quad has never rendered either.
+
+**The gate gap is the real finding.** With the sky moved to the far plane the
+whole suite still passes: **91 gates, 0 FAIL, exit 0, byte-identical verdicts**.
+Nothing in this engine asserts that opaque geometry survives compositing. Gates
+prove draws are *submitted* — batch counts, instance counts, readbacks of
+vertex buffers — and the frame-loop gates prove frames complete. None reads a
+composited pixel where geometry should be. That is the assertion to write
+*before* touching the shader.
+
+**Why the fix is not one character.** Changing `1.0` to `0.0` renders the alley
+and makes all 63 huskies and the floor appear — that is how the diagnosis was
+confirmed — but:
+
+1. `depth_closer_or_equal` supports **both** conventions, so a hardcoded `0.0`
+   is wrong under standard Z where far is 1.0. The shader needs the active
+   convention's far value, the way `kSunDisk` is already a shader define.
+2. `r.exposure` defaults to **-2.0 EV, picked by screenshot sweep** against a
+   frame that was mostly sky (`sandbox_common.cpp:26-29` records the method and
+   the luminance readings). Every one of those numbers was tuned around this
+   bug, so fixing it changes what the demo is supposed to look like.
+3. The compositing gate from the paragraph above does not exist yet.
+
+Do these in that order: gate, then shader, then re-tune exposure with the
+sweep repeated honestly.
 
 ## R1 — Should per-batch constants be one indexed array instead of one upload each?
 
