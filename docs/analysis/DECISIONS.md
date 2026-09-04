@@ -193,6 +193,23 @@ three passes and costs two backend implementations, and
 thing to avoid — so the answer interacts with a rule that would need rewording.
 It deserves its own row, sized and gated on its own.
 
+**A second, smaller part, surfaced by the 8 MiB change:** `kFrameRingBytes` has
+**no owner**. It is defined once per backend — `rhi-d3d12/src/device_d3d12.cpp`
+and `rhi-vulkan/src/device_vulkan.hpp` — and asserted a third time as a literal
+in `run_parity_frames_gate`, which went red on the raise and is how the third
+copy was found. Its comment now names all three sites, so the copy is loud and
+gated rather than silent, but three copies of one number is what the docs rules
+exist to prevent.
+
+Should it move to one place? The ring is arguably part of the RHI contract
+already — `IDevice::frame_ring_stats().capacity_bytes` is a contract method and
+`run_frame_ring_budget_gate` assumes a single number across backends. Against
+that: a backend could legitimately want a different size for its own allocator,
+and making it shared is itself a contract change. Either resolve it (one
+`constexpr` in `rhi`, both backends and the gate referring to it) or make the
+per-backend freedom real and stop asserting one value — the present state
+claims both.
+
 ## D2 — How should a release be stopped from shipping ungated GPU code?
 
 **Why it is not a task:** it changes what CI and the release workflow do, and may
