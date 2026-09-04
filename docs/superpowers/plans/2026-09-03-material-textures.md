@@ -324,7 +324,7 @@ bool run_texture_store_gate(engine::rhi::IDevice& device) {
     const bool passed = deduped && stable && resolves && unloaded && stale_detected;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Material gate: refs=%u distinct=%u uploaded=%u stable=%s resolves=%s "
+        "Texture store gate: refs=%u distinct=%u uploaded=%u stable=%s resolves=%s "
         "unloaded=%s stale_detected=%s (%s)",
         references, distinct, uploaded, stable ? "yes" : "no", resolves ? "yes" : "no",
         unloaded ? "yes" : "no", stale_detected ? "yes" : "no", passed ? "pass" : "FAIL");
@@ -369,7 +369,7 @@ cmake --build build --config Debug
 ```
 Expected — six uploads where three were wanted:
 ```
-Material gate: refs=6 distinct=3 uploaded=6 stable=yes resolves=yes unloaded=yes stale_detected=yes (FAIL)
+Texture store gate: refs=6 distinct=3 uploaded=6 stable=yes resolves=yes unloaded=yes stale_detected=yes (FAIL)
 ```
 and `--gates` exits `1`.
 
@@ -415,7 +415,7 @@ cmake --build build --config Debug
 ```
 Expected:
 ```
-Material gate: refs=6 distinct=3 uploaded=3 stable=yes resolves=yes unloaded=yes stale_detected=yes (pass)
+Texture store gate: refs=6 distinct=3 uploaded=3 stable=yes resolves=yes unloaded=yes stale_detected=yes (pass)
 ```
 and exit `0`.
 
