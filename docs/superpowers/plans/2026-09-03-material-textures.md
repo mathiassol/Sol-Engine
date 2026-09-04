@@ -67,6 +67,8 @@ tabs, 100 columns, final newline, no BOM.
 | The bridge moves to a new package, **not into `engine`** | `engine` deliberately does not depend on `scene`; that is why the renderer never sees the scene. ARCHITECTURE.md names it as load-bearing |
 | The glTF node path is **additive** | The husky and `run_gltf_gate`, `run_gltf_node_transform_gate`, `run_gltf_extras_gate` all use the baked path. It stays |
 | The importer stays in the **sandbox** | `document` (step 3) replaces it. A package we know we will delete is the scaffolding `packageRules.md` forbids |
+| A new gate's name must be checked against the existing ones | `run_material_gate` was already taken by a renderer gate that proves roughness and opacity travel to `DrawItem`. `gate-registry` would have failed on the duplicate, and two `"Material gate:"` lines would have made `--gates` ambiguous |
+| An assertion about a field belongs where the road is already checked | The normal-map check went into the existing `run_material_gate` beside roughness and opacity rather than into the new store gate, because that gate already extracts and compares `DrawItem`s. Asserting `mat.normal.valid()` on a bare struct proves only that the field exists |
 | `TextureHandle` mirrors `MeshHandle` exactly | Same `{u64 id, u32 generation}` shape, same `fnv1a64` keying, so a stale handle after `unload` is detectable rather than silently reused |
 | Caps rise; `Scene #12` is **not** triggered | `ForwardDemo` is `unique_ptr`-held in `SandboxState`, so `World` is already on the heap. A 370 KB `World` is fine |
 
@@ -86,7 +88,7 @@ tabs, 100 columns, final newline, no BOM.
 | `packages/assets-gltf/include/engine/assets/gltf/gltf_loader.hpp` | `GltfNode`, `GltfSceneResult`, `load_scene` |
 | `packages/assets-gltf/src/gltf_loader.cpp` | The node walk |
 | `packages/sandbox/src/scene_import.cpp` | glTF → `World`. Temporary, replaced by `document` |
-| `packages/sandbox/src/gates/gates_assets.cpp` | `run_material_gate` |
+| `packages/sandbox/src/gates/gates_assets.cpp` | `run_texture_store_gate` |
 | `tools/downscale-textures.ps1` | Offline resample. No engine change |
 
 ---
@@ -162,7 +164,7 @@ namespace engine::assets::gpu {
 // The dedupe is the point, not an optimisation: a scene shares one texture
 // across many materials, and a store that uploaded every reference separately
 // would render identically while costing several times the VRAM. Nothing but
-// a count catches that, which is what run_material_gate asserts.
+// a count catches that, which is what run_texture_store_gate asserts.
 class GpuTextureStore {
 public:
     TextureHandle store(rhi::IDevice& device, std::string_view key, const ImageData& image);
@@ -272,7 +274,7 @@ In `packages/sandbox/src/gates/gates_assets.cpp`, inside `namespace sandbox {`.
 Add `#include <engine/assets/gpu/texture_store.hpp>` at the top if absent.
 
 ```cpp
-bool run_material_gate(engine::rhi::IDevice& device) {
+bool run_texture_store_gate(engine::rhi::IDevice& device) {
     using engine::assets::gpu::GpuTextureStore;
 
     // Two 2x2 images, distinguishable so a wrong handle is visible.
@@ -337,7 +339,7 @@ bool run_material_gate(engine::rhi::IDevice& device) {
 In `packages/sandbox/src/gates/gates.hpp`, under the `// ── assets ──` block:
 
 ```cpp
-bool run_material_gate(engine::rhi::IDevice& device);
+bool run_texture_store_gate(engine::rhi::IDevice& device);
 ```
 
 In `packages/sandbox/src/gates/gate_registry.cpp`, beside the other assets
@@ -345,14 +347,14 @@ entries. **`Gpu`, with `nullptr`** — it needs a device, so a headless run
 cannot call it:
 
 ```cpp
-    {"run_material_gate", GateKind::Gpu, nullptr},
+    {"run_texture_store_gate", GateKind::Gpu, nullptr},
 ```
 
 In `packages/sandbox/src/main.cpp`, in the gate sequence beside the other
 device-taking gates:
 
 ```cpp
-    gates_ok = run_material_gate(device) && gates_ok;
+    gates_ok = run_texture_store_gate(device) && gates_ok;
 ```
 
 The gate goes on the **left** of `&&`: short-circuiting would let one red gate
@@ -564,37 +566,79 @@ violate the `(Category #N)` convention.
 - Modify: `packages/renderer/include/engine/renderer/motion.hpp`
 - Modify: `packages/scene-render/src/extract.cpp`
 - Modify: `packages/sandbox/src/main.cpp`, `sandbox_common.hpp`
-- Modify: `packages/sandbox/src/gates/gates_assets.cpp`
+- Modify: `packages/sandbox/src/gates/gates_renderer.cpp` (the existing `run_material_gate`)
 - Modify: `VISION.md`
 
 - [ ] **Step 1: Extend the gate to demand a non-default normal map**
 
-Add to `run_material_gate`, before the `passed` line. This asserts the thing
+Add to the **existing** `run_material_gate` in `gates_renderer.cpp`. This asserts the thing
 that is currently impossible — that a material can name its own normal map and
 the bridge honours it:
 
+**Why here and not in the new store gate.** `run_material_gate` already
+proves roughness and opacity travel the road `Material` → `ExtractInstance` →
+`DrawItem`, with a probe value and a before/after extract. A texture travels
+the same road, so it is asserted the same way and in the same place. Checking
+`mat.normal.valid()` on a bare struct — which an earlier draft of this plan did
+— proves only that the field exists, not that anything reads it.
+
+Add after the opacity block, in that gate's established style:
+
 ```cpp
-    // A material must be able to carry its own maps. Before this task the
-    // bridge pinned normal and metal-rough to defaults, so this is the
-    // assertion that the hardcoded default is gone.
-    engine::scene::Material mat{};
-    mat.albedo = handles[1];
-    mat.normal = handles[3];
-    mat.metallic_roughness = handles[1];
-    const bool material_carries_maps = mat.albedo.valid() && mat.normal.valid()
-        && mat.metallic_roughness.valid() && mat.normal != mat.albedo;
+    // Textures travel the same road as roughness and opacity. Before this task
+    // the bridge pinned normal_map to a built-in default, so a material naming
+    // its own normal was silently ignored - which reads as a flat-looking
+    // surface rather than as a bug, and is exactly the failure this gate's
+    // road-checking shape exists to catch.
+    //
+    // The probe is material 0's albedo: a real, live texture that is
+    // definitely not the default normal, and one the gate can name without a
+    // device to create anything.
+    const engine::assets::TextureHandle probe_handle = copy.materials[0].albedo;
+    const engine::rhi::ITexture* probe = assets.textures->get(probe_handle);
+
+    engine::scene::World textured = copy;
+    for (engine::u32 i = 0; i < textured.material_count; ++i) {
+        textured.materials[i].normal = probe_handle;
+    }
+    engine::Arena arena_textured(256 * 1024);
+    engine::renderer::RenderSnapshot textured_snap{};
+    textured_snap.width = 1280;
+    textured_snap.height = 720;
+    sandbox::extract_world(textured, camera.position, assets, false, nullptr,
+        arena_textured, textured_snap);
+
+    bool normal_travels = probe != nullptr && !textured_snap.draws.empty();
+    for (const engine::renderer::DrawItem& draw : textured_snap.draws) {
+        if (draw.normal_map != probe) {
+            normal_travels = false;
+        }
+    }
+    // And the unmutated extract must NOT already produce it, or the assertion
+    // above would hold even with the old hardcoded pin still in place. This is
+    // the clause that makes the check non-vacuous.
+    const bool normal_was_default = !before.draws.empty()
+        && before.draws[0].normal_map != probe;
 ```
 
-Add `material_carries_maps` to `passed` and to the message as
-`carries_maps=%s`. Add `#include <engine/scene/world.hpp>` to the gate file.
+Add `normal_travels && normal_was_default` to `passed`, and
+`normal_travels=%s normal_was_default=%s` to the message.
 
 - [ ] **Step 2: Build and watch it fail to compile**
 
-`scene::Material` has no `normal` member, so this is a compile error rather
-than a red gate — expected for a *new field*, since there is no value to stub.
+`scene::Material` has no `normal` member and `WorldExtractAssets` has no
+`textures`, so this is a compile error rather than a red gate — expected for
+*new fields*, since there is no value to stub.
 
 Run: `cmake --build build --config Debug`
 Expected: `error C2039: 'normal': is not a member of 'engine::scene::Material'`.
+
+**After Step 4 makes it compile, the gate must still be watched red once.**
+Temporarily leave the bridge's `item.normal_map = assets.default_normal;` line
+in place while the rest of Step 4 lands, build, and confirm
+`normal_travels=no`. That is the red proving the assertion catches the pin it
+was written against — without it, the check passes from the first build and
+nothing shows it ever would have failed.
 
 - [ ] **Step 3: Change `Material` and the caps**
 
@@ -1115,7 +1159,7 @@ cmake --build build --config Release --target game
 .\build\bin\Debug\sandbox.exe --gates-cpu
 ```
 Expected: all exit `0`. Confirm `run_gltf_node_gate`'s line appears in the
-`--gates-cpu` output and `run_material_gate`'s does **not** — the first is
+`--gates-cpu` output and `run_texture_store_gate`'s does **not** — the first is
 `Cpu`, the second `Gpu`, and a misclassification would let a gate silently stop
 running.
 
@@ -1171,14 +1215,16 @@ git push
 
 ## Definition of done
 
-- [ ] `run_material_gate` seen red at `uploaded=6`, then green at `uploaded=3`
+- [ ] `run_texture_store_gate` seen red at `uploaded=6`, then green at `uploaded=3`
 - [ ] `run_gltf_node_gate` seen red at `nodes=0`, then green
+- [ ] The existing `run_material_gate` seen red at `normal_travels=no` before the
+      bridge stopped pinning `normal_map` to the default
 - [ ] Task 2's before/after gate output diffed with **no differences**
 - [ ] The husky demo still renders correctly, checked visually, not just gated
 - [ ] The alley loads and is walkable, with its counts recorded
 - [ ] `--gates` exits `0` on Debug `sandbox`, Release `game`, and `--rhi vulkan`
 - [ ] `ENGINE_GPU_DEBUG=1` silent on both backends
-- [ ] `run_gltf_node_gate` appears in `--gates-cpu`; `run_material_gate` does not
+- [ ] `run_gltf_node_gate` appears in `--gates-cpu`; `run_texture_store_gate` does not
 - [ ] `all 20 checks passed`
 - [ ] `VISION.md`'s two cap rows updated
 - [ ] Every commit pushed to `main`
