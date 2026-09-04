@@ -44,8 +44,14 @@ every package.
   registry (a function-local static, so static-initialisation order cannot
   bite), `install_file_logger`'s install-once statics (`core/src/log_file.cpp`,
   so the sink outlives every caller), and the warn-once latches — a `bool` per
-  `CapacityKind` in `warn_physics_capacity`, and one for the profiler's full
-  scope table — each firing once per process.
+  `CapacityKind` in `warn_physics_capacity`, one for the profiler's full scope
+  table, and one per map kind in `scene-render`'s `warn_unresolved_map` — each
+  firing once per process.
+  - The latches are a **category**, not a closed list: a message a per-frame
+    path can emit needs one, and adding it does not need a new exception.
+    Keep the enumeration above current anyway, because it is the only place
+    that says which globals are deliberate — a global not on it should read as
+    a mistake to whoever finds it next.
 - Minimize dynamic allocation; favor immutable data when practical.
 - Headers live at `include/engine/<package>/<header>.hpp`. Implementation
   details live only in `src/`, never in a public header.
