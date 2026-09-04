@@ -470,31 +470,36 @@ cmake_minimum_required(VERSION 3.24)
 engine_add_package(scene-render
     SOURCES
         src/extract.cpp
-    PUBLIC_DEPS engine::scene engine::renderer engine::assets-gpu engine::math
+    PUBLIC_DEPS engine::scene engine::renderer engine::debug-draw engine::assets-gpu
+                engine::math
 )
 ```
 
-In the root `CMakeLists.txt`, in the Layer 3 block after
-`add_subdirectory(packages/gameplay)`:
+All five are real, and each is there because a header the moved code keeps
+includes it: `engine::debug-draw` for `<engine/debug/debug_lines.hpp>`,
+`engine::assets-gpu` for `<engine/assets/gpu/mesh_store.hpp>` — both already in
+`world_extract.hpp` today. `engine::rhi` is **not** listed because
+`engine::renderer` re-exports it publicly. If the build complains about a
+missing header, add the dep the header belongs to rather than the header.
+
+In the root `CMakeLists.txt`, after `add_subdirectory(packages/engine)`:
 
 ```cmake
 add_subdirectory(packages/scene-render)
 ```
 
-In `tools/check-invariants.ps1`, add to `$Layers` in the Layer 3 group:
-
-```powershell
-    'scene-render' = 4
-```
-
-Rank 4 is the same as `scene` and `renderer`. That is deliberate and it will
-fail `dependency-direction`, because a package may not depend on another at the
-same rank. Move it to rank 5 instead:
+In `tools/check-invariants.ps1`, add it to `$Layers` at **rank 5**, beside
+`engine`:
 
 ```powershell
     # Layer 4 - runtime
     'engine' = 5; 'scene-render' = 5
 ```
+
+Rank 5, not 4, and `dependency-direction` is what forces it: `scene`,
+`renderer` and `debug-draw` are all rank 4, and the check rejects a dependency
+on a package at the *same* rank. A bridge exists to sit above the things it
+bridges, so the rank the check demands is also the correct one.
 
 - [ ] **Step 3: Move the files verbatim**
 
