@@ -1033,14 +1033,19 @@ bool run_gltf_validate_gate() {
 
 // Same 108-byte buffer as the validate probes: one triangle at (0,0,0),
 // (1,0,0), (0,1,0) with every normal (0,0,1). Only the node graph varies.
-static std::string gltf_with_nodes(const char* nodes_json, const char* roots) {
+// The scene list is a parameter because a glTF may carry several scenes and
+// draw only one of them. Both load paths used to walk every node in the file
+// regardless, which imported a two-scene file's objects once per scene.
+// `default_scene` is the "scene" property; `scenes_json` the "scenes" array.
+static std::string gltf_with_scenes(
+    const char* nodes_json, const std::string& scenes_json, int default_scene) {
     return std::string(
         "{\n"
         "  \"asset\": { \"version\": \"2.0\" },\n"
-        "  \"scene\": 0,\n"
-        "  \"scenes\": [ { \"nodes\": [")
-        + roots +
-        "] } ],\n"
+        "  \"scene\": ")
+        + std::to_string(default_scene) +
+        ",\n"
+        "  \"scenes\": " + scenes_json + ",\n"
         "  \"nodes\": " + nodes_json + ",\n"
         "  \"meshes\": [{ \"primitives\": [ { \"attributes\": "
         "{ \"POSITION\": 0, \"NORMAL\": 1, \"TEXCOORD_0\": 2 }, \"indices\": 3 } ] }],\n"
@@ -1058,6 +1063,11 @@ static std::string gltf_with_nodes(const char* nodes_json, const char* roots) {
         "    { \"bufferView\": 3, \"componentType\": 5125, \"count\": 3, \"type\": \"SCALAR\" }\n"
         "  ]\n"
         "}\n";
+}
+
+static std::string gltf_with_nodes(const char* nodes_json, const char* roots) {
+    return gltf_with_scenes(
+        nodes_json, std::string("[ { \"nodes\": [") + roots + "] } ]", 0);
 }
 
 static bool load_node_probe(const char* name, const std::string& json,
@@ -1151,14 +1161,33 @@ bool run_gltf_node_transform_gate() {
         && near_eq(rotated.mesh.vertices[0].ny, -1.f)
         && near_eq(rotated.mesh.vertices[0].nz, 0.f);
 
-    const bool passed = translate_ok && instance_ok && nested_ok && mirror_ok && rotate_ok;
+    // Two scenes over one mesh, defaulting to the second. The baked path had
+    // the same defect as the node path: it welded every scene's geometry into
+    // one mesh, so a two-scene file came back at double the vertex count with
+    // the second copy sitting wherever its own scene placed it.
+    //
+    // Three vertices, not six, and they must be the *default* scene's - at
+    // x=7, not x=0. A count alone would pass if the walk found one scene but
+    // the wrong one.
+    GltfLoadResult one_scene{};
+    const bool one_scene_ok =
+        load_node_probe("baked_two_scenes",
+            gltf_with_scenes("[ { \"mesh\": 0 }, { \"mesh\": 0, \"translation\": [7, 0, 0] } ]",
+                "[ { \"nodes\": [0] }, { \"nodes\": [1] } ]", 1),
+            one_scene)
+        && one_scene.mesh.vertices.size() == 3 && one_scene.primitives.size() == 1
+        && near_eq(one_scene.mesh.vertices[0].px, 7.f);
+
+    const bool passed = translate_ok && instance_ok && nested_ok && mirror_ok && rotate_ok
+        && one_scene_ok;
 
     char message[224];
     std::snprintf(message, sizeof(message),
         "glTF node transform gate: translate=%s two_nodes=%s nested=%s "
-        "mirror_winding=%s rotate_normals=%s (%s)",
+        "mirror_winding=%s rotate_normals=%s default_scene_only=%s (%s)",
         translate_ok ? "yes" : "no", instance_ok ? "yes" : "no", nested_ok ? "yes" : "no",
-        mirror_ok ? "yes" : "no", rotate_ok ? "yes" : "no", passed ? "pass" : "FAIL");
+        mirror_ok ? "yes" : "no", rotate_ok ? "yes" : "no",
+        one_scene_ok ? "yes" : "no", passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
     return passed;
@@ -1209,15 +1238,35 @@ bool run_gltf_node_gate() {
         && near_eq(scene.meshes[0].vertices[0].px, 0.f)
         && near_eq(scene.meshes[0].vertices[1].px, 1.f);
 
-    const bool passed = loaded && counts_ok && refs_ok && placed_ok && unbaked_ok;
+    // A second file carrying TWO scenes over the same mesh, defaulting to the
+    // second. Only that scene's node may import.
+    //
+    // This is the alley's defect in miniature: it carries a "Fog" scene and a
+    // "Scene" scene over the same 1,254 meshes, and a walk over data->nodes
+    // imported every object once per scene - 1,403 objects arriving as 2,806
+    // instances. Batching hid the cost, so only a count could tell.
+    GltfSceneResult two{};
+    const bool two_loaded = load_scene_probe("two_scenes",
+        gltf_with_scenes("[ { \"mesh\": 0 }, { \"mesh\": 0, \"translation\": [7, 0, 0] } ]",
+            "[ { \"nodes\": [0] }, { \"nodes\": [1] } ]", 1),
+        two);
+    const engine::u32 scene_nodes = static_cast<engine::u32>(two.nodes.size());
+    // Node 1 is the default scene's, at x=7. Getting node 0 instead would mean
+    // the walk found the wrong scene rather than too many.
+    const engine::f32 scene_x =
+        scene_nodes == 1 ? two.nodes[0].transform.cols[3].x : 0.f;
+    const bool one_scene_only = two_loaded && scene_nodes == 1 && near_eq(scene_x, 7.f);
+
+    const bool passed = loaded && counts_ok && refs_ok && placed_ok && unbaked_ok
+        && one_scene_only;
     char message[256];
     std::snprintf(message, sizeof(message),
         "glTF node gate: loaded=%s nodes=%u meshes=%u materials=%u refs_ok=%s "
-        "x0=%.2f x1=%.2f unbaked=%s (%s)",
+        "x0=%.2f x1=%.2f unbaked=%s scene_nodes=%u scene_x=%.2f (%s)",
         loaded ? "yes" : "no", nodes, meshes,
         static_cast<engine::u32>(scene.materials.size()), refs_ok ? "yes" : "no",
         static_cast<double>(x0), static_cast<double>(x1), unbaked_ok ? "yes" : "no",
-        passed ? "pass" : "FAIL");
+        scene_nodes, static_cast<double>(scene_x), passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Assets, message);
     return passed;

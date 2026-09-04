@@ -239,6 +239,8 @@ bool append_primitive(const cgltf_primitive& prim, MeshData& mesh, const NodeTra
         }
     }
 
+
+
     // A mirroring node (negative determinant) reverses triangle orientation.
     // The engine rasterizes with FrontCounterClockwise, so without this swap a
     // mirrored part renders inside-out.
@@ -251,6 +253,68 @@ bool append_primitive(const cgltf_primitive& prim, MeshData& mesh, const NodeTra
         }
     }
     return true;
+}
+
+// Which nodes the file actually says to draw.
+//
+// A glTF may carry several scenes and draw one of them: the "scene" property
+// names the default. Both load paths used to walk `data->nodes`, the flat list
+// of every node in the file, which imports a multi-scene file once per scene.
+// The Poly Haven hidden_alley carries a "Fog" scene and a "Scene" scene over
+// the same 1,254 meshes, so 1,403 objects arrived as 2,806 instances - and
+// batching absorbed the cost, so nothing but a count could see it.
+//
+// Returns a flag per node, indexed the same as `data->nodes`, so callers keep
+// walking that array in order: node order decides instance order and therefore
+// batch order, and a single-scene file must import exactly as it did before.
+//
+// Iterative with a visited set rather than recursive, because `children` is
+// file data. cgltf_validate does not reject a cycle in it, and a recursive
+// walk on a cyclic file does not return.
+std::vector<bool> nodes_to_draw(const cgltf_data& data) {
+    std::vector<bool> keep(data.nodes_count, false);
+    if (data.nodes_count == 0) {
+        return keep;
+    }
+
+    const cgltf_scene* scene = data.scene;
+    if (scene == nullptr && data.scenes_count > 0) {
+        // A file with scenes but no default: glTF says the client picks, and
+        // the first is the only defensible pick.
+        scene = &data.scenes[0];
+    }
+    if (scene == nullptr) {
+        // No scenes at all. The file never said what to draw, so every node is
+        // the only reading left - which is also what both paths did before.
+        keep.assign(data.nodes_count, true);
+        return keep;
+    }
+
+    const auto index_of = [&data](const cgltf_node* node) -> usize {
+        const usize i = static_cast<usize>(node - data.nodes);
+        return i < data.nodes_count ? i : data.nodes_count;
+    };
+
+    std::vector<const cgltf_node*> stack;
+    for (cgltf_size r = 0; r < scene->nodes_count; ++r) {
+        stack.push_back(scene->nodes[r]);
+    }
+    while (!stack.empty()) {
+        const cgltf_node* node = stack.back();
+        stack.pop_back();
+        if (node == nullptr) {
+            continue;
+        }
+        const usize i = index_of(node);
+        if (i >= data.nodes_count || keep[i]) {
+            continue; // out of this file's array, or already seen
+        }
+        keep[i] = true;
+        for (cgltf_size c = 0; c < node->children_count; ++c) {
+            stack.push_back(node->children[c]);
+        }
+    }
+    return keep;
 }
 
 // Parse the file, load its buffers and validate it. Shared by both load
@@ -332,9 +396,10 @@ public:
         // as one mesh with one model matrix, so parts land in the right place
         // but cannot be moved independently afterwards.
         bool emitted_from_nodes = false;
+        const std::vector<bool> draw = nodes_to_draw(*data);
         for (cgltf_size n = 0; n < data->nodes_count; ++n) {
             const cgltf_node& node = data->nodes[n];
-            if (!node.mesh) {
+            if (!node.mesh || !draw[n]) {
                 continue;
             }
             cgltf_float world[16];
@@ -387,10 +452,14 @@ public:
         // shared default entry rather than to one entry per node.
         std::unordered_map<const cgltf_material*, u32> material_index;
 
+        const std::vector<bool> draw = nodes_to_draw(*data);
         for (cgltf_size n = 0; n < data->nodes_count; ++n) {
             const cgltf_node& node = data->nodes[n];
-            if (!node.mesh) {
-                continue; // a transform-only node: real in glTF, not drawable
+            if (!node.mesh || !draw[n]) {
+                // No mesh: a transform-only node, real in glTF and not
+                // drawable. Not drawn: it belongs to a scene this file does
+                // not default to.
+                continue;
             }
             auto found = mesh_index.find(node.mesh);
             if (found == mesh_index.end()) {

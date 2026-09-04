@@ -1531,6 +1531,59 @@ git push
 
 ---
 
+### Step 6: The two-scene fix, and the numbers it corrects
+
+Landed after Step 5, because importing the alley is what exposed it.
+
+Both load paths walked `data->nodes` — the flat list of *every* node in the
+file — rather than the default scene's roots. A glTF may carry several scenes
+and draw one, and the alley carries two ("Fog" and "Scene") over the same
+1,254 meshes. So every object imported once per scene.
+
+`nodes_to_draw(data)` in `mesh_loader_gltf.cpp` now returns a keep-flag per
+node, and **both** `load()` and `load_scene()` filter on it. One helper, not
+two walks that can disagree. It returns flags rather than a node list so
+callers still walk `data->nodes` in order, which keeps instance and batch order
+identical for a single-scene file — the husky is byte-identical at
+`verts=7132 indices=37506`.
+
+It is iterative with a visited set rather than recursive: `children` is file
+data, `cgltf_validate` does not reject a cycle in it, and a recursive walk on a
+cyclic file does not return.
+
+Two gates, one per path, each red first:
+
+| Gate | Red | Green |
+|---|---|---|
+| `run_gltf_node_transform_gate` (baked) | `default_scene_only=no` | `yes` |
+| `run_gltf_node_gate` (node path) | `scene_nodes=2 scene_x=0.00` | `scene_nodes=1 scene_x=7.00` |
+
+The node path's red is worth reading twice: it imported **two** nodes, and the
+one it reported was scene 0's at x=0 rather than the default scene 1's at x=7.
+A count alone would have passed a walk that found one scene but the wrong one,
+which is why the probe defaults to the *second* scene.
+
+**The corrected import:**
+
+```
+Imported /content/scenes/alley/ph_hidden_alley.gltf:
+  instances=1403/3072 materials=106/128 textures=270
+  skipped_nodes=0 missing_textures=0
+```
+
+**The caps stay at 3072/128 and the ring at 8 MiB.** Step 0 justified them from
+2,806 instances, which was this bug doubling 1,403. The real figure needs half
+the cap — but a cap is a headroom decision, not a fit-this-asset one: 1,403 is
+one scene and the next will be bigger. Lowering it would also mean re-touching
+`kFrameRingBytes` in both backends and re-gating both, for no capability gained.
+So the numbers stand and only their stated reason changes.
+
+Task 6's ROADMAP entry should use **1,403 / 106 / 270**, and should record the
+doubled import as the reason the caps look generous.
+
+
+---
+
 ## Task 6: Close out
 
 - [ ] **Step 1: Both gate paths and the release build**
