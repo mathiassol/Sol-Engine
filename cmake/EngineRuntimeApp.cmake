@@ -20,6 +20,7 @@ function(engine_add_runtime_app TARGET)
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/main.cpp"
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/sandbox_common.cpp"
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/headless.cpp"
+        "${PROJECT_SOURCE_DIR}/packages/sandbox/src/scene_import.cpp"
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/gates/gate_registry.cpp"
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/gates/gates_assets.cpp"
         "${PROJECT_SOURCE_DIR}/packages/sandbox/src/gates/gates_core.cpp"

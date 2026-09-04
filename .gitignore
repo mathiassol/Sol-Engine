@@ -70,6 +70,12 @@ Thumbs.db
 *.so
 *.dylib
 
+# Downloaded third-party scene - not engine source, and not committable to a
+# public repo: ph_hidden_alley.bin alone is 239 MB. The whole directory is
+# ignored rather than just the textures, and r.scene defaults empty, so nothing
+# in the build or the gates depends on it being present.
+packages/sandbox/content/scenes/alley/
+
 # Personal research library — kept locally, not published (public repo).
 # Schematics are figures extracted from those same papers, so they follow the
 # same rule: they stay on disk, they don't go in a public MIT repo.

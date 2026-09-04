@@ -56,6 +56,7 @@
 #include <engine/scene_render/extract.hpp>
 
 #include "sandbox_common.hpp"
+#include "scene_import.hpp"
 #include "gates/gates.hpp"
 #include "gates/gate_registry.hpp"
 
@@ -1163,7 +1164,7 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
         "Forward pass ready (AA default Off / F5 FXAA+SMAA+TAA, F11 windowed/borderless, "
         "Tab/Start walk, Enter/Y follow/orbit/FPS, Space/A jump, pad sticks, motion vectors, "
         "Karis bloom, source cubemap sky, split-sum IBL, PBR GGX, 16-tap Vogel PCF, materials, "
-        "renderer-owned frame, 512 instances, frustum skip, async DXC, glTF husky + mips, HDR, "
+        "renderer-owned frame, instanced draws, frustum skip, async DXC, glTF husky + mips, HDR, "
         "F4 AABBs, Space beep, Z/X, WASD look)");
     return true;
 }
@@ -1637,6 +1638,16 @@ int run_app(int argc, char** argv) {
         engine::log(engine::LogLevel::Warn, engine::LogChannel::Render,
             "Forward pass setup failed — running without rendering");
         gates_ok = false;
+    }
+
+    // After the demo, not instead of it: the demo owns the pipelines, the IBL
+    // maps and the three default material textures that an imported scene's
+    // materials fall back on, and every gate above asserts against the world it
+    // built. r.scene then replaces that world's contents. Empty by default, so
+    // a gate run never takes this path.
+    if (state.forward != nullptr && app.device() != nullptr) {
+        (void)import_scene_from_cvar(*app.device(), *loader, state.forward->meshes,
+            state.forward->textures, state.forward->world);
     }
 
     if (!setup_stats_overlay(app, *loader, *compiler, state)) {
