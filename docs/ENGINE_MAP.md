@@ -193,7 +193,7 @@ features, not a school pile.
 | 4 | Forward lighting: sun + ambient + point slots | **Done** |  |
 | 5 | 1024² sun shadow map | **Done** |  |
 | 6 | HDR scene color + ACES tonemap | **Done** |  |
-| 7 | Materials as data (albedo + metallic + roughness) | **Done** |  |
+| 7 | Materials as data: albedo, normal and metal-rough as `TextureHandle`s into a deduping store, plus metallic/roughness/opacity scalars | **Done** |  |
 | 8 | **PBR BRDF** (GGX / Cook-Torrance on existing metal-rough) | **Done** |  |
 | 9 | Image-based lighting (cubemap mips + BRDF LUT split-sum) | **Done** |  |
 | 10 | PCF (then PCSS if contacts still look like stamps) | **Done** |  |
@@ -267,7 +267,7 @@ file. Not so an inspector can live in the engine.
 
 | # | Item | Status | Finish first |
 |---|------|--------|--------------|
-| 1 | `World`: instances (512), camera, sun, points, materials | **Done** |  |
+| 1 | `World`: instances (3072), camera, sun, points, materials (128) | **Done** |  |
 | 2 | Names on instances (string or interned id) | **Done** |  |
 | 3 | Hierarchy / parenting (transforms compose) | **Done** |  |
 | 4 | Save / load a scene file | **Done** |  |

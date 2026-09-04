@@ -122,6 +122,87 @@ the second backend. Add systems behind packages.
 
 ---
 
+## Materials with textures, and a scene the engine did not ship with (done)
+
+**Why.** `scene::Material::albedo` was a `u32` that the scene-to-renderer
+bridge turned into a texture with `if (material.albedo < kHuskyVariantCount)`.
+It was not an index into a table; there was no table. Normal and metal-rough
+were pinned to built-in defaults, so a material could not name its own maps at
+all. Nothing but content the engine was not built for could show that, which is
+why this row ends by importing a downloaded alley.
+
+**Choice.** A `GpuTextureStore` in `assets-gpu` mirroring `GpuMeshStore`, keyed
+on the resolved content path **plus the colour space** — one image legitimately
+serves as an sRGB albedo and a linear mask, and a path-only key hands the second
+caller the first one's format while the dedupe count still reads as correct.
+`Material` gained three `TextureHandle`s. The bridge moved out of the sandbox
+into a Layer-4 `scene-render` package, which answers decision **A2** and takes
+both coupling `static_assert`s with it, so a game linking it inherits the
+guards instead of writing its own extract. `assets-gltf` gained an additive
+`load_scene` node path; the baked `load()` stays, because the husky and three
+gates use it.
+
+**Gate.** Four reds, each watched before its fix:
+
+- `run_texture_store_gate` at `uploaded=8 resident=4` — a store that re-uploads
+  over a live entry keeps residency correct while making eight upload calls.
+  Residency is what the first draft measured, and it would have passed.
+- `run_material_gate` at `normal_travels=no`, then `albedo_travels=no` and
+  `mr_travels=no` on re-pinning each line. The first version asserted only the
+  normal map: re-pinning albedo rendered the whole demo white and the suite
+  still exited `0`.
+- `run_gltf_node_gate` at `nodes=0`, and at `scene_nodes=2 scene_x=0.00`.
+- `run_gltf_node_transform_gate` at `default_scene_only=no`.
+
+**The measured alley:** `instances=1403/3072 materials=106/128 textures=270
+skipped_nodes=0 missing_textures=0`. 270 uploads for 267 distinct images,
+because three serve as both an sRGB albedo and a linear normal — the composed
+key earning its place.
+
+**The caps did not come free, and an earlier draft of this entry said they did.**
+It claimed `Scene #12` was not needed because `World` was already heap-held.
+That was true of the *demo* `World` and only of it: 20 more were function-scope
+stack locals, and `World` scales with the cap — 66,904 bytes at 512/16,
+401,752 at 3072/128, against a 1 MiB stack. Raising the cap first kills
+`--gates` with `STATUS_STACK_OVERFLOW` on the *first* gate, logging nothing at
+all. The 20 locals are `make_unique` now, which is not `Scene #12` — that row
+heap-backs the *type* and costs the trivially-copyable property.
+
+The cap also broke `run_frame_ring_budget_gate` at −242.6% headroom, so
+`kFrameRingBytes` went 1 MiB → 8 MiB in **both** backends. The number that
+forced it was not the gate's worst case but the scene: 1,254 distinct meshes
+cannot share batches, so the alley really needs 1.61 MiB. `renderer-boundaries.md`
+owned that budget and drew the wrong conclusion from its own numbers — it said
+~7,000 instances, which is the instance-dominated figure, while the same
+paragraph gave the per-batch cost that puts the real ceiling near 900.
+
+**What the alley showed that is not the engine's.** It renders as sky only,
+because the sky pass writes depth `1.0` — the *near* plane under reversed-Z —
+tests `GreaterEqual`, and is registered after `forward` with an opaque blend.
+It has been painting over every opaque fragment in this engine for as long as
+the pass has existed; the husky demo has exactly one translucent variant and
+the `transparent` pass runs after the sky, which is the only reason anything
+was ever visible. **Moving the sky to the far plane leaves all 91 gates green.**
+Nothing here asserts that opaque geometry survives compositing. Recorded as
+**S6**; the gate comes before the shader.
+
+Two oddities are the export's, not ours: one material's base colour points at a
+normal map (`floor_01_Main_02` ← `concrete_debris_nor_gl_4k.png`), and five
+Blender helper materials — `Sky`, `Fog_FG`, `BG_floor`, `blocking_glass_fake`,
+`paralax_interiors` — carry no metal-rough texture, so the white default times
+glTF's `metallicFactor` default of 1.0 makes them mirrors. 105 of 122 materials
+are well-formed and 50 state `metallicFactor: 0` explicitly, so the importer is
+reading the file correctly.
+
+**Do not:** do not key the texture store on the resolved path alone — the
+colour space is part of the key. Do not remove the baked glTF path. Do not
+walk `data->nodes` in a loader; walk the default scene's roots, or a two-scene
+file imports twice. Do not grow `scene_import.cpp`, which `document` replaces.
+Do not raise `kMaxInstances` without moving `kHistorySlots`, heap-holding the
+gate `World`s, and re-checking the frame ring in both backends.
+
+---
+
 ## Phase 12 — Make swap real (done)
 
 **Why:** The package diagram said the renderer was swappable while
