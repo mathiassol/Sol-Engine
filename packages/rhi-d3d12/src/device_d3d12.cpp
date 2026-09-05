@@ -593,8 +593,7 @@ void D3D12CommandList::begin_render_pass(const RenderPassInfo& info) {
         // Follows the device's convention, and is the site that makes a
         // half-applied reversed-Z a black screen: clearing to 1 while the
         // compare says Greater rejects every fragment, silently.
-        const f32 clear_depth =
-            device_.depth_convention() == DepthConvention::Reversed ? 0.0f : 1.0f;
+        const f32 clear_depth = far_depth(device_.depth_convention());
         cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, clear_depth, 0, 0, nullptr);
     }
     in_pass_ = true;
@@ -1173,9 +1172,7 @@ bool D3D12Device::create_depth_buffer() {
 
     // Baked at creation and must match what ClearDepthStencilView passes, or
     // the debug layer reports a mismatch and the driver loses its fast clear.
-    // Reversed-Z clears to 0.
-    const f32 depth_clear_value =
-        depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
+    const f32 depth_clear_value = far_depth(depth_convention_);
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format               = DXGI_FORMAT_D32_FLOAT;
     clear_value.DepthStencil.Depth   = depth_clear_value;
@@ -1740,9 +1737,8 @@ std::unique_ptr<ITexture> D3D12Device::create_texture(const TextureDesc& desc, c
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format = dxgi;
     if (is_depth) {
-        // Must match ClearDepthStencilView; reversed-Z clears to 0.
-        clear_value.DepthStencil.Depth =
-            depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
+        // Must match ClearDepthStencilView.
+        clear_value.DepthStencil.Depth = far_depth(depth_convention_);
     } else {
         clear_value.Color[0] = desc.clear_color.r;
         clear_value.Color[1] = desc.clear_color.g;
@@ -2252,9 +2248,7 @@ std::unique_ptr<ITexture> D3D12Device::create_shadow_texture(const TextureDesc& 
 
     // Baked at creation and must match what ClearDepthStencilView passes, or
     // the debug layer reports a mismatch and the driver loses its fast clear.
-    // Reversed-Z clears to 0.
-    const f32 depth_clear_value =
-        depth_convention_ == DepthConvention::Reversed ? 0.0f : 1.0f;
+    const f32 depth_clear_value = far_depth(depth_convention_);
     D3D12_CLEAR_VALUE clear_value{};
     clear_value.Format = DXGI_FORMAT_D32_FLOAT;
     clear_value.DepthStencil.Depth = depth_clear_value;

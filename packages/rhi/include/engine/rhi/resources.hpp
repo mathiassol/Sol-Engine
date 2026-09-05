@@ -135,6 +135,19 @@ inline DepthTest depth_closer_or_equal(DepthConvention convention) {
                                                    : DepthTest::LessEqual;
 }
 
+// The depth value at the far plane, which is also what a depth target is
+// cleared to. Reversed-Z puts far at 0; standard Z puts it at 1.
+//
+// Two things need it and both got it wrong independently. Every backend that
+// clears a depth attachment wrote this conditional inline - five copies with
+// no owner - and the sky's vertex shader emitted a literal 1.0, which under
+// reversed-Z is the *near* plane, so the sky passed GreaterEqual against every
+// opaque fragment in the frame and overwrote it (S6). Say "far" and derive the
+// number.
+inline f32 far_depth(DepthConvention convention) {
+    return convention == DepthConvention::Reversed ? 0.f : 1.f;
+}
+
 // Shadow-map slope bias pushes samples *away* from the light, and which sign
 // that is flips with the depth direction. A positive bias under reversed-Z
 // pulls them toward it, which is shadow acne with no error.

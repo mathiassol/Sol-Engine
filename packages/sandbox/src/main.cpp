@@ -1113,6 +1113,12 @@ void poll_shader_reload(engine::rhi::IDevice& device, ForwardDemo& demo) {
     if (!run_sky_gate(*demo) && fail_on_gate) {
         return false;
     }
+    // After run_sky_gate, which proves the constants are right, and with the
+    // demo's own sky pipeline and cubemap - this is the gate that reads a
+    // composited pixel.
+    if (!run_sky_compositing_gate(*device, *demo, compiler, depth_path) && fail_on_gate) {
+        return false;
+    }
     if (!run_bloom_gate(*demo) && fail_on_gate) {
         return false;
     }

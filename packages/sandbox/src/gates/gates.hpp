@@ -127,6 +127,16 @@ bool run_ibl_gate(const ForwardDemo& demo);
 
 bool run_sky_gate(const ForwardDemo& demo);
 
+// S6: the sky must not paint over opaque geometry, and must still paint where
+// nothing was drawn. Both halves, because without the second "never draw the
+// sky at all" passes. Uses the *real* sky pipeline and the shipped sky shader
+// - the defect was one literal inside sky.hlsl's vertex shader, so a stand-in
+// would assert nothing about the pass that ships. `depth_shader_path` is
+// parity_depth_gate.hlsl, whose full-target triangle at a chosen clip-space z
+// is the occluder.
+bool run_sky_compositing_gate(engine::rhi::IDevice& device, const ForwardDemo& demo,
+    engine::shaders::IShaderCompiler& compiler, const std::string& depth_shader_path);
+
 bool run_bloom_gate(const ForwardDemo& demo);
 
 bool run_aa_gate(const ForwardDemo& demo);

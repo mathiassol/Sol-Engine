@@ -88,6 +88,7 @@ const GateEntry kGates[] = {
         [](const CpuGateContext&) { return run_pbr_gate(); }},
     {"run_ibl_gate", GateKind::Gpu, nullptr},
     {"run_sky_gate", GateKind::Gpu, nullptr},
+    {"run_sky_compositing_gate", GateKind::Gpu, nullptr},
     {"run_bloom_gate", GateKind::Gpu, nullptr},
     {"run_aa_gate", GateKind::Gpu, nullptr},
     {"run_taa_gate", GateKind::Gpu, nullptr},

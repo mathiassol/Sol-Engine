@@ -158,7 +158,7 @@ meaningless assertion out, two real ones in.
 `albedo=/content/x.png` with load-time resolution, and does it pick up
 `opacity`, which is *already* not serialized (`scene_file.cpp:192-198`)?
 
-## S6 — The sky pass paints over every opaque fragment, and no gate can tell
+## S6 — The sky pass painted over every opaque fragment, and no gate could tell (answered)
 
 **Raised 4 Sep 2026** by importing the alley, which is the first scene with no
 translucent material in it. Not an audit finding. **This is a live bug in
@@ -210,6 +210,38 @@ confirmed — but:
 
 Do these in that order: gate, then shader, then re-tune exposure with the
 sweep repeated honestly.
+
+**Answered 5 Sep 2026**, in that order. The full Why / Choice / Gate / Do-not
+entry is in [../ROADMAP.md](../ROADMAP.md) — "S6 — the sky was painting over
+every opaque fragment, and 91 gates agreed"; only what this file owes a reader
+is repeated here.
+
+**What the gate now asserts.** `run_sky_compositing_gate` (Gpu,
+`gates_renderer.cpp`) drives the **real** sky pipeline and the shipped
+`sky.hlsl` — not a stand-in, since the defect was a literal inside that shader
+— into an `RGBA16_FLOAT` target, and reads one probe texel back as halves in
+two conditions:
+
+1. An occluder drawn at a near-ish depth, then the sky over it in the shipped
+   order. The probe must still read the occluder's colour, exactly.
+2. Nothing drawn, so depth is left at its clear value — the far plane. The
+   probe must read the sky, not the clear colour.
+
+**Both clauses are required**: without the second, "never draw the sky at all"
+satisfies the first. The sky expectation is computed from the same ray
+`direction_from_ndc` reconstructs and the same `ibl::sky_radiance` the cubemap
+was baked from, rather than a remembered number; both backends measure 0.1%
+error and read back byte-identical halves, so the tolerance is 2%. It failed
+first, reading the sky's `39F1/3A8B/3B9B` where the occluder's `4000/4400/4800`
+belonged, and passes on both backends now. `run_sky_gate` gained the CPU half:
+`far_depth` under **both** conventions, not the live one.
+
+The other two follow-ups are done with it. `rhi::far_depth(DepthConvention)`
+now owns the expression that existed five times unowned across the two
+backends, and `sky::Constants` carries the value in a named field with no
+default argument on `make_constants`. The exposure sweep was repeated against
+the fixed frame and the -2.0 EV default survived it on merit; the readings, old
+and new, are in `sandbox_common.cpp`'s comment and in the ROADMAP entry.
 
 ## R1 — Should per-batch constants be one indexed array instead of one upload each?
 

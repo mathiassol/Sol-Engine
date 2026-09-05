@@ -23,10 +23,21 @@ engine::Cvar cv_text_comment{
 // The AA default is demo state, not engine state, so the knob is read here
 // rather than in Engine::init.
 engine::Cvar cv_aa{"r.aa", "off", "Anti-aliasing: off | fxaa | smaa | taa"};
-// -2.0 EV (a 0.25x multiplier) was picked by screenshot sweep, not derived:
-// mean frame luminance runs 203/255 at 0 EV, 168 at -1, 147 at -1.5 and 126 at
-// -2.0, and -2.0 is where the sky keeps a gradient, the sun reads as a disc
-// rather than a blown band, and the floor holds contrast into the distance.
+// -2.0 EV (a 0.25x multiplier) was picked by screenshot sweep, not derived.
+//
+// Re-measured 5 Sep 2026 against a frame that actually draws its opaque
+// geometry. The previous readings - 203/255 at 0 EV, 168 at -1, 147 at -1.5,
+// 126 at -2.0 - predate S6, when the sky was painting over every opaque
+// fragment and the sweep was judging a frame that was mostly sky. Rec.709 mean
+// luminance over the 1280x720 client area of the husky demo now runs 208 at
+// 0 EV, 190 at -0.5, 170 at -1, 148 at -1.5, 125 at -2.0, 102 at -2.5 and 82
+// at -3.0. The same sweep on the unfixed frame reads 216/179/156/132 at
+// 0/-1/-1.5/-2.0, so the whole curve moved down about seven levels and did not
+// change shape: the checker floor lands near the tone of the sky it was hiding
+// behind. -2.0 stays, and now on merit - it is where the sky keeps a gradient,
+// the sun reads as a disc rather than a blown band, and the floor holds
+// contrast into the distance while the huskies keep their fur detail, which
+// -2.5 starts to lose.
 engine::Cvar cv_exposure{"r.exposure", -2.0f,
     "Exposure in EV stops; the multiplier is 2^ev. Scales sun, sky and IBL together."};
 

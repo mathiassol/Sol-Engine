@@ -6,7 +6,7 @@ is not the work list. The backlog is [ENGINE_MAP.md](ENGINE_MAP.md): pick one
 **Ready** row. Those two files are canonical: the management service mirrors
 them and renders views, but the file wins any disagreement.
 
-Last updated: 3 Sep 2026.
+Last updated: 5 Sep 2026.
 
 ---
 
@@ -28,7 +28,7 @@ how.
 
 ## Audit — foundation today (after phase 14)
 
-Measured 4 Sep 2026: **35,757 lines** of C++/HLSL in **182 files**, **29
+Measured 5 Sep 2026: **36,117 lines** of C++/HLSL in **182 files**, **29
 packages** (engine sources; the ~2 MB of vendored Vulkan headers and volk under
 `packages/rhi-vulkan/third_party/` are **not** counted, the same way `cgltf.h`
 is not — so a vendor drop does not move this figure). `sandbox` is still the
@@ -119,6 +119,112 @@ the second backend. Add systems behind packages.
 | 13 | Materials | **Done** | Shading reads a material, not a hardcoded albedo slot |
 | 14 | RHI contract | **Done** | `ICommandList` can express samplers + compute; shader desc is not DXIL-only |
 | **15+** | **Engine + graphics** | **Next** | Any Ready row. TAA is Done. CSM waits on a larger scene. No in-engine editor. |
+
+---
+
+## S6 — the sky was painting over every opaque fragment, and 91 gates agreed (done)
+
+**Why.** `sky.hlsl`'s vertex shader emitted `float4(clip, 1.0, 1.0)`. Under this
+engine's reversed-Z, 1.0 is the **near** plane. The sky pipeline tests
+`depth_closer_or_equal` — `GreaterEqual` — and the sky pass is registered after
+`forward`, so it passed the depth test against every opaque fragment in the
+frame and, with an opaque blend, overwrote it. The checker floor had never
+rendered. Of the 63 huskies, only the ~16 whose material variant is translucent
+were ever visible, because the `transparent` pass runs after the sky.
+
+The bug is one literal. **The finding is that 91 gates passed while the engine
+drew none of its opaque geometry** — and passed byte-identically with the sky
+moved to the far plane. Every GPU gate here proves a draw was *submitted*
+(batch counts, instance counts, vertex-buffer readbacks) or that a frame
+completed. Not one read a composited pixel where geometry should be. So the
+gate is the substance of this change and the shader edit is one line, and they
+were done in that order: the gate was written first and watched fail.
+
+Raised 4 Sep 2026 by importing the alley (`ph_hidden_alley.gltf`) — the first
+scene with no translucent material in it, and therefore the first frame that
+was *entirely* sky. It corrects World #1's "clip `z = w`" line, which described
+what shipped and was wrong about which plane that is.
+
+**Choice.** Three, in the order they had to happen.
+
+`rhi::far_depth(DepthConvention)` — `0.f` reversed, `1.f` standard — beside
+`depth_closer_or_equal` and `depth_bias_for`. The expression already existed
+**five times with no owner**: four depth-clear sites in `device_d3d12.cpp` and
+one in `commands_vulkan.cpp`. All five now call it. That is the whole reason to
+add a helper rather than write a sixth copy inline, and it is the same failure
+`depth_closer` exists for — a call site that hard-codes one convention passes a
+one-sided check.
+
+`sky::Constants` gains a **named** `far_depth` field, not a spare `w` on
+`sun_direction`; the struct goes 112 → 128 bytes. `make_constants` takes the
+value with **no default argument**, because a default is exactly how a caller
+silently gets the other convention. `record_sky` passes
+`far_depth(ctx.device.depth_convention())`. The frame ring is unmoved: 112 and
+128 both round to the 256-byte alignment, and `Frame ring budget gate` still
+prints `fixed=3840`. `sky::kFarClipZ = 1.f` was deleted — unused, and now
+actively wrong.
+
+Exposure was re-measured rather than assumed. `r.exposure` defaults to -2.0 EV
+and its comment recorded a screenshot sweep — 203/255 at 0 EV, 168 at -1, 147
+at -1.5, 126 at -2.0 — every reading taken against a frame that was mostly sky.
+Repeated on the fixed frame (Rec.709 mean over the 1280×720 client area of the
+husky demo): **208 at 0 EV, 190 at -0.5, 170 at -1, 148 at -1.5, 125 at -2.0,
+102 at -2.5, 82 at -3.0**. The same sweep on the unfixed frame reads
+216/179/156/132 at 0/-1/-1.5/-2.0, so the whole curve dropped about seven
+levels and did not change shape — the checker floor lands near the tone of the
+sky it was hiding behind. **-2.0 stays**, now on merit: the sky keeps a
+gradient, the sun reads as a disc, the floor holds contrast into the distance,
+and the huskies keep fur detail that -2.5 starts to lose.
+
+**Gate (met):** `run_sky_compositing_gate`, Gpu, in `gates_renderer.cpp`, using
+the **real** sky pipeline and the shipped sky shader — a stand-in would assert
+nothing about the pass that ships, since the defect lived inside `sky.hlsl`.
+Two clauses, and **both are required**: with an occluder drawn at a near-ish
+depth the probe must still read the occluder's colour, and with nothing drawn
+(depth left at its clear value) it must read the sky rather than the clear
+colour. Without the second, "never draw the sky at all" passes.
+
+The occluder is `parity_depth_gate.hlsl`'s full-target triangle at a chosen
+clip-space z; both targets are `RGBA16_FLOAT`, so the gate reads halves and
+prints them. Before the shader fix it failed exactly as intended, with the sky's
+own value where the geometry should have been:
+
+```
+Sky compositing gate [d3d12]: sky_z=0 geometry_z=0.75 covered=39F1/3A8B/3B9B=
+0.74/0.82/0.95 (want tint 2.00/4.00/8.00) empty=39F1/3A8B/3B9B=0.743/0.818/0.951
+(want sky 0.743/0.818/0.951 err=0.1% max=12%, clear=0.500/0.250/0.125) (FAIL)
+```
+
+After, on both backends, byte-identically:
+
+```
+Sky compositing gate [d3d12]: sky_z=0 geometry_z=0.75 covered=4000/4400/4800=
+2.00/4.00/8.00 (want tint 2.00/4.00/8.00) empty=39F1/3A8B/3B9B=0.743/0.818/0.951
+(want sky 0.743/0.818/0.951 err=0.1% max=2%, clear=0.500/0.250/0.125) (pass)
+```
+
+The empty-case expectation is computed, not remembered: the same ray
+`direction_from_ndc` reconstructs, the same `ibl::sky_radiance` the cubemap was
+baked from, the same `apply_sun_disk`. Measured error is 0.1% on both backends,
+so the tolerance is 2% — twenty times the observed error and two orders below
+the gap to either the clear colour or the tint. `run_sky_gate` gained the CPU
+half, asserting `far_depth` under **both** conventions rather than the live one.
+
+92 gates (40 Cpu / 52 Gpu), exit 0 on `--gates`, `--rhi=vulkan --gates`,
+`--gates-cpu`, and Release `game.exe --gates`. `ENGINE_GPU_DEBUG=1` on both
+backends: D3D12 debug layer 0 messages / 0 errors / 0 warnings, Vulkan
+validation silent. Invariants 20/20. Looked at, which is the point of this row:
+the husky demo now draws the checker floor and all 63 huskies, and the alley
+renders its walls, gate, pipes, foliage and manhole.
+
+**Do not:** do not change the pass order, the sky's blend mode, or
+`depth_write = false` — the bug was the emitted depth value, not the pipeline
+state, and the `transparent` pass being registered after the sky is correct.
+Do not give `make_constants`' far parameter a default. Do not "fix" the alley's
+content oddities in passing — one material's base colour points at a normal map
+and five Blender helper materials carry no metal-rough texture; those are the
+export's, not the engine's. And do not read a gate count as coverage: this row
+is the counterexample.
 
 ---
 
@@ -391,6 +497,11 @@ IBL still has no disk so the directional (~4.8) is not double-counted. Clip
 `z = w`, `LessEqual`, depth write off. `--gates` logs
 `Sky gate: cubemap=yes source_not_ggx=yes intensity=1 sun_disk=skybox (pass)`.
 GPU debug clean.
+
+**Superseded in part by S6 above:** "clip `z = w`" was wrong about which plane
+that is under reversed-Z, and the sky painted over every opaque fragment from
+this entry until 5 Sep 2026. The depth the vertex shader emits now comes from
+`rhi::far_depth`, and the gate line has grown a `far(standard,reversed)` field.
 
 **Do not (still):** Hosek-Wilkie / Preetham, HDRI/EXR loader (swap the SRV
 when that exists), a sun disk **in IBL**, a `world` package with no impl.

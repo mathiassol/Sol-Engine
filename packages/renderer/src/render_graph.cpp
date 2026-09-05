@@ -294,8 +294,8 @@ void record_sky(PassContext& ctx) {
     }
 
     const sky::Constants constants = sky::make_constants(ctx.snapshot.view, ctx.snapshot.projection,
-        ctx.snapshot.lighting.sun_direction, ctx.snapshot.lighting.sun_color,
-        ctx.snapshot.taa_jitter);
+        rhi::far_depth(ctx.device.depth_convention()), ctx.snapshot.lighting.sun_direction,
+        ctx.snapshot.lighting.sun_color, ctx.snapshot.taa_jitter);
     const rhi::FrameAllocation slice = ctx.device.alloc_frame_memory(sizeof(constants));
     if (!slice.buffer) {
         return;  // constant ring exhausted this frame; skip the pass

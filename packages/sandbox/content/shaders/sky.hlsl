@@ -5,6 +5,10 @@ cbuffer SkyConstants : register(b0) {
     float4 ndc_scale;
     float4 sun_direction;
     float4 sun_color;
+    // .x is the far plane's clip-space z under the device's depth convention,
+    // supplied by the CPU. A literal here is the near plane under reversed-Z
+    // and the sky then paints over every opaque fragment (S6).
+    float4 far_depth;
 };
 
 TextureCube radiance_map : register(t0);
@@ -26,7 +30,7 @@ PSInput vs_main(uint id : SV_VertexID) {
     PSInput output;
     float2 uv = fullscreen_uv(id);
     float2 clip = uv_to_ndc(uv);
-    output.pos = float4(clip, 1.0, 1.0);
+    output.pos = float4(clip, far_depth.x, 1.0);
     output.ndc = clip;
     return output;
 }

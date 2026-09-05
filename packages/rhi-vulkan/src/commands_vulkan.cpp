@@ -250,10 +250,10 @@ void VulkanCommandList::begin_render_pass(const RenderPassInfo& info) {
                                                    : VK_ATTACHMENT_LOAD_OP_LOAD;
         depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         // Follows the device's convention, exactly as the D3D12 backend does.
-        // Reversed-Z clears to 0; clearing to 1 while the compare says Greater
-        // rejects every fragment, silently.
+        // Clearing to the near end while the compare says Greater rejects every
+        // fragment, silently.
         depth_attachment.clearValue.depthStencil.depth =
-            device_.depth_convention() == DepthConvention::Reversed ? 0.f : 1.f;
+            far_depth(device_.depth_convention());
     }
 
     VkRenderingInfo rendering{};

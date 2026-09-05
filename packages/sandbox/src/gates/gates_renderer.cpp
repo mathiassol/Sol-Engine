@@ -642,7 +642,14 @@ bool run_sky_gate(const ForwardDemo& demo) {
         {0.f, 0.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f});
     const engine::math::Mat4 projection = engine::math::Mat4::perspective(
         engine::math::radians(60.f), 16.f / 9.f, 0.1f, 100.f);
-    const auto constants = make_constants(view, projection, sun_dir, sun_col);
+    // Both conventions, not just the live one: `far_depth` is the field the sky
+    // paints the whole frame over when it is wrong, and a one-sided check is
+    // satisfied by a constant.
+    const auto standard = make_constants(view, projection,
+        engine::rhi::far_depth(engine::rhi::DepthConvention::Standard), sun_dir, sun_col);
+    const auto constants = make_constants(view, projection,
+        engine::rhi::far_depth(engine::rhi::DepthConvention::Reversed), sun_dir, sun_col);
+    const bool far_ok = standard.far_depth.x == 1.f && constants.far_depth.x == 0.f;
     const engine::math::Vec3 forward = direction_from_ndc({0.f, 0.f}, constants);
     const engine::math::Vec3 up = direction_from_ndc({0.f, 1.f}, constants);
     const bool ray_ok = forward.z > 0.9f && std::abs(forward.x) < 0.05f && up.y > forward.y;
@@ -655,11 +662,312 @@ bool run_sky_gate(const ForwardDemo& demo) {
         && demo.sky_cubemap.get() != demo.ibl_irradiance.get();
 
     const bool passed = mode_ok && intensity_ok && sun_ok && gradient_ok && ibl_no_disk && disk_ok
-        && ray_ok && cube_ok;
+        && ray_ok && cube_ok && far_ok;
     char message[224];
     std::snprintf(message, sizeof(message),
-        "Sky gate: cubemap=yes source_not_ggx=yes intensity=1 sun_disk=skybox (%s)",
+        "Sky gate: cubemap=yes source_not_ggx=yes intensity=1 sun_disk=skybox "
+        "far(standard,reversed)=%.0f/%.0f (%s)",
+        static_cast<double>(standard.far_depth.x), static_cast<double>(constants.far_depth.x),
         passed ? "pass" : "FAIL");
+    engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
+        engine::LogChannel::Render, message);
+    return passed;
+}
+
+// RGBA16_FLOAT is what scene_color is, so a gate that reads a composited pixel
+// reads halves. Decoded rather than compared as raw bits, because the sky's
+// value is only known to a tolerance while the geometry's is exact.
+static engine::f32 half_to_float(engine::u16 bits) {
+    const engine::u32 exponent = (bits >> 10) & 0x1Fu;
+    const engine::u32 mantissa = bits & 0x3FFu;
+    engine::f32 value = 0.f;
+    if (exponent == 0) {
+        // Subnormal: no implicit leading 1, and the exponent is fixed at 2^-14.
+        value = static_cast<engine::f32>(mantissa) / 1024.f * 6.103515625e-05f;
+    } else if (exponent == 31) {
+        // inf or NaN. Nothing rendered here can produce one, so a finite
+        // sentinel that fails every comparison below is enough and keeps the
+        // message readable.
+        value = 1.e30f;
+    } else {
+        value = (1.f + static_cast<engine::f32>(mantissa) / 1024.f)
+            * std::ldexp(1.f, static_cast<int>(exponent) - 15);
+    }
+    return (bits & 0x8000u) != 0 ? -value : value;
+}
+
+bool run_sky_compositing_gate(engine::rhi::IDevice& device, const ForwardDemo& demo,
+    engine::shaders::IShaderCompiler& compiler, const std::string& depth_shader_path) {
+    // S6. The sky must not paint over opaque geometry, and it must still paint
+    // where nothing was drawn. **Both halves are required**: without the second,
+    // "never draw the sky at all" satisfies the first.
+    //
+    // The real sky pipeline and the real sky shader, borrowed from the demo. A
+    // hand-built stand-in would assert something about this gate rather than
+    // about the pass that ships - and what went wrong was one literal inside
+    // sky.hlsl's vertex shader, which only the shipped shader has.
+    //
+    // Why nothing caught this for 91 gates: every other GPU gate proves a draw
+    // was *submitted* - batch counts, instance counts, vertex-buffer readbacks
+    // - or that a frame completed. None read a composited pixel where geometry
+    // should be, so the engine drew none of its opaque geometry and the suite
+    // stayed green.
+
+    using State = engine::rhi::ResourceState;
+    constexpr engine::u32 kExtent = 64;
+    constexpr engine::u32 kProbeX = kExtent / 2;
+    constexpr engine::u32 kProbeY = kExtent / 2;
+    // Exactly representable as halves, and unreachable by the sky: the source
+    // cubemap is a daylight gradient in the low single digits and the disk adds
+    // to it, so 2/4/8 as a triple cannot occur by accident.
+    constexpr engine::f32 kTint[3] = {2.f, 4.f, 8.f};
+    // Also exact, so "the sky never drew" is an exact comparison. It has to
+    // agree with TextureDesc::clear_color or one backend's debug layer reports
+    // the mismatch on every clear.
+    const engine::rhi::Color4 kClear{0.5f, 0.25f, 0.125f, 1.f};
+
+    const engine::rhi::DepthConvention convention = device.depth_convention();
+    const bool reversed = convention == engine::rhi::DepthConvention::Reversed;
+    // Derived, never written down. The geometry sits between the planes and the
+    // sky sits at the far one, whichever end of the range that is.
+    const engine::f32 geometry_z = reversed ? 0.75f : 0.25f;
+    const engine::f32 sky_z = engine::rhi::far_depth(convention);
+
+    const engine::shaders::ShaderTarget target = shader_target_for(device);
+    auto compile = [&](const char* entry, const char* profile,
+                       engine::shaders::ShaderBytecode& out) {
+        engine::shaders::ShaderCompileDesc desc{};
+        desc.file_path = depth_shader_path;
+        desc.entry_point = entry;
+        desc.target_profile = profile;
+        desc.target = target;
+        std::string error;
+        const bool ok = compiler.compile(desc, out, error) && !out.data.empty();
+        if (!ok && !error.empty()) {
+            engine::log(engine::LogLevel::Error, engine::LogChannel::Render, error);
+        }
+        return ok;
+    };
+
+    // The occluder is the depth-parity shader: a full-target triangle at a
+    // clip-space z the constant buffer chooses, which is exactly what is needed
+    // and already compiles on both backends.
+    engine::shaders::ShaderBytecode vs{};
+    engine::shaders::ShaderBytecode ps{};
+    const bool compiled = !depth_shader_path.empty() && compile("vs_main", "vs_6_0", vs)
+        && compile("ps_main", "ps_6_0", ps);
+
+    auto make_color = [&](const char* name) {
+        engine::rhi::TextureDesc desc{};
+        desc.width = kExtent;
+        desc.height = kExtent;
+        // scene_color's format, because that is the target the sky writes into.
+        desc.format = engine::rhi::Format::RGBA16_FLOAT;
+        desc.usage = engine::rhi::TextureUsage::RenderTarget;
+        desc.clear_color = kClear;
+        auto texture = device.create_texture(desc, nullptr);
+        if (texture) {
+            device.set_debug_name(*texture, name);
+        }
+        return texture;
+    };
+    auto make_depth = [&](const char* name) {
+        engine::rhi::TextureDesc desc{};
+        desc.width = kExtent;
+        desc.height = kExtent;
+        desc.format = engine::rhi::Format::D32_FLOAT;
+        desc.usage = engine::rhi::TextureUsage::DepthStencil;
+        auto texture = device.create_texture(desc, nullptr);
+        if (texture) {
+            device.set_debug_name(*texture, name);
+        }
+        return texture;
+    };
+    auto covered_color = make_color("gate/sky_covered");
+    auto covered_depth = make_depth("gate/sky_covered_depth");
+    auto empty_color = make_color("gate/sky_empty");
+    auto empty_depth = make_depth("gate/sky_empty_depth");
+
+    engine::rhi::GraphicsPipelineDesc geometry{};
+    geometry.vertex_shader = std::span<const engine::u8>(vs.data);
+    geometry.pixel_shader = std::span<const engine::u8>(ps.data);
+    geometry.uniform_buffer_count = 1;
+    geometry.color_format = engine::rhi::Format::RGBA16_FLOAT;
+    geometry.depth_format = engine::rhi::Format::D32_FLOAT;
+    geometry.depth = engine::rhi::depth_closer(convention);
+    geometry.depth_write = true;
+    geometry.cull = engine::rhi::CullMode::None;
+    geometry.debug_name = "sky_compositing_occluder";
+    auto geometry_pso = compiled ? device.create_graphics_pipeline(geometry) : nullptr;
+
+    struct GeometryConstants {
+        engine::f32 tint[4];
+        engine::f32 params[4];
+    };
+    GeometryConstants geometry_constants{};
+    geometry_constants.tint[0] = kTint[0];
+    geometry_constants.tint[1] = kTint[1];
+    geometry_constants.tint[2] = kTint[2];
+    geometry_constants.tint[3] = 1.f;
+    geometry_constants.params[0] = geometry_z;
+    engine::rhi::BufferDesc geometry_cb_desc{};
+    geometry_cb_desc.size = sizeof(GeometryConstants);
+    geometry_cb_desc.usage = engine::rhi::BufferUsage::Uniform;
+    auto geometry_cb = device.create_buffer(geometry_cb_desc, &geometry_constants);
+
+    // The demo's own sun, so the disk term the shader adds is the one the frame
+    // adds, not a simplification the gate invented.
+    const engine::math::Vec3 sun_dir = demo.world.sun.direction.normalized();
+    const engine::math::Vec3 sun_col = demo.world.sun.color;
+    const engine::math::Mat4 view =
+        engine::math::Mat4::look_at({0.f, 0.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f});
+    const engine::math::Mat4 projection = reversed
+        ? engine::math::Mat4::perspective_reversed_z(engine::math::radians(60.f), 1.f, 0.1f, 100.f)
+        : engine::math::Mat4::perspective(engine::math::radians(60.f), 1.f, 0.1f, 100.f);
+    const engine::renderer::sky::Constants sky_constants =
+        engine::renderer::sky::make_constants(view, projection, sky_z, sun_dir, sun_col);
+    engine::rhi::BufferDesc sky_cb_desc{};
+    sky_cb_desc.size = sizeof(sky_constants);
+    sky_cb_desc.usage = engine::rhi::BufferUsage::Uniform;
+    auto sky_cb = device.create_buffer(sky_cb_desc, &sky_constants);
+
+    constexpr engine::usize kPixelBytes = 8;
+    std::vector<engine::u8> covered_pixels(
+        static_cast<engine::usize>(kExtent) * kExtent * kPixelBytes, 0);
+    std::vector<engine::u8> empty_pixels(covered_pixels.size(), 0);
+    bool read_ok = false;
+    const bool ready = compiled && covered_color && covered_depth && empty_color && empty_depth
+        && geometry_pso && geometry_cb && sky_cb && demo.pipelines.sky != nullptr
+        && demo.sky_cubemap;
+
+    if (ready) {
+        auto draw_sky = [&](engine::rhi::ICommandList& cmd) {
+            cmd.set_pipeline(*demo.pipelines.sky);
+            cmd.set_constant_buffer(0, *sky_cb);
+            // Already in ShaderRead: a sampled texture created with initial data
+            // is left ready to sample by both backends.
+            cmd.set_shader_resource(0, *demo.sky_cubemap);
+            cmd.draw(3, 0);
+        };
+
+        device.begin_frame();
+        auto& cmd = device.command_list();
+        cmd.begin();
+        cmd.transition(*covered_color, State::Common, State::RenderTarget);
+        cmd.transition(*empty_color, State::Common, State::RenderTarget);
+
+        // Case 1: opaque geometry, then the sky over it, in the shipped order.
+        engine::rhi::RenderPassInfo covered{};
+        covered.color = covered_color.get();
+        covered.depth = covered_depth.get();
+        covered.clear_color = kClear;
+        covered.clear_color_target = true;
+        covered.clear_depth = true;
+        cmd.begin_render_pass(covered);
+        cmd.set_pipeline(*geometry_pso);
+        cmd.set_constant_buffer(0, *geometry_cb);
+        cmd.draw(3, 0);
+        draw_sky(cmd);
+        cmd.end_render_pass();
+
+        // Case 2: nothing drawn, so depth is left at its clear value - the far
+        // plane - and the sky must win there.
+        engine::rhi::RenderPassInfo empty{};
+        empty.color = empty_color.get();
+        empty.depth = empty_depth.get();
+        empty.clear_color = kClear;
+        empty.clear_color_target = true;
+        empty.clear_depth = true;
+        cmd.begin_render_pass(empty);
+        draw_sky(cmd);
+        cmd.end_render_pass();
+
+        cmd.transition(*covered_color, State::RenderTarget, State::CopySrc);
+        cmd.transition(*empty_color, State::RenderTarget, State::CopySrc);
+        cmd.end();
+        device.submit();
+        device.wait_idle();
+        read_ok =
+            device.read_texture(*covered_color, covered_pixels.data(), covered_pixels.size())
+            && device.read_texture(*empty_color, empty_pixels.data(), empty_pixels.size());
+    }
+
+    engine::u16 covered_bits[3]{};
+    engine::u16 empty_bits[3]{};
+    engine::f32 covered_rgb[3]{};
+    engine::f32 empty_rgb[3]{};
+    auto probe = [&](const std::vector<engine::u8>& pixels, engine::u16 bits_out[3],
+                     engine::f32 rgb_out[3]) {
+        const engine::usize offset =
+            (static_cast<engine::usize>(kProbeY) * kExtent + kProbeX) * kPixelBytes;
+        for (engine::u32 c = 0; c < 3; ++c) {
+            engine::u16 bits = 0;
+            std::memcpy(&bits, &pixels[offset + c * 2], sizeof(bits));
+            bits_out[c] = bits;
+            rgb_out[c] = half_to_float(bits);
+        }
+    };
+    probe(covered_pixels, covered_bits, covered_rgb);
+    probe(empty_pixels, empty_bits, empty_rgb);
+
+    // What the sky shader should produce at this exact pixel: the same ray the
+    // shader reconstructs, the same radiance the cubemap was baked from, and the
+    // same disk term. Computed rather than compared against a remembered number,
+    // so retuning the sun does not turn this red for the wrong reason.
+    const engine::f32 probe_ndc_x =
+        (static_cast<engine::f32>(kProbeX) + 0.5f) / static_cast<engine::f32>(kExtent) * 2.f - 1.f;
+    const engine::f32 probe_ndc_y =
+        1.f - (static_cast<engine::f32>(kProbeY) + 0.5f) / static_cast<engine::f32>(kExtent) * 2.f;
+    const engine::math::Vec3 ray =
+        engine::renderer::sky::direction_from_ndc({probe_ndc_x, probe_ndc_y}, sky_constants);
+    const engine::math::Vec3 want_sky = engine::renderer::sky::apply_sun_disk(
+        ray, engine::renderer::sky::radiance(ray), sun_dir, sun_col);
+    const engine::f32 want_sky_rgb[3] = {want_sky.x, want_sky.y, want_sky.z};
+
+    // Clause 1: the geometry's colour survived compositing, exactly.
+    const bool geometry_survives = read_ok && covered_rgb[0] == kTint[0]
+        && covered_rgb[1] == kTint[1] && covered_rgb[2] == kTint[2];
+    // Clause 2, in three parts, because "the sky is there" is what a pass that
+    // draws nothing would otherwise satisfy.
+    const bool empty_not_clear = read_ok
+        && !(empty_rgb[0] == kClear.r && empty_rgb[1] == kClear.g && empty_rgb[2] == kClear.b);
+    const bool empty_not_geometry = read_ok
+        && !(empty_rgb[0] == kTint[0] && empty_rgb[1] == kTint[1] && empty_rgb[2] == kTint[2]);
+    // The cubemap is a 128px bake sampled bilinearly and stored as halves, and
+    // the disk's pow() is not bit-identical between HLSL and libm, so this is a
+    // tolerance rather than an equality. Both backends measure 0.1% against the
+    // CPU prediction and read back byte-identical halves, so 2% is twenty times
+    // the observed error and still two orders below the gap between the sky and
+    // either the clear colour or the tint.
+    constexpr engine::f32 kTolerance = 0.02f;
+    engine::f32 sky_error = 0.f;
+    for (engine::u32 c = 0; c < 3; ++c) {
+        const engine::f32 want = want_sky_rgb[c];
+        const engine::f32 diff = std::fabs(empty_rgb[c] - want);
+        const engine::f32 relative = want > 1.e-4f ? diff / want : diff;
+        sky_error = std::max(sky_error, relative);
+    }
+    const bool empty_is_sky = read_ok && sky_error <= kTolerance;
+
+    const bool passed = ready && read_ok && geometry_survives && empty_not_clear
+        && empty_not_geometry && empty_is_sky;
+
+    char message[416];
+    std::snprintf(message, sizeof(message),
+        "Sky compositing gate [%s]: sky_z=%.0f geometry_z=%.2f covered=%04X/%04X/%04X="
+        "%.2f/%.2f/%.2f (want tint %.2f/%.2f/%.2f) empty=%04X/%04X/%04X=%.3f/%.3f/%.3f "
+        "(want sky %.3f/%.3f/%.3f err=%.1f%% max=%.0f%%, clear=%.3f/%.3f/%.3f) (%s)",
+        api_name_for(device), static_cast<double>(sky_z), static_cast<double>(geometry_z),
+        covered_bits[0], covered_bits[1], covered_bits[2], static_cast<double>(covered_rgb[0]),
+        static_cast<double>(covered_rgb[1]), static_cast<double>(covered_rgb[2]),
+        static_cast<double>(kTint[0]), static_cast<double>(kTint[1]),
+        static_cast<double>(kTint[2]), empty_bits[0], empty_bits[1], empty_bits[2],
+        static_cast<double>(empty_rgb[0]), static_cast<double>(empty_rgb[1]),
+        static_cast<double>(empty_rgb[2]), static_cast<double>(want_sky_rgb[0]),
+        static_cast<double>(want_sky_rgb[1]), static_cast<double>(want_sky_rgb[2]),
+        static_cast<double>(sky_error) * 100.0, static_cast<double>(kTolerance) * 100.0,
+        static_cast<double>(kClear.r), static_cast<double>(kClear.g),
+        static_cast<double>(kClear.b), passed ? "pass" : "FAIL");
     engine::log(passed ? engine::LogLevel::Info : engine::LogLevel::Error,
         engine::LogChannel::Render, message);
     return passed;
